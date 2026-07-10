@@ -14,7 +14,7 @@ from enum import Enum
 
 from app.config import Config
 from app.utils.logger import get_logger
-from app.ontology.zep_entity_reader import ZepEntityReader, FilteredEntities
+from app.ontology.zep_entity_reader import ZepEntityReader, FilteredEntities, EntityNode
 from app.world.oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from app.engine.simulation_config_generator import SimulationConfigGenerator, SimulationParameters
 from app.utils.locale import t
@@ -232,54 +232,73 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = 3,
+        stage: str = "all",
     ) -> SimulationState:
         """
         准备模拟环境（全程自动化）
-        
-        步骤：
-        1. 从Zep图谱读取并过滤实体
-        2. 为每个实体生成OASIS Agent Profile（可选LLM增强，支持并行）
-        3. 使用LLM智能生成模拟配置参数（时间、活跃度、发言频率等）
-        4. 保存配置文件和Profile文件
-        5. 复制预设脚本到模拟目录
-        
-        Args:
-            simulation_id: 模拟ID
-            simulation_requirement: 模拟需求描述（用于LLM生成配置）
-            document_text: 原始文档内容（用于LLM理解背景）
-            defined_entity_types: 预定义的实体类型（可选）
-            use_llm_for_profiles: 是否使用LLM生成详细人设
-            progress_callback: 进度回调函数 (stage, progress, message)
-            parallel_profile_count: 并行生成人设的数量，默认3
-            
-        Returns:
-            SimulationState
+
+        stage:
+          - all: 人设 + 平台配置 + 事件配置
+          - profiles: 仅人设
+          - platform_config: 仅时间/Agent 活跃配置
+          - event_config: 仅初始激活编排
         """
+        stage = (stage or "all").strip().lower()
+        if stage not in ("all", "profiles", "platform_config", "event_config"):
+            raise ValueError(f"不支持的 prepare stage: {stage}")
+
         state = self._load_simulation_state(simulation_id)
         if not state:
             raise ValueError(f"模拟不存在: {simulation_id}")
         
         try:
             state.status = SimulationStatus.PREPARING
+            state.error = None
             self._save_simulation_state(state)
             
             sim_dir = self._get_simulation_dir(simulation_id)
-            
-            # ========== 阶段1: 读取并过滤实体 ==========
+
+            # 补全 graph_id（多方案 sim 的 state 常为空）
+            graph_id = self._resolve_graph_id(state)
+            if graph_id and not state.graph_id:
+                state.graph_id = graph_id
+                self._save_simulation_state(state)
+
+            # ========== 阶段1: 读取实体（Zep 或本地） ==========
             if progress_callback:
                 progress_callback("reading", 0, t('progress.connectingZepGraph'))
-            
-            reader = ZepEntityReader()
-            
-            if progress_callback:
-                progress_callback("reading", 30, t('progress.readingNodeData'))
-            
-            filtered = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=defined_entity_types,
-                enrich_with_edges=True
-            )
+
+            filtered = None
+            # 分阶段重试优先用本地实体，避免空 graph_id 打 Zep 导致 405
+            if stage in ("event_config", "platform_config"):
+                local_entities = self._entities_from_local(simulation_id)
+                if local_entities:
+                    types = {e.get_entity_type() or "Unknown" for e in local_entities}
+                    filtered = FilteredEntities(
+                        entities=local_entities,
+                        entity_types=types,
+                        total_count=len(local_entities),
+                        filtered_count=len(local_entities),
+                    )
+                    logger.info(
+                        f"分阶段重试使用本地实体: stage={stage}, count={len(local_entities)}"
+                    )
+
+            if filtered is None:
+                if not graph_id:
+                    raise RuntimeError(
+                        "模拟缺少 graph_id，无法从 Zep 读取实体。"
+                        "请从本体重新「进入环境搭建」，或先完成人设/配置后再分阶段重试。"
+                    )
+                reader = ZepEntityReader()
+                if progress_callback:
+                    progress_callback("reading", 30, t('progress.readingNodeData'))
+                filtered = reader.filter_defined_entities(
+                    graph_id=graph_id,
+                    defined_entity_types=defined_entity_types,
+                    enrich_with_edges=True,
+                )
             
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
@@ -299,86 +318,166 @@ class SimulationManager:
                 return state
             
             # ========== 阶段2: 生成Agent Profile ==========
-            total_entities = len(filtered.entities)
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_profiles", 0,
-                    t('progress.startGenerating'),
-                    current=0,
-                    total=total_entities
-                )
-            
-            # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id)
-            
-            def profile_progress(current, total, msg):
+            if stage in ("all", "profiles"):
+                total_entities = len(filtered.entities)
+                
                 if progress_callback:
                     progress_callback(
-                        "generating_profiles", 
-                        int(current / total * 100), 
-                        msg,
-                        current=current,
-                        total=total,
-                        item_name=msg
+                        "generating_profiles", 0,
+                        t('progress.startGenerating'),
+                        current=0,
+                        total=total_entities
                     )
-            
-            # 设置实时保存的文件路径（优先使用 Reddit JSON 格式）
-            realtime_output_path = None
-            realtime_platform = "reddit"
-            if state.enable_reddit:
-                realtime_output_path = os.path.join(sim_dir, "reddit_profiles.json")
+                
+                # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
+                generator = OasisProfileGenerator(graph_id=graph_id or state.graph_id)
+                
+                def profile_progress(current, total, msg):
+                    if progress_callback:
+                        progress_callback(
+                            "generating_profiles", 
+                            int(current / total * 100), 
+                            msg,
+                            current=current,
+                            total=total,
+                            item_name=msg
+                        )
+                
+                # 设置实时保存的文件路径（优先使用 Reddit JSON 格式）
+                realtime_output_path = None
                 realtime_platform = "reddit"
-            elif state.enable_twitter:
-                realtime_output_path = os.path.join(sim_dir, "twitter_profiles.csv")
-                realtime_platform = "twitter"
-            
-            profiles = generator.generate_profiles_from_entities(
-                entities=filtered.entities,
-                use_llm=use_llm_for_profiles,
-                progress_callback=profile_progress,
-                graph_id=state.graph_id,  # 传入graph_id用于Zep检索
-                parallel_count=parallel_profile_count,  # 并行生成数量
-                realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
-            )
-            
-            state.profiles_count = len(profiles)
-            
-            # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
-            # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
-            if progress_callback:
-                progress_callback(
-                    "generating_profiles", 95,
-                    t('progress.savingProfiles'),
-                    current=total_entities,
-                    total=total_entities
+                if state.enable_reddit:
+                    realtime_output_path = os.path.join(sim_dir, "reddit_profiles.json")
+                    realtime_platform = "reddit"
+                elif state.enable_twitter:
+                    realtime_output_path = os.path.join(sim_dir, "twitter_profiles.csv")
+                    realtime_platform = "twitter"
+                
+                profiles = generator.generate_profiles_from_entities(
+                    entities=filtered.entities,
+                    use_llm=use_llm_for_profiles,
+                    progress_callback=profile_progress,
+                    graph_id=graph_id or state.graph_id,
+                    parallel_count=parallel_profile_count,
+                    realtime_output_path=realtime_output_path,
+                    output_platform=realtime_platform
                 )
-            
-            if state.enable_reddit:
-                generator.save_profiles(
-                    profiles=profiles,
-                    file_path=os.path.join(sim_dir, "reddit_profiles.json"),
-                    platform="reddit"
-                )
-            
-            if state.enable_twitter:
-                # Twitter使用CSV格式！这是OASIS的要求
-                generator.save_profiles(
-                    profiles=profiles,
-                    file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
-                    platform="twitter"
-                )
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_profiles", 100,
-                    t('progress.profilesComplete', count=len(profiles)),
-                    current=len(profiles),
-                    total=len(profiles)
-                )
+                
+                state.profiles_count = len(profiles)
+                
+                # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
+                # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
+                if progress_callback:
+                    progress_callback(
+                        "generating_profiles", 95,
+                        t('progress.savingProfiles'),
+                        current=total_entities,
+                        total=total_entities
+                    )
+                
+                if state.enable_reddit:
+                    generator.save_profiles(
+                        profiles=profiles,
+                        file_path=os.path.join(sim_dir, "reddit_profiles.json"),
+                        platform="reddit"
+                    )
+                
+                if state.enable_twitter:
+                    # Twitter使用CSV格式！这是OASIS的要求
+                    generator.save_profiles(
+                        profiles=profiles,
+                        file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
+                        platform="twitter"
+                    )
+                
+                if progress_callback:
+                    progress_callback(
+                        "generating_profiles", 100,
+                        t('progress.profilesComplete', count=len(profiles)),
+                        current=len(profiles),
+                        total=len(profiles)
+                    )
+
+                if stage == "profiles":
+                    return self.finalize_prepare(simulation_id)
             
             # ========== 阶段3: LLM智能生成模拟配置 ==========
+            config_generator = SimulationConfigGenerator()
+            config_path = os.path.join(sim_dir, "simulation_config.json")
+
+            if stage == "event_config":
+                existing = self.get_simulation_config(simulation_id)
+                if not existing or not existing.get("agent_configs"):
+                    raise RuntimeError("请先完成双平台配置（时间/Agent），再单独重试初始激活编排")
+                if progress_callback:
+                    progress_callback(
+                        "generating_config", 20,
+                        t('progress.generatingEventConfig'),
+                        current=1,
+                        total=2,
+                    )
+                merged = config_generator.regenerate_event_config(
+                    existing_config=existing,
+                    simulation_requirement=simulation_requirement,
+                    document_text=document_text,
+                    entities=filtered.entities,
+                )
+                if progress_callback:
+                    progress_callback(
+                        "generating_config", 90,
+                        t('progress.savingConfigFiles'),
+                        current=2,
+                        total=2,
+                    )
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                return self.finalize_prepare(simulation_id)
+
+            if stage == "platform_config":
+                existing = self.get_simulation_config(simulation_id) or {
+                    "simulation_id": simulation_id,
+                    "project_id": state.project_id,
+                    "graph_id": state.graph_id,
+                    "event_config": {"initial_posts": [], "hot_topics": [], "narrative_direction": ""},
+                }
+                if progress_callback:
+                    progress_callback(
+                        "generating_config", 10,
+                        t('progress.callingLLMConfig'),
+                        current=0,
+                        total=2,
+                    )
+
+                def _plat_progress(step, total, message):
+                    if progress_callback:
+                        pct = int(10 + 80 * step / max(total, 1))
+                        progress_callback(
+                            "generating_config",
+                            pct,
+                            message,
+                            current=step,
+                            total=total,
+                        )
+
+                merged = config_generator.regenerate_platform_config(
+                    existing_config=existing,
+                    simulation_requirement=simulation_requirement,
+                    document_text=document_text,
+                    entities=filtered.entities,
+                    progress_callback=_plat_progress,
+                )
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                if progress_callback:
+                    progress_callback(
+                        "generating_config", 100,
+                        t('progress.configComplete'),
+                        current=2,
+                        total=2,
+                    )
+                return self.finalize_prepare(simulation_id)
+
+            # stage == all
             if progress_callback:
                 progress_callback(
                     "generating_config", 0,
@@ -386,8 +485,6 @@ class SimulationManager:
                     current=0,
                     total=3
                 )
-            
-            config_generator = SimulationConfigGenerator()
             
             if progress_callback:
                 progress_callback(
@@ -417,12 +514,8 @@ class SimulationManager:
                 )
             
             # 保存配置文件
-            config_path = os.path.join(sim_dir, "simulation_config.json")
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.write(sim_params.to_json())
-            
-            state.config_generated = True
-            state.config_reasoning = sim_params.generation_reasoning
             
             if progress_callback:
                 progress_callback(
@@ -435,13 +528,11 @@ class SimulationManager:
             # 注意：运行脚本保留在 backend/scripts/ 目录，不再复制到模拟目录
             # 启动模拟时，simulation_runner 会从 scripts/ 目录运行脚本
             
-            # 更新状态
-            state.status = SimulationStatus.READY
-            self._save_simulation_state(state)
-            
-            logger.info(f"模拟准备完成: {simulation_id}, "
-                       f"entities={state.entities_count}, profiles={state.profiles_count}")
-            
+            state = self.finalize_prepare(simulation_id)
+            logger.info(
+                f"模拟准备完成: {simulation_id}, "
+                f"entities={state.entities_count}, profiles={state.profiles_count}"
+            )
             return state
             
         except Exception as e:
@@ -452,7 +543,6 @@ class SimulationManager:
             state.error = str(e)
             self._save_simulation_state(state)
             raise
-    
     def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:
         """获取模拟状态"""
         return self._load_simulation_state(simulation_id)
@@ -524,3 +614,259 @@ class SimulationManager:
                 f"   - 并行运行双平台: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
             )
         }
+
+    def _entities_from_local(
+        self, simulation_id: str, existing_config: Optional[Dict[str, Any]] = None
+    ) -> List[EntityNode]:
+        """从本地 agent_configs / profiles 构造实体，供分阶段重试在无 graph_id 时使用。"""
+        entities: List[EntityNode] = []
+        cfg = existing_config if existing_config is not None else self.get_simulation_config(simulation_id)
+        cfg = cfg or {}
+        for row in cfg.get("agent_configs") or []:
+            etype = row.get("entity_type") or "Unknown"
+            name = row.get("entity_name") or f"agent_{row.get('agent_id', 0)}"
+            uuid = row.get("entity_uuid") or f"local-{row.get('agent_id', 0)}"
+            entities.append(
+                EntityNode(
+                    uuid=str(uuid),
+                    name=str(name),
+                    labels=[str(etype)],
+                    summary=str(row.get("summary") or ""),
+                    attributes={"entity_type": etype},
+                )
+            )
+        if entities:
+            return entities
+
+        try:
+            profiles = self.get_profiles(simulation_id, platform="reddit")
+        except Exception:
+            profiles = []
+        for i, p in enumerate(profiles or []):
+            etype = p.get("source_entity_type") or p.get("profession") or "Unknown"
+            name = p.get("name") or p.get("username") or f"agent_{i}"
+            uuid = p.get("source_entity_uuid") or f"local-profile-{i}"
+            entities.append(
+                EntityNode(
+                    uuid=str(uuid),
+                    name=str(name),
+                    labels=[str(etype)],
+                    summary=str(p.get("bio") or p.get("persona") or ""),
+                    attributes={"entity_type": etype},
+                )
+            )
+        return entities
+
+    def _resolve_graph_id(self, state: SimulationState) -> str:
+        """尽量补全 graph_id（多方案 materialize 常漏写）。"""
+        gid = (state.graph_id or "").strip()
+        if gid:
+            return gid
+        cfg = self.get_simulation_config(state.simulation_id) or {}
+        gid = (cfg.get("graph_id") or "").strip()
+        if gid:
+            state.graph_id = gid
+            return gid
+        # 从决策/本体回填
+        project_id = (state.project_id or cfg.get("project_id") or "").strip()
+        if not project_id:
+            # 用 sim_id 反查决策
+            try:
+                from app.ontology import registry
+
+                registry.init_schema()
+                for dec in registry.list_decisions() or []:
+                    for run in registry.list_runs_for_decision(dec["id"]) or []:
+                        if run.get("sim_id") == state.simulation_id:
+                            project_id = dec["id"]
+                            state.project_id = project_id
+                            break
+                    if project_id:
+                        break
+            except Exception as e:
+                logger.warning(f"按 sim_id 反查决策失败: {e}")
+        if project_id.startswith("dec_"):
+            try:
+                from app.ontology import registry
+
+                registry.init_schema()
+                dec = registry.get_decision(project_id) or {}
+                ont_id = dec.get("ontology_id")
+                if ont_id:
+                    ont = registry.get_ontology(ont_id) or {}
+                    gid = (ont.get("graph_id") or "").strip()
+                    if gid:
+                        state.graph_id = gid
+                        state.project_id = project_id
+                        return gid
+            except Exception as e:
+                logger.warning(f"从决策回填 graph_id 失败: {e}")
+        elif project_id.startswith("ont_"):
+            try:
+                from app.ontology import registry
+
+                registry.init_schema()
+                ont = registry.get_ontology(project_id) or {}
+                gid = (ont.get("graph_id") or "").strip()
+                if gid:
+                    state.graph_id = gid
+                    return gid
+            except Exception as e:
+                logger.warning(f"从本体回填 graph_id 失败: {e}")
+        return ""
+
+    def finalize_prepare(self, simulation_id: str) -> SimulationState:
+        """
+        prepare 收口：以磁盘为准回写摘要字段到 state.json。
+
+        覆盖 entities_count / profiles_count / config_generated / graph_id /
+        project_id / entity_types / status，避免多路径各自漏写。
+        """
+        sim_dir = self._get_simulation_dir(simulation_id)
+        cfg = self.get_simulation_config(simulation_id) or {}
+        state = self._load_simulation_state(simulation_id)
+
+        if not state:
+            state = SimulationState(
+                simulation_id=simulation_id,
+                project_id=str(cfg.get("project_id") or ""),
+                graph_id=str(cfg.get("graph_id") or ""),
+                status=SimulationStatus.CREATED,
+            )
+
+        # ---- profiles / entities ----
+        profiles_n = 0
+        reddit_path = os.path.join(sim_dir, "reddit_profiles.json")
+        twitter_path = os.path.join(sim_dir, "twitter_profiles.csv")
+        if os.path.isfile(reddit_path):
+            try:
+                with open(reddit_path, encoding="utf-8") as f:
+                    plist = json.load(f)
+                if isinstance(plist, list):
+                    profiles_n = len(plist)
+            except Exception as e:
+                logger.warning(f"finalize_prepare 读取 reddit profiles 失败: {e}")
+        if profiles_n == 0 and os.path.isfile(twitter_path):
+            try:
+                import csv
+
+                with open(twitter_path, encoding="utf-8", newline="") as f:
+                    profiles_n = max(0, sum(1 for _ in csv.DictReader(f)))
+            except Exception as e:
+                logger.warning(f"finalize_prepare 读取 twitter profiles 失败: {e}")
+
+        if profiles_n > 0:
+            state.profiles_count = profiles_n
+            if not state.entities_count or state.entities_count < profiles_n:
+                state.entities_count = profiles_n
+
+        # ---- config 摘要 ----
+        agents = cfg.get("agent_configs") or []
+        if cfg.get("time_config") and agents:
+            state.config_generated = True
+            reasoning = cfg.get("generation_reasoning")
+            if reasoning:
+                state.config_reasoning = str(reasoning)
+            if not state.entity_types:
+                types = sorted(
+                    {
+                        str(a.get("entity_type") or "").strip()
+                        for a in agents
+                        if a.get("entity_type")
+                    }
+                )
+                if types:
+                    state.entity_types = types
+
+        if cfg.get("project_id") and not (state.project_id or "").strip():
+            state.project_id = str(cfg["project_id"])
+
+        # ---- graph_id / project_id ----
+        gid = self._resolve_graph_id(state)
+        if gid:
+            state.graph_id = gid
+
+        # 回写到 config，避免下次再丢
+        cfg_path = os.path.join(sim_dir, "simulation_config.json")
+        if os.path.isfile(cfg_path) and (gid or state.project_id):
+            try:
+                dirty = False
+                if gid and not (cfg.get("graph_id") or "").strip():
+                    cfg["graph_id"] = gid
+                    dirty = True
+                if state.project_id and not (cfg.get("project_id") or "").strip():
+                    cfg["project_id"] = state.project_id
+                    dirty = True
+                if dirty:
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump(cfg, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning(f"finalize_prepare 回写 config 失败: {e}")
+
+        # ---- status ----
+        if state.config_generated or profiles_n > 0:
+            if state.status in (
+                SimulationStatus.CREATED,
+                SimulationStatus.PREPARING,
+                SimulationStatus.READY,
+            ):
+                state.status = SimulationStatus.READY
+                state.error = None
+
+        self._save_simulation_state(state)
+        logger.info(
+            f"finalize_prepare: {simulation_id} status={state.status.value} "
+            f"entities={state.entities_count} profiles={state.profiles_count} "
+            f"config_generated={state.config_generated} graph_id={state.graph_id!r}"
+        )
+        return state
+
+    def sync_prepare_to_registry(self, state: SimulationState) -> None:
+        """将 prepare 摘要同步到 meta.db（runs / decisions）。"""
+        try:
+            from app.ontology import registry
+
+            registry.init_schema()
+        except Exception as e:
+            logger.warning(f"sync_prepare_to_registry: registry 不可用: {e}")
+            return
+
+        sim_id = state.simulation_id
+        run_dir = self._get_simulation_dir(sim_id)
+        decision_id = None
+        run_id = None
+
+        try:
+            for dec in registry.list_decisions() or []:
+                for run in registry.list_runs_for_decision(dec["id"]) or []:
+                    if run.get("sim_id") == sim_id:
+                        decision_id = dec["id"]
+                        run_id = run["id"]
+                        break
+                if run_id:
+                    break
+        except Exception as e:
+            logger.warning(f"sync_prepare_to_registry: 反查 run 失败: {e}")
+            return
+
+        if not run_id:
+            return
+
+        try:
+            registry.update_run(run_id, status="ready", run_dir=run_dir)
+        except Exception as e:
+            logger.warning(f"sync_prepare_to_registry: update_run 失败: {e}")
+            return
+
+        if not decision_id:
+            return
+
+        try:
+            runs = registry.list_runs_for_decision(decision_id) or []
+            if runs and all((r.get("status") or "") == "ready" for r in runs):
+                registry.update_decision(decision_id, status="prepared")
+                logger.info(
+                    f"sync_prepare_to_registry: decision {decision_id} -> prepared"
+                )
+        except Exception as e:
+            logger.warning(f"sync_prepare_to_registry: update_decision 失败: {e}")

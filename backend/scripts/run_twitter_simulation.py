@@ -671,6 +671,7 @@ class TwitterSimulationRunner:
             if isinstance(a, dict)
         }
         total_actions = 0
+        last_rowid = 0
         
         # 执行初始事件
         event_config = self.config.get("event_config", {})
@@ -706,6 +707,12 @@ class TwitterSimulationRunner:
             if initial_actions:
                 await self.env.step(initial_actions)
                 print(f"  已发布 {len(initial_actions)} 条初始帖子")
+                # 同步 DB 游标，避免主循环把初始帖重复读入
+                try:
+                    from run_parallel_simulation import fetch_new_actions_from_db
+                    _, last_rowid = fetch_new_actions_from_db(db_path, last_rowid, agent_names)
+                except Exception:
+                    pass
 
         if action_logger:
             action_logger.log_round_end(0, len(initial_posts) if initial_posts else 0)
@@ -759,17 +766,31 @@ class TwitterSimulationRunner:
             except Exception as e:
                 print(f"  警告: Round {round_num + 1} 执行失败: {e}")
 
-            round_actions = len(active_agents)
+            # 从 OASIS DB 读取真实动作（勿写空壳 LLM_ACTION）
+            round_actions = 0
+            try:
+                from run_parallel_simulation import fetch_new_actions_from_db
+
+                actual_actions, last_rowid = fetch_new_actions_from_db(
+                    db_path, last_rowid, agent_names
+                )
+                for action_data in actual_actions:
+                    if action_logger:
+                        action_logger.log_action(
+                            round_num=round_num + 1,
+                            agent_id=action_data["agent_id"],
+                            agent_name=action_data["agent_name"],
+                            action_type=action_data["action_type"],
+                            action_args=action_data.get("action_args") or {},
+                        )
+                    round_actions += 1
+            except Exception as e:
+                print(f"  警告: 读取本轮动作失败: {e}")
+                # 兜底：至少记录活跃人数，避免进度停滞
+                round_actions = len(active_agents)
+
             total_actions += round_actions
             if action_logger:
-                for agent_id, _agent in active_agents:
-                    action_logger.log_action(
-                        round_num=round_num + 1,
-                        agent_id=agent_id,
-                        agent_name=agent_names.get(agent_id, f"Agent_{agent_id}"),
-                        action_type="LLM_ACTION",
-                        action_args={},
-                    )
                 action_logger.log_round_end(round_num + 1, round_actions)
 
             _write_progress_heartbeat(

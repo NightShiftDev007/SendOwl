@@ -377,6 +377,109 @@ class SimulationConfigGenerator:
         logger.info(f"模拟配置生成完成: {len(params.agent_configs)} 个Agent配置")
         
         return params
+
+    def regenerate_event_config(
+        self,
+        existing_config: Dict[str, Any],
+        simulation_requirement: str,
+        document_text: str,
+        entities: List[EntityNode],
+    ) -> Dict[str, Any]:
+        """仅重生成事件配置，保留时间/Agent/平台配置。"""
+        context = self._build_context(simulation_requirement, document_text, entities)
+        event_result = self._generate_event_config(context, simulation_requirement, entities)
+        event_config = self._parse_event_config(event_result)
+
+        agent_cfgs = []
+        for row in existing_config.get("agent_configs") or []:
+            agent_cfgs.append(
+                AgentActivityConfig(
+                    agent_id=int(row.get("agent_id", 0)),
+                    entity_uuid=row.get("entity_uuid", ""),
+                    entity_name=row.get("entity_name", ""),
+                    entity_type=row.get("entity_type", "Unknown"),
+                    activity_level=float(row.get("activity_level", 0.5)),
+                    posts_per_hour=float(row.get("posts_per_hour", 0.5)),
+                    comments_per_hour=float(row.get("comments_per_hour", 1.0)),
+                    active_hours=list(row.get("active_hours") or list(range(9, 23))),
+                    response_delay_min=int(row.get("response_delay_min", 5)),
+                    response_delay_max=int(row.get("response_delay_max", 60)),
+                    sentiment_bias=float(row.get("sentiment_bias", 0.0)),
+                    stance=row.get("stance", "neutral"),
+                    influence_weight=float(row.get("influence_weight", 1.0)),
+                )
+            )
+        event_config = self._assign_initial_post_agents(event_config, agent_cfgs)
+
+        cfg = dict(existing_config)
+        cfg["event_config"] = asdict(event_config)
+        cfg["simulation_requirement"] = simulation_requirement
+        cfg["generated_at"] = datetime.now().isoformat()
+        prev = cfg.get("generation_reasoning") or ""
+        note = f"{t('progress.eventConfigLabel')}: {event_result.get('reasoning', t('common.success'))}"
+        cfg["generation_reasoning"] = f"{prev} | [retry-event] {note}" if prev else f"[retry-event] {note}"
+        return cfg
+
+    def regenerate_platform_config(
+        self,
+        existing_config: Dict[str, Any],
+        simulation_requirement: str,
+        document_text: str,
+        entities: List[EntityNode],
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """仅重生成时间 + Agent 活跃配置，保留事件配置。"""
+        context = self._build_context(simulation_requirement, document_text, entities)
+        num_entities = len(entities)
+        num_batches = math.ceil(len(entities) / self.AGENTS_PER_BATCH) or 1
+        total_steps = 1 + num_batches
+
+        def report(step: int, message: str):
+            if progress_callback:
+                progress_callback(step, total_steps, message)
+
+        report(1, t('progress.generatingTimeConfig'))
+        time_result = self._generate_time_config(context, num_entities)
+        time_config = self._parse_time_config(time_result, num_entities)
+
+        all_agent_configs = []
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * self.AGENTS_PER_BATCH
+            end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
+            report(
+                2 + batch_idx,
+                t('progress.generatingAgentConfig', start=start_idx + 1, end=end_idx, total=len(entities)),
+            )
+            all_agent_configs.extend(
+                self._generate_agent_configs_batch(
+                    context=context,
+                    entities=entities[start_idx:end_idx],
+                    start_idx=start_idx,
+                    simulation_requirement=simulation_requirement,
+                )
+            )
+
+        cfg = dict(existing_config)
+        cfg["time_config"] = asdict(time_config)
+        cfg["agent_configs"] = [asdict(a) for a in all_agent_configs]
+        cfg["simulation_requirement"] = simulation_requirement
+        cfg["generated_at"] = datetime.now().isoformat()
+        cfg["llm_model"] = self.model_name
+        cfg["llm_base_url"] = self.base_url
+
+        # 用新 agent 列表重新分配初始帖发布者（若已有事件）
+        if cfg.get("event_config"):
+            event_config = self._parse_event_config(cfg["event_config"])
+            event_config = self._assign_initial_post_agents(event_config, all_agent_configs)
+            cfg["event_config"] = asdict(event_config)
+
+        note = (
+            f"{t('progress.timeConfigLabel')}: {time_result.get('reasoning', t('common.success'))} | "
+            f"{t('progress.agentConfigResult', count=len(all_agent_configs))}"
+        )
+        prev = cfg.get("generation_reasoning") or ""
+        cfg["generation_reasoning"] = f"{prev} | [retry-platform] {note}" if prev else f"[retry-platform] {note}"
+        return cfg
     
     def _build_context(
         self,
@@ -591,8 +694,8 @@ class SimulationConfigGenerator:
         try:
             return self._call_llm_with_retry(prompt, system_prompt)
         except Exception as e:
-            logger.warning(f"时间配置LLM生成失败: {e}, 使用默认配置")
-            return self._get_default_time_config(num_entities)
+            logger.error(f"时间配置LLM生成失败: {e}")
+            raise RuntimeError(f"时间配置 LLM 生成失败（已禁用兜底）: {e}") from e
     
     def _get_default_time_config(self, num_entities: int) -> Dict[str, Any]:
         """获取默认时间配置（中国人作息）"""
@@ -706,15 +809,20 @@ class SimulationConfigGenerator:
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
 
         try:
-            return self._call_llm_with_retry(prompt, system_prompt)
+            result = self._call_llm_with_retry(prompt, system_prompt)
         except Exception as e:
-            logger.warning(f"事件配置LLM生成失败: {e}, 使用默认配置")
-            return {
-                "hot_topics": [],
-                "narrative_direction": "",
-                "initial_posts": [],
-                "reasoning": "使用默认配置"
-            }
+            logger.error(f"事件配置LLM生成失败: {e}")
+            raise RuntimeError(f"事件配置 LLM 生成失败（已禁用兜底）: {e}") from e
+
+        posts = result.get("initial_posts") or []
+        topics = result.get("hot_topics") or []
+        narrative = (result.get("narrative_direction") or "").strip()
+        if len(posts) < 2 or len(topics) < 1 or not narrative:
+            raise RuntimeError(
+                "事件配置 LLM 返回无效（需至少 2 条初始帖、1 个热点话题、非空叙事方向），"
+                f"实际 posts={len(posts)} topics={len(topics)} narrative={bool(narrative)}"
+            )
+        return result
     
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
         """解析事件配置结果"""
@@ -873,18 +981,25 @@ class SimulationConfigGenerator:
             result = self._call_llm_with_retry(prompt, system_prompt)
             llm_configs = {cfg["agent_id"]: cfg for cfg in result.get("agent_configs", [])}
         except Exception as e:
-            logger.warning(f"Agent配置批次LLM生成失败: {e}, 使用规则生成")
-            llm_configs = {}
+            logger.error(f"Agent配置批次LLM生成失败: {e}")
+            raise RuntimeError(f"Agent 配置 LLM 生成失败（已禁用兜底）: {e}") from e
+
+        missing = [
+            start_idx + i
+            for i, _ in enumerate(entities)
+            if (start_idx + i) not in llm_configs
+        ]
+        if missing:
+            raise RuntimeError(
+                f"Agent 配置 LLM 返回不完整（已禁用规则兜底），缺少 agent_id: {missing[:8]}"
+                + ("..." if len(missing) > 8 else "")
+            )
         
         # 构建AgentActivityConfig对象
         configs = []
         for i, entity in enumerate(entities):
             agent_id = start_idx + i
             cfg = llm_configs.get(agent_id, {})
-            
-            # 如果LLM没有生成，使用规则生成
-            if not cfg:
-                cfg = self._generate_agent_config_by_rule(entity)
             
             config = AgentActivityConfig(
                 agent_id=agent_id,

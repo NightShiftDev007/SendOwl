@@ -575,10 +575,10 @@ class OasisProfileGenerator:
                 import time
                 time.sleep(1 * (attempt + 1))  # 指数退避
         
-        logger.warning(f"LLM生成人设失败（{max_attempts}次尝试）: {last_error}, 使用规则生成")
-        return self._generate_profile_rule_based(
-            entity_name, entity_type, entity_summary, entity_attributes
-        )
+        logger.error(f"LLM生成人设失败（{max_attempts}次尝试）: {last_error}")
+        raise RuntimeError(
+            f"人设 LLM 生成失败（已禁用规则兜底）: {entity_name} / {entity_type}: {last_error}"
+        ) from last_error
     
     def _fix_truncated_json(self, content: str) -> str:
         """修复被截断的JSON（输出被max_tokens限制截断）"""

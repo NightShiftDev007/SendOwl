@@ -34,6 +34,29 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _event_config_is_strong(event_config: Optional[Dict[str, Any]]) -> bool:
+    """LLM 生成的初始激活通常 ≥2 帖 + ≥1 话题 + 叙事；干预 stub 往往只有 1 帖。"""
+    if not isinstance(event_config, dict):
+        return False
+    posts = event_config.get("initial_posts") or []
+    topics = event_config.get("hot_topics") or []
+    narrative = str(event_config.get("narrative_direction") or "").strip()
+    return len(posts) >= 2 and len(topics) >= 1 and bool(narrative)
+
+
+def _sim_dir_looks_prepared(sim_id: str) -> bool:
+    run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+    cfg_path = os.path.join(run_dir, "simulation_config.json")
+    if not os.path.isfile(cfg_path):
+        return False
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        return bool(cfg.get("time_config") and (cfg.get("agent_configs") or []))
+    except Exception:
+        return False
+
+
 class ScenarioRunner:
     """多方案 × 多采样决策推演编排器（底层全部是真 Simulation）。"""
 
@@ -253,16 +276,34 @@ class ScenarioRunner:
             network=network,
         )
 
+        from app.engine.contract import default_time_config
+
         base_cfg = {
-            "time_config": {
-                "total_simulation_hours": int(dec.get("max_rounds") or 10),
-                "minutes_per_round": 60,
-                "agents_per_hour_min": 2,
-                "agents_per_hour_max": 12,
-            },
-            "event_config": {"initial_posts": [], "hot_topics": []},
+            "time_config": default_time_config(
+                total_hours=int(dec.get("max_rounds") or 10),
+                minutes_per_round=60,
+                agents_per_hour_min=2,
+                agents_per_hour_max=12,
+            ),
+            "event_config": {"initial_posts": [], "hot_topics": [], "narrative_direction": ""},
             "agent_configs": [],
-            "platform": "twitter",
+            "twitter_config": {
+                "platform": "twitter",
+                "recency_weight": 0.4,
+                "popularity_weight": 0.3,
+                "relevance_weight": 0.3,
+                "viral_threshold": 10,
+                "echo_chamber_strength": 0.5,
+            },
+            "reddit_config": {
+                "platform": "reddit",
+                "recency_weight": 0.3,
+                "popularity_weight": 0.4,
+                "relevance_weight": 0.3,
+                "viral_threshold": 15,
+                "echo_chamber_strength": 0.6,
+            },
+            "platform": "parallel",
             "simulation_requirement": intervention_text or (dec.get("title") or ""),
         }
         with open(
@@ -283,8 +324,22 @@ class ScenarioRunner:
         intervention: Any,
         seed: int,
         max_rounds: int,
+        decision_id: str = "",
+        graph_id: str = "",
     ) -> str:
         """把共享世界 profiles + 方案干预注入到真 simulation 目录。"""
+        # 保留已有的强 event_config，避免刷新/重挂载 prepare 用干预 stub 冲掉 LLM 结果
+        existing_event = None
+        existing_cfg_path = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json")
+        if os.path.isfile(existing_cfg_path):
+            try:
+                with open(existing_cfg_path, encoding="utf-8") as f:
+                    old_cfg = json.load(f)
+                if _event_config_is_strong(old_cfg.get("event_config")):
+                    existing_event = old_cfg.get("event_config")
+            except Exception:
+                pass
+
         # materialize_run_dir 以 sim_id 为目录名写入 OASIS_SIMULATION_DATA_DIR(=RUN_DIR)
         run_dir = materialize_run_dir(
             run_id=sim_id,
@@ -294,18 +349,82 @@ class ScenarioRunner:
             seed=seed,
             max_rounds=max_rounds,
         )
+
+        cfg_path = os.path.join(run_dir, "simulation_config.json")
+        if os.path.isfile(cfg_path) and (graph_id or decision_id or existing_event):
+            try:
+                with open(cfg_path, encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if graph_id:
+                    cfg["graph_id"] = graph_id
+                if decision_id:
+                    cfg["project_id"] = decision_id
+                # 干预 stub 弱于已有 LLM 编排时，保留后者
+                if existing_event and not _event_config_is_strong(cfg.get("event_config")):
+                    cfg["event_config"] = existing_event
+                    logger.info(f"保留已有强 event_config: sim_id={sim_id}")
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
         # 同步 state.json 为 ready（SimulationManager 约定）
         state = self.sim_manager.get_simulation(sim_id)
         if state:
             state.status = SimulationStatus.READY
+            state.config_generated = True
+            if decision_id:
+                state.project_id = decision_id
+            if graph_id:
+                state.graph_id = graph_id
+            else:
+                # 兜底：从决策/本体解析
+                try:
+                    from app.ontology import registry as _reg
+
+                    _reg.init_schema()
+                    dec = _reg.get_decision(str(state.project_id or decision_id or "")) or {}
+                    ont_id = dec.get("ontology_id")
+                    if ont_id:
+                        ont = _reg.get_ontology(ont_id) or {}
+                        if ont.get("graph_id"):
+                            state.graph_id = ont["graph_id"]
+                except Exception:
+                    pass
+            # 从 profiles 回填预期 Agent 数，避免 Step2「预期总数」为空
+            try:
+                reddit_path = os.path.join(run_dir, "reddit_profiles.json")
+                if os.path.isfile(reddit_path):
+                    with open(reddit_path, encoding="utf-8") as f:
+                        plist = json.load(f)
+                    if isinstance(plist, list) and plist:
+                        state.profiles_count = len(plist)
+                        state.entities_count = len(plist)
+            except Exception:
+                pass
             self.sim_manager._save_simulation_state(state)
         else:
             # 兜底写 state
+            profiles_n = 0
+            try:
+                reddit_path = os.path.join(run_dir, "reddit_profiles.json")
+                if os.path.isfile(reddit_path):
+                    with open(reddit_path, encoding="utf-8") as f:
+                        plist = json.load(f)
+                    if isinstance(plist, list):
+                        profiles_n = len(plist)
+            except Exception:
+                pass
             with open(os.path.join(run_dir, "state.json"), "w", encoding="utf-8") as f:
                 json.dump(
                     {
                         "simulation_id": sim_id,
+                        "project_id": decision_id or "",
+                        "graph_id": graph_id or "",
                         "status": "ready",
+                        "config_generated": True,
+                        "entities_count": profiles_n,
+                        "profiles_count": profiles_n,
                         "seed": seed,
                         "updated_at": _utc_now(),
                     },
@@ -336,6 +455,24 @@ class ScenarioRunner:
             texts.append(iv.intervention_text())
         intervention_text = "\n".join(texts) or (dec.get("title") or decision_id)
 
+        # 已准备且各 sim 配置齐全：直接返回，避免刷新冲掉 LLM event_config
+        if runs and all(r.get("sim_id") and _sim_dir_looks_prepared(r["sim_id"]) for r in runs):
+            prefer = runs[0].get("sim_id") if len(runs) == 1 else None
+            world = self.get_world_assets(decision_id, prefer_sim_id=prefer)
+            logger.info(f"决策已准备，跳过重建: decision_id={decision_id}, sims={len(runs)}")
+            return {
+                "decision_id": decision_id,
+                "status": "completed",
+                "progress": 100,
+                "stage": "ready",
+                "message": "模拟环境已准备完成（缓存）",
+                "sim_id": prefer,
+                "profile_count": len(world.get("profiles") or []),
+                "config": world.get("config"),
+                "already_prepared": True,
+                "mode": "cached",
+            }
+
         # ---- N=1 M=1：经典 MiroFish prepare ----
         if n <= 1 and m <= 1 and runs:
             run = runs[0]
@@ -356,26 +493,47 @@ class ScenarioRunner:
                 parallel_profile_count=3,
             )
             # 若有干预，再 patch 到 config
+            # N=1 默认方案的 initial_posts 往往是创建时塞入的需求原文 stub，
+            # 不能覆盖 LLM 生成的 event_config；仅多方案/显式干预才注入。
             if sc0.get("intervention"):
-                cfg_path = os.path.join(
-                    Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json"
+                iv = Intervention.from_dict(sc0.get("intervention"))
+                kind = (iv.kind or sc0.get("kind") or "default").lower()
+                substantive = (
+                    kind not in ("default", "")
+                    or len(iv.initial_posts) > 1
+                    or bool(iv.hot_topics)
                 )
-                if os.path.isfile(cfg_path):
-                    with open(cfg_path, encoding="utf-8") as f:
-                        cfg = json.load(f)
-                    from app.engine.contract import ensure_agent_configs, _load_profiles_from_dir
-                    from app.engine.intervention import apply_to_config, load_agents_index
-
-                    agents = load_agents_index(
-                        _load_profiles_from_dir(
-                            os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
-                        )
+                if substantive:
+                    cfg_path = os.path.join(
+                        Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json"
                     )
-                    cfg = apply_to_config(cfg, sc0.get("intervention"), agents)
-                    cfg = ensure_agent_configs(cfg, agents)
-                    cfg["simulation_requirement"] = req
-                    with open(cfg_path, "w", encoding="utf-8") as f:
-                        json.dump(cfg, f, ensure_ascii=False, indent=2)
+                    if os.path.isfile(cfg_path):
+                        with open(cfg_path, encoding="utf-8") as f:
+                            cfg = json.load(f)
+                        from app.engine.contract import ensure_agent_configs, _load_profiles_from_dir
+                        from app.engine.intervention import apply_to_config, load_agents_index
+
+                        agents = load_agents_index(
+                            _load_profiles_from_dir(
+                                os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+                            )
+                        )
+                        cfg = apply_to_config(cfg, sc0.get("intervention"), agents)
+                        cfg = ensure_agent_configs(cfg, agents)
+                        cfg["simulation_requirement"] = req
+                        with open(cfg_path, "w", encoding="utf-8") as f:
+                            json.dump(cfg, f, ensure_ascii=False, indent=2)
+                else:
+                    # 仍写回完整需求，避免 stub 污染
+                    cfg_path = os.path.join(
+                        Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json"
+                    )
+                    if os.path.isfile(cfg_path):
+                        with open(cfg_path, encoding="utf-8") as f:
+                            cfg = json.load(f)
+                        cfg["simulation_requirement"] = req
+                        with open(cfg_path, "w", encoding="utf-8") as f:
+                            json.dump(cfg, f, ensure_ascii=False, indent=2)
 
             registry.update_run(
                 run["id"],
@@ -405,12 +563,12 @@ class ScenarioRunner:
             base_cfg = json.load(f)
 
         max_rounds = int(dec.get("max_rounds") or 10)
+        graph_id = self._ontology_graph_id(dec["ontology_id"])
         for sc in scenarios:
             for run in registry.list_runs_for_scenario(sc["id"]):
                 sim_id = run.get("sim_id")
                 if not sim_id:
                     # 兼容旧数据：补建 sim
-                    graph_id = self._ontology_graph_id(dec["ontology_id"])
                     state = self.sim_manager.create_simulation(
                         project_id=decision_id, graph_id=graph_id
                     )
@@ -424,6 +582,8 @@ class ScenarioRunner:
                     intervention=sc.get("intervention"),
                     seed=int(run.get("seed") or 42),
                     max_rounds=max_rounds,
+                    decision_id=decision_id,
+                    graph_id=graph_id,
                 )
                 registry.update_run(run["id"], status="ready", run_dir=run_dir)
 

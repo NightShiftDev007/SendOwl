@@ -184,7 +184,11 @@
     "genderOther": "Other",
     "yearsOld": "years old",
     "initializing": "Initializing",
-    "generating": "Generating"
+    "generating": "Generating",
+    "retrying": "Retrying…",
+    "retryStageLog": "Retrying stage: {stage}",
+    "partialPrepareFailed": "Some steps failed LLM validation (fallbacks disabled). Click Retry on the failed step.",
+    "eventConfigFailedHint": "Activation orchestration failed or invalid (≥2 posts, ≥1 topic, non-empty narrative required). Click Retry — no fallback results."
   },
   "step3": {
     "startGenerateReport": "Generate Report",
@@ -215,7 +219,9 @@
     "forceStopSuccess": "Simulation force stopped",
     "forceStopFailed": "Force stop failed: {error}",
     "startGenerateReportBtn": "Generate Report",
-    "generatingReportBtn": "Starting..."
+    "generatingReportBtn": "Starting...",
+    "stopSimBtn": "Stop Simulation",
+    "stoppingBtn": "Stopping…"
   },
   "step4": {
     "generatingSection": "Generating {title}...",

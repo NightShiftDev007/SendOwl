@@ -59,7 +59,13 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
   }
 
   if (simIdCache.has(raw)) {
-    return { decisionId: raw, simId: simIdCache.get(raw) }
+    // 缓存命中时仍拉一次 detail，供 prepare 判断 N/M
+    try {
+      const res = await getDecision(raw)
+      return { decisionId: raw, simId: simIdCache.get(raw), detail: res.data || {} }
+    } catch (_) {
+      return { decisionId: raw, simId: simIdCache.get(raw) }
+    }
   }
 
   const res = await getDecision(raw)
@@ -154,26 +160,60 @@ export const createSimulation = async (data = {}) => {
   }
 }
 
+/** 真实异步任务 ID（排除误把 dec_/sim_ 当 task_id） */
+export function isRealTaskId(id) {
+  if (!id) return false
+  const s = String(id)
+  if (s.startsWith('dec_') || s.startsWith('sim_') || s.startsWith('ont_')) return false
+  if (s.startsWith('task_')) return true
+  // 兼容旧版 TaskManager 的裸 UUID
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+}
+
 export const prepareSimulation = async (data = {}) => {
   const { simId, decisionId, detail } = await resolveSimContext(data)
+  const stage = data.stage || 'all'
+  // 以服务端决策的方案数为准，避免本地编辑器未应用的 scenarios 误判
   const scenarioCount =
     detail?.scenarios?.length ||
     detail?.matrix?.length ||
-    data.scenario_count ||
+    (detail?.decision && Number(detail.decision.sample_count) > 1 ? 2 : 0) ||
     1
 
-  // N>1：走决策共享世界 prepare
+  // 分阶段重试（profiles / platform_config / event_config）必须走单 sim 异步 prepare，
+  // 决策级 prepareDecision 不支持 stage，点重试会变成无感刷新。
+  if (stage !== 'all') {
+    return requestWithRetry(
+      () =>
+        service.post('/api/simulation/prepare', {
+          simulation_id: simId,
+          simulation_requirement: data.simulation_requirement,
+          document_text: data.document_text,
+          entity_types: data.entity_types,
+          use_llm_for_profiles: data.use_llm_for_profiles ?? true,
+          parallel_profile_count: data.parallel_profile_count ?? 5,
+          force_regenerate: true,
+          stage,
+        }),
+      3,
+      1000,
+    )
+  }
+
+  // N>1 全量准备：走决策共享世界 prepare（同步完成，无 TaskManager task_id）
   if (scenarioCount > 1 && decisionId) {
     const { prepareDecision } = await import('./decision')
     const res = await prepareDecision(decisionId, data)
     return {
       success: true,
       data: {
-        task_id: decisionId,
+        // 切勿把 dec_ 当作 task_id，否则 /prepare/status 会 404
+        task_id: null,
         simulation_id: simId,
         decision_id: decisionId,
         status: 'completed',
         progress: 100,
+        already_prepared: true,
         ...(res.data || {}),
       },
     }
@@ -189,6 +229,7 @@ export const prepareSimulation = async (data = {}) => {
         use_llm_for_profiles: data.use_llm_for_profiles ?? true,
         parallel_profile_count: data.parallel_profile_count ?? 5,
         force_regenerate: data.force_regenerate ?? false,
+        stage: 'all',
       }),
     3,
     1000,
@@ -199,10 +240,10 @@ export const getPrepareStatus = async (data) => {
   const payload = typeof data === 'string' ? { simulation_id: data } : data || {}
   try {
     const { simId } = await resolveSimContext(payload)
+    const taskId = isRealTaskId(payload.task_id) ? payload.task_id : undefined
     return service.post('/api/simulation/prepare/status', {
-      ...payload,
       simulation_id: simId,
-      task_id: payload.task_id,
+      ...(taskId ? { task_id: taskId } : {}),
     })
   } catch (e) {
     return {
@@ -347,25 +388,46 @@ export const getRunStatus = async (id) => {
   return service.get(`/api/simulation/${simId}/run-status`)
 }
 
-export const getRunStatusDetail = async (id) => {
+export const getRunStatusDetail = async (id, options = {}) => {
   const raw = pickId(id) || id
   if (raw && String(raw).startsWith('dec_')) {
     const st = await getRunStatus(raw)
     const matrix = st.data?.matrix || []
-    const simIds = matrix
-      .flatMap((m) => (m.runs || []).map((r) => r.sim_id || r.run_id))
-      .filter(Boolean)
+    const preferred =
+      options.simId ||
+      options.sim_id ||
+      options.selectedSimId ||
+      null
+    const simIds = preferred
+      ? [preferred]
+      : matrix
+          .flatMap((m) => (m.runs || []).map((r) => r.sim_id || r.run_id))
+          .filter(Boolean)
 
     const all_actions = []
     await Promise.all(
-      simIds.slice(0, 6).map(async (sid) => {
+      simIds.slice(0, preferred ? 1 : 6).map(async (sid) => {
         try {
           const res = await service.get(`/api/simulation/${sid}/actions`, {
-            params: { limit: 80 },
+            params: { limit: 120 },
           })
           const actions = res.data?.actions || res.data || []
           for (const a of actions) {
-            all_actions.push({ ...a, platform: a.platform || 'twitter', sim_id: sid })
+            // 过滤空壳 LLM_ACTION
+            const t = String(a.action_type || '').toUpperCase()
+            const args = a.action_args || {}
+            const content =
+              a.content || args.content || args.quote_content || args.post_content || ''
+            if (t === 'LLM_ACTION' && !String(content).trim()) continue
+            all_actions.push({
+              ...a,
+              platform: a.platform || 'twitter',
+              sim_id: sid,
+              action_args: {
+                ...args,
+                ...(content && !args.content ? { content } : {}),
+              },
+            })
           }
         } catch (_) {
           /* ignore */
@@ -373,7 +435,7 @@ export const getRunStatusDetail = async (id) => {
       }),
     )
     all_actions.sort((a, b) =>
-      String(a.timestamp || '').localeCompare(String(b.timestamp || '')),
+      String(a.timestamp || a.round || '').localeCompare(String(b.timestamp || b.round || '')),
     )
     return {
       success: true,

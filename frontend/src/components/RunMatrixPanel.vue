@@ -1,39 +1,45 @@
 <template>
   <div v-if="matrix.length > 1 || totalRuns > 1" class="run-matrix-panel">
     <div class="matrix-head">
-      <span class="mono">Scenario × Run</span>
-      <span class="hint">点击 Run 切换下方时间线 · {{ progress.done }}/{{ progress.total }}</span>
+      <div class="head-left">
+        <span class="mono title">Scenario × Run</span>
+        <span class="progress mono">{{ progress.done }}/{{ progress.total }}</span>
+      </div>
+      <span class="hint">点击 Run 切换时间线</span>
     </div>
-    <table>
-      <thead>
-        <tr>
-          <th>方案</th>
-          <th>Run</th>
-          <th>Seed</th>
-          <th>状态</th>
-          <th>sim</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="row in flatRows"
-          :key="row.run_id"
-          :class="{ active: row.run_id === selectedRunId || row.sim_id === selectedSimId }"
-          @click="select(row)"
-        >
-          <td>
-            <span class="dot" :style="{ background: row.color }"></span>
-            {{ row.scenario_name }}
-          </td>
-          <td class="mono">{{ shortId(row.run_id) }}</td>
-          <td class="mono">{{ row.seed }}</td>
-          <td>
-            <span class="status" :class="row.status">{{ row.status }}</span>
-          </td>
-          <td class="mono faint">{{ shortId(row.sim_id) }}</td>
-        </tr>
-      </tbody>
-    </table>
+
+    <div class="scenario-list">
+      <div
+        v-for="sc in scenarios"
+        :key="sc.scenario_id || sc.scenario_name"
+        class="scenario-row"
+        :class="{ active: sc.scenario_id === activeScenarioId }"
+      >
+        <div class="scenario-meta">
+          <span class="dot" :style="{ background: sc.color }"></span>
+          <span class="scenario-name" :title="sc.scenario_name">{{ sc.scenario_name }}</span>
+          <span class="scenario-count mono">{{ sc.runs.length }}</span>
+        </div>
+        <div class="run-pills">
+          <button
+            v-for="(run, idx) in sc.runs"
+            :key="run.run_id"
+            type="button"
+            class="run-pill"
+            :class="[
+              run.status,
+              { selected: run.run_id === selectedRunId || run.sim_id === selectedSimId },
+            ]"
+            :title="`${run.run_id} · seed ${run.seed} · ${run.status}`"
+            @click="select(run, sc)"
+          >
+            <span class="pill-idx">R{{ idx + 1 }}</span>
+            <span class="pill-seed mono">{{ run.seed }}</span>
+            <span class="pill-status">{{ shortStatus(run.status) }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -49,99 +55,244 @@ const props = defineProps({
 
 const emit = defineEmits(['select'])
 
-const flatRows = computed(() => {
-  const rows = []
-  for (const sc of props.matrix || []) {
-    for (const r of sc.runs || []) {
-      rows.push({
-        scenario_id: sc.scenario_id,
-        scenario_name: sc.scenario_name || sc.kind,
-        color: sc.color || '#3498db',
-        run_id: r.run_id,
-        sim_id: r.sim_id,
-        seed: r.seed,
-        status: r.status,
-      })
-    }
+const scenarios = computed(() =>
+  (props.matrix || []).map((sc) => ({
+    scenario_id: sc.scenario_id,
+    scenario_name: sc.scenario_name || sc.kind || '方案',
+    color: sc.color || '#3498db',
+    runs: sc.runs || [],
+  })),
+)
+
+const totalRuns = computed(() =>
+  scenarios.value.reduce((n, sc) => n + (sc.runs?.length || 0), 0),
+)
+
+const activeScenarioId = computed(() => {
+  for (const sc of scenarios.value) {
+    const hit = (sc.runs || []).find(
+      (r) => r.run_id === props.selectedRunId || r.sim_id === props.selectedSimId,
+    )
+    if (hit) return sc.scenario_id
   }
-  return rows
+  return scenarios.value[0]?.scenario_id
 })
 
-const totalRuns = computed(() => flatRows.value.length)
-
-function shortId(id) {
-  if (!id) return '—'
-  return String(id).slice(0, 12)
+function shortStatus(status) {
+  const s = String(status || '').toLowerCase()
+  if (s === 'completed' || s === 'done') return 'done'
+  if (s === 'running' || s === 'starting') return 'run'
+  if (s === 'failed' || s === 'error') return 'fail'
+  if (s === 'ready') return 'ready'
+  return s.slice(0, 5) || '—'
 }
 
-function select(row) {
-  emit('select', row)
+function select(run, sc) {
+  emit('select', {
+    scenario_id: sc.scenario_id,
+    scenario_name: sc.scenario_name,
+    color: sc.color,
+    run_id: run.run_id,
+    sim_id: run.sim_id,
+    seed: run.seed,
+    status: run.status,
+  })
 }
 </script>
 
 <style scoped>
 .run-matrix-panel {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  margin: 0 0 12px;
+  flex: 0 0 auto;
+  max-height: min(28vh, 220px);
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border, #eaeaea);
+  background: var(--surface, #fff);
+  min-height: 0;
 }
+
 .matrix-head {
   display: flex;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--bg-muted);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-muted, #fafafa);
+  border-bottom: 1px solid var(--border, #eaeaea);
+  flex-shrink: 0;
+}
+
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.title {
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
+
+.progress {
+  font-size: 11px;
+  color: var(--ink-faint, #888);
+  padding: 1px 6px;
+  border: 1px solid var(--border, #eaeaea);
+  background: #fff;
+}
+
 .hint {
-  color: var(--ink-faint);
-  font-weight: 400;
+  font-size: 11px;
+  color: var(--ink-faint, #999);
+  white-space: nowrap;
 }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
+
+.scenario-list {
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
 }
-th,
-td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
+
+.scenario-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.1fr) minmax(0, 2fr);
+  gap: 8px 12px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-tr {
-  cursor: pointer;
+
+.scenario-row.active {
+  background: var(--bg-muted, #f7f7f7);
+  border-color: var(--border, #eaeaea);
 }
-tr:hover,
-tr.active {
-  background: var(--bg-muted);
+
+.scenario-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
+
 .dot {
-  display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-right: 6px;
+  flex-shrink: 0;
 }
+
+.scenario-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink, #111);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-count {
+  font-size: 10px;
+  color: var(--ink-faint, #999);
+  flex-shrink: 0;
+}
+
+.run-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.run-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #e0e0e0);
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ink, #222);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.run-pill:hover {
+  border-color: #999;
+}
+
+.run-pill.selected {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.run-pill.selected .pill-status {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.pill-idx {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pill-seed {
+  opacity: 0.7;
+}
+
+.pill-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #888;
+}
+
+.run-pill.running .pill-status,
+.run-pill.starting .pill-status {
+  color: var(--brand, #ff5722);
+}
+
+.run-pill.completed .pill-status,
+.run-pill.done .pill-status {
+  color: var(--success, #1a936f);
+}
+
+.run-pill.failed .pill-status,
+.run-pill.error .pill-status {
+  color: var(--danger, #c0392b);
+}
+
+.run-pill.selected.running .pill-status,
+.run-pill.selected.starting .pill-status,
+.run-pill.selected.completed .pill-status,
+.run-pill.selected.done .pill-status,
+.run-pill.selected.failed .pill-status,
+.run-pill.selected.error .pill-status {
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .mono {
   font-family: var(--font-mono);
 }
-.faint {
-  color: var(--ink-faint);
-}
-.status {
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-.status.completed,
-.status.done {
-  color: var(--success);
-}
-.status.running {
-  color: var(--brand);
-}
-.status.failed,
-.status.error {
-  color: var(--danger);
+
+@media (max-width: 720px) {
+  .scenario-row {
+    grid-template-columns: 1fr;
+  }
+
+  .run-pills {
+    justify-content: flex-start;
+  }
+
+  .hint {
+    display: none;
+  }
 }
 </style>

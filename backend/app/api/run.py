@@ -376,13 +376,49 @@ def _actions_from_oasis_db(db_path: Path, limit: int = 500) -> List[Dict[str, An
                     if orig:
                         content = f"引用：{(orig.get('content') or '')[:120]}"
 
+            # 对齐 MiroFish 时间线字段：quote_content / original_content / post_content
+            enriched_args = dict(info) if isinstance(info, dict) else {}
+            if mapped == "QUOTE_POST":
+                new_post = posts.get(int(post_id)) if post_id is not None else None
+                orig = posts.get(int(parent_id)) if parent_id is not None else None
+                if new_post and new_post.get("quote_content"):
+                    enriched_args["quote_content"] = new_post["quote_content"]
+                    content = content or new_post["quote_content"]
+                elif content:
+                    enriched_args["quote_content"] = content
+                if orig:
+                    enriched_args["original_content"] = (orig.get("content") or "").strip()
+                    author = users.get(int(orig.get("user_id") or -1), {})
+                    if author.get("name"):
+                        enriched_args["original_author_name"] = author["name"]
+            elif mapped == "REPOST" and parent_id is not None:
+                orig = posts.get(int(parent_id))
+                if orig:
+                    enriched_args["original_content"] = (orig.get("content") or "").strip()
+                    author = users.get(int(orig.get("user_id") or -1), {})
+                    if author.get("name"):
+                        enriched_args["original_author_name"] = author["name"]
+            elif mapped in ("LIKE_POST", "DISLIKE_POST"):
+                liked_id = info.get("post_id") or info.get("like_id") or info.get("dislike_id")
+                liked = posts.get(int(liked_id)) if liked_id is not None else None
+                if liked:
+                    enriched_args["post_content"] = (
+                        liked.get("quote_content") or liked.get("content") or ""
+                    ).strip()
+                    author = users.get(int(liked.get("user_id") or -1), {})
+                    if author.get("name"):
+                        enriched_args["post_author_name"] = author["name"]
+            elif mapped == "CREATE_POST" and content and not enriched_args.get("content"):
+                enriched_args["content"] = content
+
             actions.append(
                 {
                     "round": round_num,
+                    "round_num": round_num,
                     "agent_id": agent_id,
                     "agent_name": agent_name,
                     "action_type": mapped,
-                    "action_args": info,
+                    "action_args": enriched_args,
                     "content": content,
                     "post_id": post_id,
                     "parent_post_id": parent_id,

@@ -98,6 +98,14 @@
       </div>
 
       <div class="action-controls">
+        <button
+          v-if="phase === 1"
+          class="action-btn danger"
+          :disabled="isStopping"
+          @click="handleStopSimulation"
+        >
+          {{ isStopping ? $t('step3.stoppingBtn') : $t('step3.stopSimBtn') }}
+        </button>
         <button 
           class="action-btn primary"
           :disabled="phase !== 2 || isGeneratingReport"
@@ -171,8 +179,8 @@
 
                 <!-- QUOTE_POST: 引用帖子 -->
                 <template v-if="action.action_type === 'QUOTE_POST'">
-                  <div v-if="action.action_args?.quote_content" class="content-text">
-                    {{ action.action_args.quote_content }}
+                  <div v-if="action.action_args?.quote_content || action.action_args?.content || action.content" class="content-text">
+                    {{ action.action_args?.quote_content || action.action_args?.content || action.content }}
                   </div>
                   <div v-if="action.action_args?.original_content" class="quoted-block">
                     <div class="quote-header">
@@ -182,6 +190,9 @@
                     <div class="quote-text">
                       {{ truncateContent(action.action_args.original_content, 150) }}
                     </div>
+                  </div>
+                  <div v-else class="idle-info">
+                    <span class="idle-label">引用了帖子 #{{ action.action_args?.quoted_id || action.parent_post_id || '—' }}</span>
                   </div>
                 </template>
 
@@ -514,6 +525,9 @@ const prevRedditRound = ref(0)
 const onSelectRun = (row) => {
   selectedRunId.value = row.run_id
   selectedSimId.value = row.sim_id
+  // 切换 Run 时清空时间线，避免混入其他方案动作
+  allActions.value = []
+  actionIds.value = new Set()
   addLog(`切换到 Run ${row.run_id} / ${row.sim_id || ''}`)
   fetchRunStatusDetail()
 }
@@ -605,7 +619,9 @@ const fetchRunStatusDetail = async () => {
   if (!props.simulationId) return
   
   try {
-    const res = await getRunStatusDetail(props.simulationId)
+    const res = await getRunStatusDetail(props.simulationId, {
+      simId: selectedSimId.value || undefined,
+    })
     
     if (res.success && res.data) {
       // 使用 all_actions 获取完整的动作列表
@@ -614,13 +630,24 @@ const fetchRunStatusDetail = async () => {
       // 增量添加新动作（去重）
       let newActionsAdded = 0
       serverActions.forEach(action => {
+        const t = String(action.action_type || '').toUpperCase()
+        const args = action.action_args || {}
+        const content =
+          action.content || args.content || args.quote_content || args.post_content || ''
+        // 空壳 LLM_ACTION 不进时间线
+        if (t === 'LLM_ACTION' && !String(content).trim()) return
+
         // 生成唯一ID
-        const actionId = action.id || `${action.timestamp}-${action.platform}-${action.agent_id}-${action.action_type}`
+        const actionId = action.id || `${action.timestamp || action.round}-${action.platform}-${action.agent_id}-${action.action_type}-${String(content).slice(0, 24)}`
         
         if (!actionIds.value.has(actionId)) {
           actionIds.value.add(actionId)
           allActions.value.push({
             ...action,
+            action_args: {
+              ...args,
+              ...(content && !args.content ? { content } : {}),
+            },
             _uniqueId: actionId
           })
           newActionsAdded++
@@ -641,6 +668,7 @@ const getActionTypeLabel = (type) => {
     'CREATE_POST': 'POST',
     'REPOST': 'REPOST',
     'LIKE_POST': 'LIKE',
+    'DISLIKE_POST': 'DISLIKE',
     'CREATE_COMMENT': 'COMMENT',
     'LIKE_COMMENT': 'LIKE',
     'DO_NOTHING': 'IDLE',
@@ -648,7 +676,8 @@ const getActionTypeLabel = (type) => {
     'SEARCH_POSTS': 'SEARCH',
     'QUOTE_POST': 'QUOTE',
     'UPVOTE_POST': 'UPVOTE',
-    'DOWNVOTE_POST': 'DOWNVOTE'
+    'DOWNVOTE_POST': 'DOWNVOTE',
+    'LLM_ACTION': 'ACTION',
   }
   return labels[type] || type || 'UNKNOWN'
 }
@@ -771,37 +800,45 @@ onUnmounted(() => {
   background: #FFFFFF;
   font-family: var(--font-sans);
   overflow: hidden;
+  min-height: 0;
 }
 
 /* --- Control Bar --- */
 .control-bar {
   background: #FFF;
-  padding: 12px 24px;
+  padding: 10px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   border-bottom: 1px solid #EAEAEA;
   z-index: 10;
-  height: 64px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  min-height: 56px;
+  height: auto;
 }
 
 .status-group {
   display: flex;
-  gap: 12px;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 /* Platform Status Cards */
 .platform-status {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 12px;
+  gap: 2px;
+  padding: 5px 10px;
   border-radius: 4px;
   background: #FAFAFA;
   border: 1px solid #EAEAEA;
   opacity: 0.7;
   transition: all 0.3s;
-  min-width: 140px;
+  min-width: 128px;
   position: relative;
   cursor: pointer;
 }
@@ -951,9 +988,34 @@ onUnmounted(() => {
   letter-spacing: 0.05em;
 }
 
+.action-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.action-btn.danger {
+  background: #fff;
+  color: #c0392b;
+  border: 1px solid #c0392b;
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background: #c0392b;
+  color: #fff;
+}
+
+.action-btn.danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .action-btn.primary {
   background: #000;
   color: #FFF;
+  white-space: nowrap;
 }
 
 .action-btn.primary:hover:not(:disabled) {
@@ -967,10 +1029,11 @@ onUnmounted(() => {
 
 /* --- Main Content Area --- */
 .main-content-area {
-  flex: 1;
+  flex: 1 1 auto;
   overflow-y: auto;
   position: relative;
   background: #FFF;
+  min-height: 0;
 }
 
 /* Timeline Header */
@@ -1278,18 +1341,18 @@ onUnmounted(() => {
 .system-logs {
   background: #000;
   color: #DDD;
-  padding: 16px;
+  padding: 10px 14px;
   font-family: var(--font-mono);
   border-top: 1px solid #222;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .log-header {
   display: flex;
   justify-content: space-between;
   border-bottom: 1px solid #333;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
   font-size: 10px;
   color: #666;
 }
@@ -1298,7 +1361,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  height: 100px;
+  height: 72px;
   overflow-y: auto;
   padding-right: 4px;
 }

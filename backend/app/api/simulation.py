@@ -321,6 +321,13 @@ def create_simulation():
         }), 500
 
 
+def _config_file_looks_complete(config: dict | None) -> bool:
+    """磁盘上的 simulation_config 是否已具备可展示的双平台配置。"""
+    if not isinstance(config, dict):
+        return False
+    return bool(config.get("time_config")) and bool(config.get("agent_configs"))
+
+
 def _check_simulation_prepared(simulation_id: str) -> tuple:
     """
     检查模拟是否已经准备完成
@@ -380,6 +387,29 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         
         status = state_data.get("status", "")
         config_generated = state_data.get("config_generated", False)
+
+        # 兼容：多方案 materialize / 旧数据未写 config_generated，但配置文件已完整
+        config_file = os.path.join(simulation_dir, "simulation_config.json")
+        if not config_generated and os.path.isfile(config_file):
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    cfg_data = json.load(f)
+                if _config_file_looks_complete(cfg_data):
+                    config_generated = True
+                    state_data["config_generated"] = True
+                    if status in ("", "created", "preparing"):
+                        state_data["status"] = "ready"
+                        status = "ready"
+                    from datetime import datetime
+                    state_data["updated_at"] = datetime.now().isoformat()
+                    with open(state_file, "w", encoding="utf-8") as f:
+                        json.dump(state_data, f, ensure_ascii=False, indent=2)
+                    logger.info(
+                        f"自动修复 config_generated: {simulation_id} "
+                        f"(检测到完整 simulation_config.json)"
+                    )
+            except Exception as e:
+                logger.warning(f"检测/修复 config_generated 失败: {e}")
         
         # 详细日志
         logger.debug(f"检测模拟准备状态: {simulation_id}, status={status}, config_generated={config_generated}")
@@ -466,7 +496,8 @@ def prepare_simulation():
             "entity_types": ["Student", "PublicFigure"],  // 可选，指定实体类型
             "use_llm_for_profiles": true,                 // 可选，是否用LLM生成人设
             "parallel_profile_count": 5,                  // 可选，并行生成人设数量，默认5
-            "force_regenerate": false                     // 可选，强制重新生成，默认false
+            "force_regenerate": false,                    // 可选，强制重新生成，默认false
+            "stage": "all"                               // 可选: all|profiles|platform_config|event_config
         }
     
     返回：
@@ -505,9 +536,21 @@ def prepare_simulation():
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
         
-        # 检查是否强制重新生成
-        force_regenerate = data.get('force_regenerate', False)
-        logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
+        # 检查是否强制重新生成 / 分阶段重试
+        force_regenerate = bool(data.get('force_regenerate', False))
+        prepare_stage = (data.get('stage') or 'all').strip().lower()
+        if prepare_stage not in ('all', 'profiles', 'platform_config', 'event_config'):
+            return jsonify({
+                "success": False,
+                "error": f"不支持的 stage: {prepare_stage}，可选 all|profiles|platform_config|event_config"
+            }), 400
+        # 分阶段重试必须强制重新生成，避免命中 already_prepared
+        if prepare_stage != 'all':
+            force_regenerate = True
+        logger.info(
+            f"开始处理 /prepare 请求: simulation_id={simulation_id}, "
+            f"force_regenerate={force_regenerate}, stage={prepare_stage}"
+        )
         
         # 检查是否已经准备完成（避免重复生成）
         if not force_regenerate:
@@ -542,25 +585,52 @@ def prepare_simulation():
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
         parallel_profile_count = data.get('parallel_profile_count', 5)
-        
         # ========== 同步获取实体数量（在后台任务启动前） ==========
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
         try:
-            logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
-            reader = ZepEntityReader()
-            # 快速读取实体（不需要边信息，只统计数量）
-            filtered_preview = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=entity_types_list,
-                enrich_with_edges=False  # 不获取边信息，加快速度
-            )
-            # 保存实体数量到状态（供前端立即获取）
-            state.entities_count = filtered_preview.filtered_count
-            state.entity_types = list(filtered_preview.entity_types)
-            logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
+            # 补全 graph_id；分阶段重试优先本地计数，避免空 graph_id 打 Zep 405
+            graph_id = manager._resolve_graph_id(state)
+            if graph_id and graph_id != (state.graph_id or ""):
+                state.graph_id = graph_id
+                manager._save_simulation_state(state)
+
+            local_n = 0
+            if prepare_stage in ("event_config", "platform_config", "profiles"):
+                local_entities = manager._entities_from_local(simulation_id)
+                local_n = len(local_entities)
+
+            if local_n > 0 and prepare_stage in ("event_config", "platform_config"):
+                state.entities_count = local_n
+                logger.info(f"分阶段准备使用本地实体数: stage={prepare_stage}, count={local_n}")
+            elif graph_id:
+                logger.info(f"同步获取实体数量: graph_id={graph_id}")
+                reader = ZepEntityReader()
+                filtered_preview = reader.filter_defined_entities(
+                    graph_id=graph_id,
+                    defined_entity_types=entity_types_list,
+                    enrich_with_edges=False,
+                )
+                state.entities_count = filtered_preview.filtered_count
+                state.entity_types = list(filtered_preview.entity_types)
+                logger.info(
+                    f"预期实体数量: {filtered_preview.filtered_count}, "
+                    f"类型: {filtered_preview.entity_types}"
+                )
+            elif local_n > 0:
+                state.entities_count = local_n
+                logger.info(f"无 graph_id，使用本地实体数: {local_n}")
+            else:
+                logger.warning("同步获取实体数量跳过：无 graph_id 且本地无实体")
         except Exception as e:
             logger.warning(f"同步获取实体数量失败（将在后台任务中重试）: {e}")
             # 失败不影响后续流程，后台任务会重新获取
+            # 再尝试本地兜底
+            try:
+                local_n = len(manager._entities_from_local(simulation_id))
+                if local_n > 0:
+                    state.entities_count = local_n
+            except Exception:
+                pass
         
         # 创建异步任务
         task_manager = TaskManager()
@@ -662,7 +732,8 @@ def prepare_simulation():
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
+                    stage=prepare_stage,
                 )
                 
                 # 任务完成
@@ -749,47 +820,27 @@ def get_prepare_status():
         
         task_id = data.get('task_id')
         simulation_id = data.get('simulation_id')
+
+        # dec_/sim_ 不是 TaskManager 的 task_id（常见误传），忽略以免 404 刷屏
+        if task_id and not str(task_id).startswith('task_'):
+            logger.warning(f"忽略非法 task_id={task_id}，仅按 simulation_id 查询准备状态")
+            task_id = None
         
-        # 如果提供了simulation_id，先检查是否已准备完成
-        if simulation_id:
-            is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
-            if is_prepared:
+        # 有 task_id 时必须优先查询任务。分阶段重试期间磁盘上仍保留旧的
+        # ready 配置，若先检查 simulation_id，会把正在运行的任务误报为完成。
+        if task_id:
+            task_manager = TaskManager()
+            task = task_manager.get_task(task_id)
+
+            if task:
+                task_dict = task.to_dict()
+                task_dict["already_prepared"] = False
                 return jsonify({
                     "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "status": "ready",
-                        "progress": 100,
-                        "message": t('api.alreadyPrepared'),
-                        "already_prepared": True,
-                        "prepare_info": prepare_info
-                    }
+                    "data": task_dict
                 })
-        
-        # 如果没有task_id，返回错误
-        if not task_id:
-            if simulation_id:
-                # 有simulation_id但未准备完成
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "status": "not_started",
-                        "progress": 0,
-                        "message": t('api.notStartedPrepare'),
-                        "already_prepared": False
-                    }
-                })
-            return jsonify({
-                "success": False,
-                "error": t('api.requireTaskOrSimId')
-            }), 400
-        
-        task_manager = TaskManager()
-        task = task_manager.get_task(task_id)
-        
-        if not task:
-            # 任务不存在，但如果有simulation_id，检查是否已准备完成
+
+            # 服务重启导致内存任务丢失时，再用磁盘状态兜底。
             if simulation_id:
                 is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
                 if is_prepared:
@@ -805,19 +856,42 @@ def get_prepare_status():
                             "prepare_info": prepare_info
                         }
                     })
-            
+
             return jsonify({
                 "success": False,
                 "error": t('api.taskNotFound', id=task_id)
             }), 404
-        
-        task_dict = task.to_dict()
-        task_dict["already_prepared"] = False
-        
-        return jsonify({
-            "success": True,
-            "data": task_dict
-        })
+
+        # 没有 task_id 时，才按 simulation_id 检查既有准备状态。
+        if not task_id:
+            if simulation_id:
+                is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
+                if is_prepared:
+                    return jsonify({
+                        "success": True,
+                        "data": {
+                            "simulation_id": simulation_id,
+                            "status": "ready",
+                            "progress": 100,
+                            "message": t('api.alreadyPrepared'),
+                            "already_prepared": True,
+                            "prepare_info": prepare_info
+                        }
+                    })
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "status": "not_started",
+                        "progress": 0,
+                        "message": t('api.notStartedPrepare'),
+                        "already_prepared": False
+                    }
+                })
+            return jsonify({
+                "success": False,
+                "error": t('api.requireTaskOrSimId')
+            }), 400
         
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
@@ -1192,16 +1266,24 @@ def get_simulation_profiles_realtime(simulation_id: str):
                     state_data = json.load(f)
                     status = state_data.get("status", "")
                     is_generating = status == "preparing"
-                    total_expected = state_data.get("entities_count")
+                    total_expected = state_data.get("entities_count") or state_data.get("profiles_count")
             except Exception:
                 pass
+
+        # 多方案 materialize / 旧数据常漏写 entities_count：用已有人设数兜底
+        profile_count = len(profiles) if isinstance(profiles, list) else 0
+        if not total_expected and profile_count > 0:
+            total_expected = profile_count
+        elif total_expected and profile_count > total_expected and not is_generating:
+            # 已生成完成时，以实际人设数为准
+            total_expected = profile_count
         
         return jsonify({
             "success": True,
             "data": {
                 "simulation_id": simulation_id,
                 "platform": platform,
-                "count": len(profiles),
+                "count": profile_count,
                 "total_expected": total_expected,
                 "is_generating": is_generating,
                 "file_exists": file_exists,
@@ -1300,6 +1382,14 @@ def get_simulation_config_realtime(simulation_id: str):
                         generation_stage = "completed"
             except Exception:
                 pass
+
+        # 文件已有完整配置时，即使 state 未标记也视为已生成（修复多方案 materialize 漏写）
+        if config and _config_file_looks_complete(config):
+            config_generated = True
+            if generation_stage is None:
+                generation_stage = "completed"
+            if is_generating:
+                is_generating = False
         
         # 构建返回数据
         response_data = {
@@ -1980,6 +2070,52 @@ def get_simulation_actions(simulation_id: str):
         platform = request.args.get('platform')
         agent_id = request.args.get('agent_id', type=int)
         round_num = request.args.get('round_num', type=int)
+
+        # 优先从 OASIS DB 还原真实动作（twitter 脚本曾写空壳 LLM_ACTION）
+        enriched = []
+        try:
+            from pathlib import Path
+            from app.api.run import (
+                _actions_from_oasis_db,
+                _db_candidates,
+                _normalize_action,
+            )
+            from app.config import Config as _Cfg
+
+            sim_dir = os.path.join(_Cfg.OASIS_SIMULATION_DATA_DIR, simulation_id)
+            for db in _db_candidates(sim_dir):
+                rows = _actions_from_oasis_db(db, limit=limit + offset + 50)
+                if not rows:
+                    continue
+                db_name = str(getattr(db, "name", "") or "")
+                platform_guess = "reddit" if "reddit" in db_name else "twitter"
+                if platform and platform != platform_guess:
+                    continue
+                for i, row in enumerate(rows):
+                    if agent_id is not None and int(row.get("agent_id") or -1) != agent_id:
+                        continue
+                    if round_num is not None and int(row.get("round") or -1) != round_num:
+                        continue
+                    norm = _normalize_action(row, i)
+                    norm["platform"] = row.get("platform") or platform_guess
+                    args = norm.get("action_args") if isinstance(norm.get("action_args"), dict) else {}
+                    if norm.get("content") and not args.get("content"):
+                        args = {**args, "content": norm["content"]}
+                        norm["action_args"] = args
+                    enriched.append(norm)
+        except Exception as e:
+            logger.warning(f"从 OASIS DB 富化动作失败，回退 jsonl: {e}")
+
+        if enriched:
+            page = enriched[offset:offset + limit]
+            return jsonify({
+                "success": True,
+                "data": {
+                    "count": len(page),
+                    "actions": page,
+                    "source": "oasis_db",
+                }
+            })
         
         actions = SimulationRunner.get_actions(
             simulation_id=simulation_id,
@@ -1994,7 +2130,8 @@ def get_simulation_actions(simulation_id: str):
             "success": True,
             "data": {
                 "count": len(actions),
-                "actions": [a.to_dict() for a in actions]
+                "actions": [a.to_dict() for a in actions],
+                "source": "jsonl",
             }
         })
         

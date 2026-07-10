@@ -703,6 +703,19 @@ class SimulationRunner:
                                     state.simulated_hours = max(state.twitter_simulated_hours, state.reddit_simulated_hours)
                                 
                                 continue
+
+                            action_type = str(action_data.get("action_type") or "").upper()
+                            args = action_data.get("action_args") or {}
+                            if not isinstance(args, dict):
+                                args = {}
+                            content = (
+                                action_data.get("content")
+                                or args.get("content")
+                                or args.get("quote_content")
+                                or ""
+                            )
+                            if action_type in ("LLM_ACTION", "DO_NOTHING", "REFRESH", "SIGN_UP") and not str(content).strip():
+                                continue
                             
                             action = AgentAction(
                                 round_num=action_data.get("round", 0),
@@ -902,6 +915,21 @@ class SimulationRunner:
                     
                     # 跳过没有 agent_id 的记录（非 Agent 动作）
                     if "agent_id" not in data:
+                        continue
+
+                    action_type = str(data.get("action_type") or "").upper()
+                    args = data.get("action_args") or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    content = (
+                        data.get("content")
+                        or args.get("content")
+                        or args.get("quote_content")
+                        or args.get("post_content")
+                        or ""
+                    )
+                    # 空壳 LLM_ACTION / 无意义动作不进时间线
+                    if action_type in ("LLM_ACTION", "DO_NOTHING", "REFRESH", "SIGN_UP") and not str(content).strip():
                         continue
                     
                     # 获取平台：优先使用记录中的 platform，否则使用默认平台

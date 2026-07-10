@@ -45,23 +45,28 @@
             </div>
             <div class="info-row">
               <span class="info-label">Task ID</span>
-              <span class="info-value mono">{{ taskId || $t('step2.asyncTaskDone') }}</span>
+              <span class="info-value mono">{{ taskId || '—' }}</span>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Step 02: 生成 Agent 人设 -->
-      <div class="step-card" :class="{ 'active': phase === 1, 'completed': phase > 1 }">
+      <div class="step-card" :class="stepCardClass('profiles', 1)">
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">02</span>
             <span class="step-title">{{ $t('step2.generateAgentPersona') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="phase > 1" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 1" class="badge processing">{{ prepareProgress }}%</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
+            <button
+              v-if="canRetryStage('profiles')"
+              type="button"
+              class="retry-btn"
+              :disabled="!!retryingStage"
+              @click="retryStage('profiles')"
+            >{{ retryingStage === 'profiles' ? $t('step2.retrying') : $t('common.retry') }}</button>
+            <span class="badge" :class="stepBadgeClass('profiles', 1)">{{ stepBadgeText('profiles', 1) }}</span>
           </div>
         </div>
 
@@ -78,7 +83,7 @@
               <span class="stat-label">{{ $t('step2.currentAgentCount') }}</span>
             </div>
             <div class="stat-card">
-              <span class="stat-value">{{ expectedTotal || '-' }}</span>
+              <span class="stat-value">{{ displayExpectedTotal }}</span>
               <span class="stat-label">{{ $t('step2.expectedAgentTotal') }}</span>
             </div>
             <div class="stat-card">
@@ -124,16 +129,21 @@
       </div>
 
       <!-- Step 03: 生成双平台模拟配置 -->
-      <div class="step-card" :class="{ 'active': phase === 2, 'completed': phase > 2 }">
+      <div class="step-card" :class="stepCardClass('platform', 2)">
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">03</span>
             <span class="step-title">{{ $t('step2.dualPlatformConfig') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="phase > 2" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 2" class="badge processing">{{ $t('step2.generating') }}</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
+            <button
+              v-if="canRetryStage('platform_config')"
+              type="button"
+              class="retry-btn"
+              :disabled="!!retryingStage"
+              @click="retryStage('platform_config')"
+            >{{ retryingStage === 'platform_config' ? $t('step2.retrying') : $t('common.retry') }}</button>
+            <span class="badge" :class="stepBadgeClass('platform', 2)">{{ stepBadgeText('platform', 2) }}</span>
           </div>
         </div>
 
@@ -168,23 +178,23 @@
               <div class="time-periods">
                 <div class="period-item">
                   <span class="period-label">{{ $t('step2.peakHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.peak_hours?.join(':00, ') }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.peak_activity_multiplier }}</span>
+                  <span class="period-hours">{{ formatHourList(simulationConfig.time_config?.peak_hours) }}</span>
+                  <span class="period-multiplier">×{{ simulationConfig.time_config?.peak_activity_multiplier ?? '-' }}</span>
                 </div>
                 <div class="period-item">
                   <span class="period-label">{{ $t('step2.workHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.work_hours?.[0] }}:00-{{ simulationConfig.time_config?.work_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.work_activity_multiplier }}</span>
+                  <span class="period-hours">{{ formatHourRange(simulationConfig.time_config?.work_hours) }}</span>
+                  <span class="period-multiplier">×{{ simulationConfig.time_config?.work_activity_multiplier ?? '-' }}</span>
                 </div>
                 <div class="period-item">
                   <span class="period-label">{{ $t('step2.morningHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.morning_hours?.[0] }}:00-{{ simulationConfig.time_config?.morning_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.morning_activity_multiplier }}</span>
+                  <span class="period-hours">{{ formatHourRange(simulationConfig.time_config?.morning_hours) }}</span>
+                  <span class="period-multiplier">×{{ simulationConfig.time_config?.morning_activity_multiplier ?? '-' }}</span>
                 </div>
                 <div class="period-item">
                   <span class="period-label">{{ $t('step2.offPeakHours') }}</span>
-                  <span class="period-hours">{{ simulationConfig.time_config?.off_peak_hours?.[0] }}:00-{{ simulationConfig.time_config?.off_peak_hours?.slice(-1)[0] }}:00</span>
-                  <span class="period-multiplier">×{{ simulationConfig.time_config?.off_peak_activity_multiplier }}</span>
+                  <span class="period-hours">{{ formatHourRange(simulationConfig.time_config?.off_peak_hours) }}</span>
+                  <span class="period-multiplier">×{{ simulationConfig.time_config?.off_peak_activity_multiplier ?? '-' }}</span>
                 </div>
               </div>
             </div>
@@ -357,16 +367,21 @@
       </div>
 
       <!-- Step 04: 初始激活编排 -->
-      <div class="step-card" :class="{ 'active': phase === 3, 'completed': phase > 3 }">
+      <div class="step-card" :class="stepCardClass('events', 3)">
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">04</span>
             <span class="step-title">{{ $t('step2.initialActivation') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="phase > 3" class="badge success">{{ $t('common.completed') }}</span>
-            <span v-else-if="phase === 3" class="badge processing">{{ $t('step2.orchestrating') }}</span>
-            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
+            <button
+              v-if="canRetryStage('event_config')"
+              type="button"
+              class="retry-btn"
+              :disabled="!!retryingStage"
+              @click="retryStage('event_config')"
+            >{{ retryingStage === 'event_config' ? $t('step2.retrying') : $t('common.retry') }}</button>
+            <span class="badge" :class="stepBadgeClass('events', 3)">{{ stepBadgeText('events', 3) }}</span>
           </div>
         </div>
 
@@ -378,10 +393,16 @@
 
           <div v-if="simulationConfig?.event_config" class="orchestration-content">
             <div
-              v-if="!simulationConfig.event_config.narrative_direction && !(simulationConfig.event_config.hot_topics || []).length && !(simulationConfig.event_config.initial_posts || []).length"
+              v-if="stepFlags.events === 'failed' || isWeakEventConfig"
               class="orchestration-empty-hint"
             >
-              初始激活内容为空：事件配置 LLM 可能失败（常见原因：当前 API 端点不支持所配模型）。请检查后端日志后更换模型并重新「环境搭建」。
+              {{ lastStageError || $t('step2.eventConfigFailedHint') }}
+            </div>
+            <div
+              v-else-if="!simulationConfig.event_config.narrative_direction && !(simulationConfig.event_config.hot_topics || []).length && !(simulationConfig.event_config.initial_posts || []).length"
+              class="orchestration-empty-hint"
+            >
+              {{ $t('step2.eventConfigFailedHint') }}
             </div>
             <!-- 叙事方向 -->
             <div class="narrative-box">
@@ -534,7 +555,7 @@
             </button>
             <button 
               class="action-btn primary"
-              :disabled="phase < 4"
+              :disabled="phase < 4 || stepIsFailed('events') || stepIsFailed('platform') || !!retryingStage"
               @click="handleStartSimulation"
             >
               {{ $t('step2.startDualWorldSim') }} ➝
@@ -655,6 +676,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   prepareSimulation,
+  isRealTaskId,
   getPrepareStatus,
   getSimulationProfilesRealtime,
   getSimulationConfig,
@@ -684,6 +706,11 @@ const progressMessage = ref('')
 const profiles = ref([])
 const entityTypes = ref([])
 const expectedTotal = ref(null)
+const displayExpectedTotal = computed(() => {
+  if (expectedTotal.value && expectedTotal.value > 0) return expectedTotal.value
+  if (profiles.value.length > 0) return profiles.value.length
+  return '-'
+})
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
@@ -700,6 +727,171 @@ const scenarios = ref([
 const sampleCount = ref(1)
 const editorMaxRounds = ref(10)
 const applyingScenarios = ref(false)
+/** 分步状态：idle | ok | failed */
+const stepFlags = ref({
+  profiles: 'idle',
+  platform: 'idle',
+  events: 'idle',
+})
+const retryingStage = ref(null) // profiles | platform_config | event_config | null
+const lastStageError = ref('')
+
+const isWeakEventConfig = computed(() => {
+  const cfg = simulationConfig.value
+  if (!cfg?.event_config) return false
+  const reasoning = String(cfg.generation_reasoning || '')
+  if (reasoning.includes('使用默认配置') && reasoning.includes('事件配置')) return true
+  const posts = cfg.event_config.initial_posts || []
+  const topics = cfg.event_config.hot_topics || []
+  const narrative = (cfg.event_config.narrative_direction || '').trim()
+  if (posts.length < 2 || topics.length < 1 || !narrative) return true
+  if (posts.length === 1) {
+    const c = String(posts[0].content || '')
+    const req = String(cfg.simulation_requirement || '')
+    if (req && (c.includes(req.slice(0, 40)) || req.includes(c.slice(0, 40)))) return true
+  }
+  return false
+})
+
+/** 平台配置：有 time + agents 即视为已生成成功；历史默认作息不算失败 */
+const hasPlatformConfig = computed(() => {
+  const cfg = simulationConfig.value
+  return !!(cfg?.time_config && (cfg.agent_configs || []).length)
+})
+
+const hasProfiles = computed(() => profiles.value.length > 0)
+
+const stageKeyToFlag = {
+  profiles: 'profiles',
+  platform_config: 'platform',
+  event_config: 'events',
+}
+
+function stepHasResult(flagKey) {
+  if (flagKey === 'profiles') return hasProfiles.value || stepFlags.value.profiles === 'ok'
+  if (flagKey === 'platform') return hasPlatformConfig.value || stepFlags.value.platform === 'ok'
+  if (flagKey === 'events') {
+    return (
+      stepFlags.value.events === 'ok' ||
+      (!!simulationConfig.value?.event_config && !isWeakEventConfig.value)
+    )
+  }
+  return false
+}
+
+function stepIsFailed(flagKey) {
+  return stepFlags.value[flagKey] === 'failed' || (flagKey === 'events' && isWeakEventConfig.value)
+}
+
+function stepIsRunning(flagKey, phaseNum) {
+  const stageMap = { profiles: 'profiles', platform: 'platform_config', events: 'event_config' }
+  if (retryingStage.value === stageMap[flagKey]) return true
+  // 已有结果且未在重试 → 不算 running（避免 0% 误显示）
+  if (stepHasResult(flagKey) && !stepIsFailed(flagKey)) return false
+  return phase.value === phaseNum && !retryingStage.value
+}
+
+function stepCardClass(flagKey, phaseNum) {
+  return {
+    active: stepIsRunning(flagKey, phaseNum),
+    completed: stepHasResult(flagKey) && !stepIsFailed(flagKey) && !stepIsRunning(flagKey, phaseNum),
+    failed: stepIsFailed(flagKey) && !stepIsRunning(flagKey, phaseNum),
+  }
+}
+
+function stepBadgeClass(flagKey, phaseNum) {
+  if (stepIsRunning(flagKey, phaseNum)) return 'processing'
+  if (stepIsFailed(flagKey)) return 'failed'
+  if (stepHasResult(flagKey) || phase.value > phaseNum) return 'success'
+  return 'pending'
+}
+
+function stepBadgeText(flagKey, phaseNum) {
+  if (stepIsRunning(flagKey, phaseNum)) {
+    if (flagKey === 'profiles') return `${prepareProgress.value}%`
+    if (flagKey === 'platform') return t('step2.generating')
+    return t('step2.orchestrating')
+  }
+  if (stepIsFailed(flagKey)) return t('common.failed')
+  if (stepHasResult(flagKey) || phase.value > phaseNum) return t('common.completed')
+  return t('common.pending')
+}
+
+function evaluateStepFlagsFromConfig() {
+  if (hasProfiles.value) {
+    stepFlags.value.profiles = 'ok'
+  }
+  if (hasPlatformConfig.value) {
+    stepFlags.value.platform = 'ok'
+  }
+  if (simulationConfig.value?.event_config) {
+    stepFlags.value.events = isWeakEventConfig.value ? 'failed' : 'ok'
+  }
+}
+
+function canRetryStage(stage) {
+  if (retryingStage.value) return stage === retryingStage.value
+  const flagKey = stageKeyToFlag[stage]
+  if (!flagKey) return false
+  // 仅失败时显示重试；已完成不显示
+  return stepIsFailed(flagKey)
+}
+
+async function retryStage(stage) {
+  if (!props.simulationId || retryingStage.value) return
+  retryingStage.value = stage
+  lastStageError.value = ''
+  if (stage === 'profiles') {
+    stepFlags.value.profiles = 'idle'
+    phase.value = 1
+  } else if (stage === 'platform_config') {
+    stepFlags.value.platform = 'idle'
+    phase.value = 2
+  } else if (stage === 'event_config') {
+    stepFlags.value.events = 'idle'
+    phase.value = 3
+  }
+  addLog(t('step2.retryStageLog', { stage }))
+  emit('update-status', 'processing')
+  try {
+    const res = await prepareSimulation({
+      simulation_id: props.simulationId,
+      use_llm_for_profiles: true,
+      parallel_profile_count: 5,
+      force_regenerate: true,
+      stage,
+    })
+    if (!res.success) {
+      throw new Error(res.error || t('common.unknownError'))
+    }
+    // 分阶段重试若被误判为 already_prepared，视为失败（否则看起来像没反应）
+    if (res.data?.already_prepared && stage !== 'all') {
+      throw new Error('分阶段重试未真正启动，请刷新后重试')
+    }
+    if (res.data?.already_prepared && stage === 'all') {
+      await loadPreparedData()
+      retryingStage.value = null
+      return
+    }
+    taskId.value = isRealTaskId(res.data?.task_id) ? res.data.task_id : null
+    if (!taskId.value) {
+      throw new Error('未返回有效 task_id，无法跟踪重试进度')
+    }
+    startPolling()
+    if (stage === 'profiles' || stage === 'all') startProfilesPolling()
+    if (stage === 'platform_config' || stage === 'event_config' || stage === 'all') {
+      startConfigPolling()
+    }
+  } catch (err) {
+    lastStageError.value = err.message
+    if (stage === 'profiles') stepFlags.value.profiles = 'failed'
+    if (stage === 'platform_config') stepFlags.value.platform = 'failed'
+    if (stage === 'event_config') stepFlags.value.events = 'failed'
+    addLog(t('log.prepareFailed', { error: err.message }))
+    emit('update-status', 'error')
+    retryingStage.value = null
+  }
+}
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -816,25 +1008,45 @@ const startPrepareSimulation = async () => {
   addLog(t('log.simInstanceCreated', { id: props.simulationId }))
   addLog(t('log.preparingSimEnv'))
   emit('update-status', 'processing')
+
+  // 先探测磁盘是否已有完整配置，避免 N>1 prepareDecision 反复冲掉 LLM 结果
+  try {
+    const peek = await getSimulationConfigRealtime(props.simulationId)
+    if (peek.success && configLooksReady(peek.data)) {
+      addLog(t('log.detectedExistingPrep'))
+      await loadPreparedData()
+      return
+    }
+  } catch (_) {
+    /* 继续走 prepare */
+  }
   
+  // 以服务端决策为准，不要把本地未应用的方案数传进去误判 N>1
   try {
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
       parallel_profile_count: 5,
-      scenario_count: scenarios.value.length,
     })
     
     if (res.success && res.data) {
-      if (res.data.already_prepared) {
+      if (res.data.already_prepared || res.data.status === 'completed' || res.data.status === 'ready') {
         addLog(t('log.detectedExistingPrep'))
         await loadPreparedData()
         return
       }
-      
-      taskId.value = res.data.task_id
+
+      const tid = res.data.task_id
+      if (!isRealTaskId(tid)) {
+        // 无异步任务（或误返回了 dec_/sim_），直接按磁盘状态加载，避免 /prepare/status 404
+        addLog(t('log.prepareComplete'))
+        await loadPreparedData()
+        return
+      }
+
+      taskId.value = tid
       addLog(t('log.prepareTaskStarted'))
-      addLog(t('log.prepareTaskId', { taskId: res.data.task_id }))
+      addLog(t('log.prepareTaskId', { taskId: tid }))
       
       // 立即设置预期Agent总数（从prepare接口返回值获取）
       if (res.data.expected_entities_count) {
@@ -893,6 +1105,8 @@ const applyScenariosAndPrepare = async () => {
 }
 
 const startPolling = () => {
+  stopPolling()
+  pollPrepareStatus()
   pollTimer = setInterval(pollPrepareStatus, 2000)
 }
 
@@ -964,11 +1178,28 @@ const pollPrepareStatus = async () => {
         addLog(t('log.prepareComplete'))
         stopPolling()
         stopProfilesPolling()
+        stopConfigPolling()
         await loadPreparedData()
+        retryingStage.value = null
       } else if (data.status === 'failed') {
-        addLog(t('log.prepareFailedWithError', { error: data.error || t('common.unknownError') }))
+        const errMsg = data.error || t('common.unknownError')
+        lastStageError.value = errMsg
+        addLog(t('log.prepareFailedWithError', { error: errMsg }))
+        const stage = retryingStage.value
+        if (stage === 'profiles') stepFlags.value.profiles = 'failed'
+        else if (stage === 'platform_config') stepFlags.value.platform = 'failed'
+        else if (stage === 'event_config') stepFlags.value.events = 'failed'
+        else {
+          // 全量失败：按当前进度标记
+          if (phase.value <= 1) stepFlags.value.profiles = 'failed'
+          else if (phase.value === 2) stepFlags.value.platform = 'failed'
+          else stepFlags.value.events = 'failed'
+        }
         stopPolling()
         stopProfilesPolling()
+        stopConfigPolling()
+        emit('update-status', 'error')
+        retryingStage.value = null
       }
     }
   } catch (err) {
@@ -986,8 +1217,12 @@ const fetchProfilesRealtime = async () => {
       const prevCount = profiles.value.length
       profiles.value = res.data.profiles || []
       // 只有当 API 返回有效值时才更新，避免覆盖已有的有效值
-      if (res.data.total_expected) {
-        expectedTotal.value = res.data.total_expected
+      const apiExpected = Number(res.data.total_expected)
+      if (Number.isFinite(apiExpected) && apiExpected > 0) {
+        expectedTotal.value = apiExpected
+      } else if (!expectedTotal.value && profiles.value.length > 0) {
+        // state 漏写 entities_count 时，用已加载人设数作为预期
+        expectedTotal.value = profiles.value.length
       }
       
       // 提取实体类型
@@ -999,6 +1234,11 @@ const fetchProfilesRealtime = async () => {
       
       // 输出 Profile 生成进度日志（仅当数量变化时）
       const currentCount = profiles.value.length
+      if (currentCount > 0) {
+        if (retryingStage.value !== 'profiles') {
+          stepFlags.value.profiles = 'ok'
+        }
+      }
       if (currentCount > 0 && currentCount !== lastLoggedProfileCount) {
         lastLoggedProfileCount = currentCount
         const total = expectedTotal.value || '?'
@@ -1022,6 +1262,8 @@ const fetchProfilesRealtime = async () => {
 
 // 配置轮询
 const startConfigPolling = () => {
+  stopConfigPolling()
+  fetchConfigRealtime()
   configTimer = setInterval(fetchConfigRealtime, 2000)
 }
 
@@ -1030,6 +1272,21 @@ const stopConfigPolling = () => {
     clearInterval(configTimer)
     configTimer = null
   }
+}
+
+function formatHourList(hours) {
+  if (!Array.isArray(hours) || !hours.length) return '-'
+  return hours.map((h) => `${h}:00`).join(', ')
+}
+
+function formatHourRange(hours) {
+  if (!Array.isArray(hours) || !hours.length) return '-'
+  return `${hours[0]}:00-${hours[hours.length - 1]}:00`
+}
+
+function configLooksReady(data) {
+  const cfg = data?.config
+  return !!(cfg?.time_config && (cfg.agent_configs || []).length)
 }
 
 const fetchConfigRealtime = async () => {
@@ -1050,9 +1307,15 @@ const fetchConfigRealtime = async () => {
           addLog(t('log.generatingLLMConfig'))
         }
       }
+
+      // 分阶段重试：只刷新预览，完成以 prepare/status 为准（避免旧配置秒完成）
+      if (retryingStage.value) {
+        if (data.config) simulationConfig.value = data.config
+        return
+      }
       
-      // 如果配置已生成
-      if (data.config_generated && data.config) {
+      // 配置文件已有 time+agents 即视为完成（不依赖可能漏写的 config_generated）
+      if (configLooksReady(data) || (data.config_generated && data.config)) {
         simulationConfig.value = data.config
         addLog(t('log.configComplete'))
 
@@ -1078,9 +1341,17 @@ const fetchConfigRealtime = async () => {
         }
         
         stopConfigPolling()
-        phase.value = 4
-        addLog(t('log.envSetupComplete'))
-        emit('update-status', 'completed')
+        evaluateStepFlagsFromConfig()
+        if (stepIsFailed('events') || stepIsFailed('platform')) {
+          phase.value = stepIsFailed('platform') ? 2 : 3
+          addLog(t('step2.partialPrepareFailed'))
+          emit('update-status', 'error')
+        } else {
+          phase.value = 4
+          addLog(t('log.envSetupComplete'))
+          emit('update-status', 'completed')
+        }
+        retryingStage.value = null
       }
     }
   } catch (err) {
@@ -1100,7 +1371,7 @@ const loadPreparedData = async () => {
   try {
     const res = await getSimulationConfigRealtime(props.simulationId)
     if (res.success && res.data) {
-      if (res.data.config_generated && res.data.config) {
+      if (configLooksReady(res.data) || (res.data.config_generated && res.data.config)) {
         simulationConfig.value = res.data.config
         addLog(t('log.configLoadSuccess'))
 
@@ -1111,18 +1382,32 @@ const loadPreparedData = async () => {
           addLog(t('log.configSummaryPostsAlt', { count: res.data.summary.initial_posts_count }))
         }
 
-        addLog(t('log.envSetupComplete'))
-        phase.value = 4
-        emit('update-status', 'completed')
+        evaluateStepFlagsFromConfig()
+        if (stepIsFailed('events') || stepIsFailed('platform')) {
+          phase.value = stepIsFailed('platform') ? 2 : 3
+          addLog(t('step2.partialPrepareFailed'))
+          emit('update-status', 'error')
+        } else {
+          addLog(t('log.envSetupComplete'))
+          phase.value = 4
+          emit('update-status', 'completed')
+        }
+        retryingStage.value = null
       } else {
         // 配置尚未生成，开始轮询
         addLog(t('log.configGenerating'))
+        // 人设已在磁盘上时仍标为完成，避免 0% 误导
+        if (profiles.value.length > 0) {
+          stepFlags.value.profiles = 'ok'
+          phase.value = 2
+        }
         startConfigPolling()
       }
     }
   } catch (err) {
     addLog(t('log.loadConfigFailed', { error: err.message }))
     emit('update-status', 'error')
+    retryingStage.value = null
   }
 }
 
@@ -1244,7 +1529,34 @@ onUnmounted(() => {
 
 .badge.success { background: #E8F5E9; color: #2E7D32; }
 .badge.processing { background: var(--brand); color: #FFF; }
+.badge.failed { background: #FDECEA; color: #C0392B; }
 .badge.pending { background: #F5F5F5; color: #999; }
+
+.retry-btn {
+  margin-right: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid #333;
+  background: #fff;
+  color: #111;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.retry-btn:hover:not(:disabled) {
+  background: #111;
+  color: #fff;
+}
+.retry-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.step-card.failed {
+  border-color: #e0a8a3;
+}
 .badge.accent { background: #E3F2FD; color: #1565C0; }
 
 .card-content {

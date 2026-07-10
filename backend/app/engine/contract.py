@@ -62,6 +62,12 @@ def _default_agent_config(agent: Dict[str, Any]) -> Dict[str, Any]:
         }
     return {
         "agent_id": agent_id,
+        "entity_uuid": agent.get("entity_uuid") or agent.get("uuid") or "",
+        "entity_name": agent.get("entity_name")
+        or agent.get("name")
+        or agent.get("username")
+        or f"agent_{agent_id}",
+        "entity_type": agent.get("entity_type") or agent.get("profession") or "Unknown",
         "posts_per_hour": 0.5,
         "comments_per_hour": 1.0,
         "response_delay_min": 2,
@@ -78,6 +84,28 @@ def ensure_agent_configs(
     cfg = deepcopy(config)
     existing = cfg.get("agent_configs") or []
     if existing:
+        # 补齐缺失的展示字段（多方案旧数据常只有 agent_id）
+        by_id = {int(a.get("agent_id", i)): a for i, a in enumerate(agents)}
+        enriched = []
+        for i, row in enumerate(existing):
+            item = dict(row)
+            aid = int(item.get("agent_id", i))
+            src = by_id.get(aid) or {}
+            if not item.get("entity_name"):
+                item["entity_name"] = (
+                    src.get("entity_name")
+                    or src.get("name")
+                    or src.get("username")
+                    or f"agent_{aid}"
+                )
+            if not item.get("entity_type"):
+                item["entity_type"] = (
+                    src.get("entity_type") or src.get("profession") or "Unknown"
+                )
+            if not item.get("entity_uuid"):
+                item["entity_uuid"] = src.get("entity_uuid") or src.get("uuid") or ""
+            enriched.append(item)
+        cfg["agent_configs"] = enriched
         return cfg
     cfg["agent_configs"] = [_default_agent_config(a) for a in agents]
     logger.info(
@@ -86,20 +114,73 @@ def ensure_agent_configs(
     return cfg
 
 
+def default_time_config(
+    total_hours: int = 72,
+    minutes_per_round: int = 60,
+    agents_per_hour_min: int = 2,
+    agents_per_hour_max: int = 12,
+) -> Dict[str, Any]:
+    """完整默认时间配置（含高峰/工作/早间/低谷），避免 UI 出现 :00 空值。"""
+    return {
+        "total_simulation_hours": max(1, int(total_hours)),
+        "minutes_per_round": int(minutes_per_round),
+        "agents_per_hour_min": int(agents_per_hour_min),
+        "agents_per_hour_max": int(agents_per_hour_max),
+        "peak_hours": [19, 20, 21, 22],
+        "peak_activity_multiplier": 1.5,
+        "off_peak_hours": [0, 1, 2, 3, 4, 5],
+        "off_peak_activity_multiplier": 0.05,
+        "morning_hours": [6, 7, 8],
+        "morning_activity_multiplier": 0.4,
+        "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        "work_activity_multiplier": 0.7,
+    }
+
+
+def normalize_time_config(time_config: Optional[Dict[str, Any]], max_rounds: int = 10) -> Dict[str, Any]:
+    """补全残缺 time_config（多方案 stub 常缺时段字段）。"""
+    base = default_time_config(
+        total_hours=max(1, int(max_rounds or 10)),
+        minutes_per_round=60,
+        agents_per_hour_min=2,
+        agents_per_hour_max=12,
+    )
+    if not isinstance(time_config, dict):
+        return base
+    merged = {**base, **time_config}
+    # 空列表也视为缺失
+    for key in (
+        "peak_hours",
+        "off_peak_hours",
+        "morning_hours",
+        "work_hours",
+    ):
+        if not merged.get(key):
+            merged[key] = base[key]
+    for key in (
+        "peak_activity_multiplier",
+        "off_peak_activity_multiplier",
+        "morning_activity_multiplier",
+        "work_activity_multiplier",
+    ):
+        if merged.get(key) is None:
+            merged[key] = base[key]
+    return merged
+
+
 def _default_config(
     run_id: str,
     max_rounds: int = 10,
     seed: int = 42,
 ) -> Dict[str, Any]:
-    hours = max(1, max_rounds)  # minutes_per_round=60 → rounds ≈ hours
     return {
         "simulation_id": run_id,
-        "time_config": {
-            "total_simulation_hours": hours,
-            "minutes_per_round": 60,
-            "agents_per_hour_min": 2,
-            "agents_per_hour_max": 12,
-        },
+        "time_config": default_time_config(
+            total_hours=max(1, max_rounds),
+            minutes_per_round=60,
+            agents_per_hour_min=2,
+            agents_per_hour_max=12,
+        ),
         "event_config": {
             "initial_posts": [],
             "hot_topics": [],
@@ -203,11 +284,11 @@ def materialize_run_dir(
     cfg = deepcopy(config) if config else _default_config(run_id, max_rounds, seed)
     cfg["simulation_id"] = run_id
     cfg["seed"] = seed
-    if "time_config" in cfg:
-        cfg["time_config"]["total_simulation_hours"] = min(
-            int(cfg["time_config"].get("total_simulation_hours", max_rounds)),
-            max(1, max_rounds),
-        )
+    cfg["time_config"] = normalize_time_config(cfg.get("time_config"), max_rounds=max_rounds)
+    cfg["time_config"]["total_simulation_hours"] = min(
+        int(cfg["time_config"].get("total_simulation_hours", max_rounds)),
+        max(1, max_rounds),
+    )
 
     profiles = _load_profiles_from_dir(run_dir)
     agents = load_agents_index(profiles)

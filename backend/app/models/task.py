@@ -69,7 +69,8 @@ class TaskManager:
         return cls._instance
 
     def create_task(self, task_type: str, metadata: Optional[Dict] = None) -> str:
-        task_id = str(uuid.uuid4())
+        # 前缀 task_：前端用此前缀区分真实异步任务与 dec_/sim_ 误传
+        task_id = f"task_{uuid.uuid4().hex[:12]}"
         now = datetime.now()
 
         task = Task(

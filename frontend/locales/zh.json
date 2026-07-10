@@ -184,7 +184,11 @@
     "genderOther": "其他",
     "yearsOld": "岁",
     "initializing": "初始化",
-    "generating": "生成中"
+    "generating": "生成中",
+    "retrying": "重试中…",
+    "retryStageLog": "正在单独重试步骤: {stage}",
+    "partialPrepareFailed": "部分步骤未通过 LLM 校验（已禁用兜底）。请点击对应步骤的「重试」。",
+    "eventConfigFailedHint": "初始激活编排失败或结果无效（需≥2条初始帖、≥1个热点、非空叙事）。请点「重试」，不要使用兜底结果。"
   },
   "step3": {
     "startGenerateReport": "开始生成结果报告",
@@ -215,7 +219,9 @@
     "forceStopSuccess": "模拟已强制停止",
     "forceStopFailed": "强制停止失败: {error}",
     "startGenerateReportBtn": "开始生成结果报告",
-    "generatingReportBtn": "启动中..."
+    "generatingReportBtn": "启动中...",
+    "stopSimBtn": "停止推演",
+    "stoppingBtn": "停止中…"
   },
   "step4": {
     "generatingSection": "正在生成{title}...",
