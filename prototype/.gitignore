@@ -1,0 +1,11 @@
+# 保留对比页所需的汇总结果，忽略大体量中间产物
+outputs/synthetic/
+outputs/demo_*/
+outputs/scenario_*_mapping.json
+outputs/run_all_summary.json
+outputs/metrics_*.json
+shared/base_simulation/
+.env
+__pycache__/
+*.pyc
+.DS_Store

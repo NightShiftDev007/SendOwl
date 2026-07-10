@@ -1,0 +1,43 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "三方案均有内容产出",
+      "pass": true,
+      "detail": "A=18, B=17, Base=28",
+      "required": true
+    },
+    {
+      "name": "可区分-观点结构",
+      "pass": true,
+      "detail": "max L1=0.95 (A↔B=0.88, A↔Base=0.95, B↔Base=0.42)",
+      "required": true
+    },
+    {
+      "name": "符合直觉-柔性更中立",
+      "pass": true,
+      "detail": "B中立=58.82%, A中立=16.67%",
+      "required": true
+    },
+    {
+      "name": "符合直觉-强硬更极化",
+      "pass": true,
+      "detail": "A极化(赞+反)=83.33%, B极化=41.17%",
+      "required": true
+    },
+    {
+      "name": "符合直觉-Baseline更观望",
+      "pass": true,
+      "detail": "Base中立=64.29%, A=16.67%, B=58.82%",
+      "required": true
+    },
+    {
+      "name": "可区分-级联深度",
+      "pass": false,
+      "detail": "A depth=0, Base=0（小样本常为0，不阻断）",
+      "required": false
+    }
+  ],
+  "mode": "live",
+  "note": "live 验收关注观点结构可区分与叙事直觉，不要求 Baseline 帖子数更少"
+}

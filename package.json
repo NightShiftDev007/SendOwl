@@ -1,0 +1,22 @@
+{
+  "name": "ai-decision-center",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Decision Center — ontology × multi-agent simulation × decision loop",
+  "scripts": {
+    "setup:backend": "cd backend && uv sync",
+    "backend": "cd backend && uv run python run.py",
+    "frontend": "cd frontend && pnpm dev",
+    "dev": "concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"pnpm run backend\" \"pnpm run frontend\"",
+    "smoke": "cd backend && uv run python scripts/smoke_offline_mvp.py",
+    "e2e": "cd backend && uv run python scripts/e2e_mvp_demo.py",
+    "build:frontend": "cd frontend && pnpm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

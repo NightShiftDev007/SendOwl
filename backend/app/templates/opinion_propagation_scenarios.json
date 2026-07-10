@@ -1,0 +1,61 @@
+{
+  "case_id": "jiangcheng_ebike_policy",
+  "case_title": "江城市电动自行车限行新政发布策略对比",
+  "simulation_requirement": "预测江城市电动自行车限行新政在不同发布策略下的舆论传播路径、观点分布与关键引爆点。",
+  "shared_world": {
+    "description": "所有方案共用同一套图谱与 Agent profiles，仅 initial_posts 不同",
+    "preferred_poster_keywords": ["交管", "官方", "周明远", "公安", "交通警察"]
+  },
+  "run_defaults": {
+    "platform": "twitter",
+    "max_rounds": 10,
+    "enable_reddit": false,
+    "enable_twitter": true
+  },
+  "scenarios": [
+    {
+      "id": "A_hard",
+      "name": "方案A·强硬发布",
+      "color": "#e74c3c",
+      "hypothesis": "强硬罚则细节会放大骑手与商户反对，负面情绪更高，传播更快但更极化。",
+      "initial_posts": [
+        {
+          "content": "【江城市交管局公告】自下周一零时起，江城大道、滨江快速路辅路、中山路（人民广场至火车站段）、大学城环路内侧机动车道禁止电动自行车通行。首次违规罚款50元，二次200元并扣车7日，三次及以上罚款500元并记入交通信用。请市民与骑手立即遵照执行。",
+          "poster_hint": "official"
+        },
+        {
+          "content": "市交管局局长周明远：安全数据已经到了临界点，必须先把秩序立起来。执法将严格到位，不设例外。",
+          "poster_hint": "official"
+        }
+      ]
+    },
+    {
+      "id": "B_soft",
+      "name": "方案B·柔性发布",
+      "color": "#27ae60",
+      "hypothesis": "试点+补贴+FAQ 会降低对立，反对声音仍在但更聚焦执行细节，负面占比低于强硬方案。",
+      "initial_posts": [
+        {
+          "content": "【江城市交管局公告】电动自行车通行管理试点启动：先在江城大道与中山路试点90天。同步推出老旧车换购最高补贴800元；持平台认证的外卖骑手可申请临时通行证。今晚19:00起官方账号连续两周直播FAQ答疑，欢迎提问。",
+          "poster_hint": "official"
+        },
+        {
+          "content": "市交管局：我们听到了骑手与商户的声音。试点期间将评估通行效率、事故率与民生影响，再决定是否扩大范围。配套换乘点与合规路线图同步发布。",
+          "poster_hint": "official"
+        }
+      ]
+    },
+    {
+      "id": "Baseline",
+      "name": "Baseline·不正式发布",
+      "color": "#7f8c8d",
+      "hypothesis": "仅有模糊传言时，传播规模较小，观点更分散，难以形成统一动员。",
+      "initial_posts": [
+        {
+          "content": "听说江城要限电瓶车？有人在群里传下周江城大道不让骑了，也不知道是真是假，有官方消息吗？",
+          "poster_hint": "citizen"
+        }
+      ]
+    }
+  ]
+}

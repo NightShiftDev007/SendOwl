@@ -1,0 +1,33 @@
+# Third-Party Notices
+
+This repository (AI Decision Center) incorporates code and dependencies from the
+following projects. Please review their respective licenses and terms.
+
+## MiroFish
+
+- Source: https://github.com/666ghj/MiroFish
+- Original license: AGPL-3.0
+- Status in this repository: **commercial dual-license obtained**
+- Vendored modules under `backend/app/{ontology,world,engine,decision,utils}`
+  and `backend/scripts/` are derived from MiroFish backend services and
+  simulation scripts.
+- The AGPL-3.0 network-copyleft terms do **not** apply to this derivative work
+  under the commercial dual-license granted to the AI Decision Center project.
+
+## OASIS / CAMEL-AI
+
+- Packages: `camel-oasis`, `camel-ai`
+- License: Apache License 2.0
+- Used as runtime dependencies for multi-agent social simulation.
+
+## Zep Cloud SDK
+
+- Package: `zep-cloud`
+- License / terms: governed by Zep Cloud SDK and Zep Cloud service agreements
+  (separate from this repository's license).
+- Used as a runtime dependency for graph memory / ontology storage.
+
+## Attribution
+
+Retain this NOTICE file in distributions and deployments that include the
+vendored MiroFish-derived code or the listed third-party components.

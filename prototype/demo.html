@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 决策中心 Demo · 方案对比</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9bb4;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #1e3a5f 0%, transparent 50%), var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 28px 32px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { margin: 0 0 8px; font-size: 24px; font-weight: 650; }
+    header p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-right: 8px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .badge.pass { color: #86efac; border-color: #166534; background: #052e1a; }
+    .badge.fail { color: #fca5a5; border-color: #7f1d1d; background: #2a0f0f; }
+    .badge.mode { color: #93c5fd; border-color: #1e3a8a; background: #0b1c3d; }
+    main { padding: 20px 32px 48px; display: grid; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: #cbd5e1; }
+    .chart { width: 100%; height: 320px; }
+    .chart-sm { width: 100%; height: 260px; }
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .kpi .item {
+      background: #121a26;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .kpi .label { color: var(--muted); font-size: 12px; }
+    .kpi .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
+    .scenario-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .narrative { color: #cbd5e1; font-size: 13px; line-height: 1.65; min-height: 64px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+    th { color: var(--muted); font-weight: 500; }
+    .interview {
+      border-left: 3px solid var(--accent);
+      padding: 8px 12px;
+      margin: 8px 0;
+      background: #121a26;
+      border-radius: 0 8px 8px 0;
+    }
+    .interview .q { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .interview .a { font-size: 13px; line-height: 1.55; }
+    .interview .who { color: #93c5fd; font-size: 12px; margin-bottom: 2px; }
+    .checks { display: grid; gap: 8px; }
+    .check {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 10px 12px; border-radius: 10px; background: #121a26; border: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .check .ok { color: #86efac; font-weight: 700; min-width: 42px; }
+    .check .bad { color: #fca5a5; font-weight: 700; min-width: 42px; }
+    footer { color: var(--muted); font-size: 12px; padding: 0 32px 32px; }
+    @media (max-width: 1100px) {
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="title">AI 决策中心 Demo · 方案对比</h1>
+    <p>
+      <span class="badge mode" id="modeBadge">loading</span>
+      <span class="badge" id="acceptBadge">验收</span>
+      同一 Agent 世界 · 不同干预方案 · 量化对比（传播曲线 / 观点分布 / 关键节点 / 采访）
+    </p>
+  </header>
+
+  <main>
+    <section class="grid-3" id="scenarioCards"></section>
+
+    <section class="grid-2">
+      <div class="card">
+        <h2>传播规模（累计互动）</h2>
+        <div id="reachChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <h2>观点结构对比</h2>
+        <div id="stanceBar" class="chart"></div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <h2>观点随时间演化（反对占比）</h2>
+        <div id="opposeChart" class="chart-sm"></div>
+      </div>
+      <div class="card">
+        <h2>关键传播节点</h2>
+        <div id="topAgents"></div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <h2>验收判据</h2>
+        <div class="checks" id="checks"></div>
+      </div>
+      <div class="card">
+        <h2>Agent 采访实录</h2>
+        <div id="interviews"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    数据文件：<code>prototype/outputs/demo_data.json</code> ·
+    重新生成：<code>python prototype/run_scenarios.py synthesize && python prototype/metrics.py --synthetic</code>
+  </footer>
+
+  <script>
+    async function loadData() {
+      const res = await fetch('./outputs/demo_data.json?_=' + Date.now());
+      if (!res.ok) throw new Error('无法加载 outputs/demo_data.json，请先运行 metrics.py');
+      return res.json();
+    }
+
+    function pct(x) { return (x * 100).toFixed(0) + '%'; }
+
+    function renderCards(data) {
+      const root = document.getElementById('scenarioCards');
+      root.innerHTML = data.scenarios.map(s => {
+        const share = s.summary.stance_share;
+        return `
+          <div class="card">
+            <div class="scenario-title">
+              <span class="dot" style="background:${s.color}"></span>
+              <strong>${s.scenario_name}</strong>
+            </div>
+            <div class="kpi">
+              <div class="item"><div class="label">总互动</div><div class="value">${s.summary.total_actions}</div></div>
+              <div class="item"><div class="label">最大深度</div><div class="value">${s.summary.max_cascade_depth}</div></div>
+              <div class="item"><div class="label">反对占比</div><div class="value" style="color:${s.color}">${pct(share.opposing)}</div></div>
+            </div>
+            <div class="narrative">${s.narrative || ''}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderReach(data) {
+      const chart = echarts.init(document.getElementById('reachChart'));
+      chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis' },
+        legend: { textStyle: { color: '#8b9bb4' } },
+        grid: { left: 40, right: 20, top: 40, bottom: 30 },
+        xAxis: { type: 'category', name: 'round', axisLabel: { color: '#8b9bb4' }, axisLine: { lineStyle: { color: '#2d3a4f' } } },
+        yAxis: { type: 'value', axisLabel: { color: '#8b9bb4' }, splitLine: { lineStyle: { color: '#243044' } } },
+        series: data.scenarios.map(s => ({
+          name: s.scenario_name,
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          itemStyle: { color: s.color },
+          data: s.reach_curve.map(p => [p.round, p.cumulative_actions])
+        }))
+      });
+      window.addEventListener('resize', () => chart.resize());
+    }
+
+    function renderStanceBar(data) {
+      const chart = echarts.init(document.getElementById('stanceBar'));
+      chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { textStyle: { color: '#8b9bb4' } },
+        grid: { left: 40, right: 20, top: 40, bottom: 30 },
+        xAxis: {
+          type: 'category',
+          data: data.scenarios.map(s => s.scenario_name),
+          axisLabel: { color: '#8b9bb4', interval: 0 },
+          axisLine: { lineStyle: { color: '#2d3a4f' } }
+        },
+        yAxis: {
+          type: 'value', max: 1, axisLabel: { color: '#8b9bb4', formatter: v => (v*100)+'%' },
+          splitLine: { lineStyle: { color: '#243044' } }
+        },
+        series: [
+          { name: '赞成', type: 'bar', stack: 's', itemStyle: { color: '#22c55e' }, data: data.scenarios.map(s => s.summary.stance_share.supportive) },
+          { name: '中立', type: 'bar', stack: 's', itemStyle: { color: '#64748b' }, data: data.scenarios.map(s => s.summary.stance_share.neutral) },
+          { name: '反对', type: 'bar', stack: 's', itemStyle: { color: '#ef4444' }, data: data.scenarios.map(s => s.summary.stance_share.opposing) }
+        ]
+      });
+      window.addEventListener('resize', () => chart.resize());
+    }
+
+    function renderOppose(data) {
+      const chart = echarts.init(document.getElementById('opposeChart'));
+      chart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { trigger: 'axis', valueFormatter: v => (v*100).toFixed(1)+'%' },
+        legend: { textStyle: { color: '#8b9bb4' } },
+        grid: { left: 45, right: 20, top: 40, bottom: 30 },
+        xAxis: { type: 'category', axisLabel: { color: '#8b9bb4' }, axisLine: { lineStyle: { color: '#2d3a4f' } } },
+        yAxis: { type: 'value', max: 1, axisLabel: { color: '#8b9bb4', formatter: v => (v*100)+'%' }, splitLine: { lineStyle: { color: '#243044' } } },
+        series: data.scenarios.map(s => ({
+          name: s.scenario_name,
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          itemStyle: { color: s.color },
+          data: s.stance_curve.map(p => {
+            const t = (p.supportive + p.opposing + p.neutral) || 1;
+            return [p.round, p.opposing / t];
+          })
+        }))
+      });
+      window.addEventListener('resize', () => chart.resize());
+    }
+
+    function renderTopAgents(data) {
+      const html = data.scenarios.map(s => {
+        const rows = (s.top_agents || []).slice(0, 5).map((a, i) =>
+          `<tr><td>${i+1}</td><td>${a.agent_name || a.agent_id}</td><td>${a.actions}</td></tr>`
+        ).join('');
+        return `<h3 style="margin:12px 0 6px;font-size:13px;color:${s.color}">${s.scenario_name}</h3>
+          <table><thead><tr><th>#</th><th>Agent</th><th>互动</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }).join('');
+      document.getElementById('topAgents').innerHTML = html;
+    }
+
+    function renderChecks(data) {
+      const acc = data.acceptance || { passed: false, checks: [] };
+      document.getElementById('acceptBadge').textContent = acc.passed ? '验收通过' : '验收未通过';
+      document.getElementById('acceptBadge').className = 'badge ' + (acc.passed ? 'pass' : 'fail');
+      const note = acc.note ? `<div style="color:#8b9bb4;font-size:12px;margin-bottom:8px">${acc.note}</div>` : '';
+      document.getElementById('checks').innerHTML = note + (acc.checks || []).map(c => {
+        const optional = c.required === false;
+        const label = c.pass ? 'PASS' : (optional ? 'INFO' : 'FAIL');
+        const cls = c.pass ? 'ok' : (optional ? 'ok' : 'bad');
+        const suffix = optional ? ' <span style="color:#8b9bb4;font-weight:400">(参考)</span>' : '';
+        return `
+        <div class="check">
+          <div class="${cls}">${label}</div>
+          <div><strong>${c.name}</strong>${suffix}<div style="color:#8b9bb4;margin-top:2px">${c.detail}</div></div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderInterviews(data) {
+      const blocks = [];
+      for (const s of data.scenarios) {
+        for (const iv of (s.interviews || []).slice(0, 2)) {
+          blocks.push(`
+            <div class="interview">
+              <div class="who">${s.scenario_name} · ${iv.agent_name}</div>
+              <div class="q">Q: ${iv.question}</div>
+              <div class="a">A: ${iv.answer}</div>
+            </div>`);
+        }
+      }
+      document.getElementById('interviews').innerHTML = blocks.join('') || '<div style="color:#8b9bb4">暂无采访数据</div>';
+    }
+
+    loadData().then(data => {
+      document.getElementById('title').textContent = data.case.title || document.getElementById('title').textContent;
+      document.getElementById('modeBadge').textContent = data.case.mode === 'synthetic' ? '离线合成数据' : '真模拟数据';
+      renderCards(data);
+      renderReach(data);
+      renderStanceBar(data);
+      renderOppose(data);
+      renderTopAgents(data);
+      renderChecks(data);
+      renderInterviews(data);
+    }).catch(err => {
+      document.getElementById('title').textContent = '加载失败';
+      document.getElementById('scenarioCards').innerHTML = `<div class="card">${err.message}</div>`;
+    });
+  </script>
+</body>
+</html>
