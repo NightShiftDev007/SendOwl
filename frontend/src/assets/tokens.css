@@ -1,0 +1,76 @@
+/* SandOwl design tokens — shared across the Decision Center */
+:root {
+  /* Brand */
+  --brand: #FF4500;
+  --brand-ink: #FFFFFF;
+  --brand-soft: color-mix(in srgb, var(--brand) 12%, #FFFFFF);
+
+  /* Surfaces */
+  --bg: #FFFFFF;
+  --bg-muted: #F7F7F5;
+  --surface: #FFFFFF;
+  --surface-raised: #FAFAF8;
+
+  /* Ink */
+  --ink: #0A0A0A;
+  --ink-secondary: #3D3D3D;
+  --ink-muted: #6B6B6B;
+  --ink-faint: #9A9A9A;
+
+  /* Lines */
+  --border: #E6E6E2;
+  --border-strong: #0A0A0A;
+  --border-soft: #F0F0EC;
+
+  /* Status */
+  --success: #059669;
+  --success-ink: #065F46;
+  --danger: #DC2626;
+  --warning: #D97706;
+  --neutral: #9CA3AF;
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans', 'Noto Sans SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-cn: 'Noto Sans SC', 'IBM Plex Sans', system-ui, sans-serif;
+
+  /* Radii — restrained, not pill-heavy */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Spacing rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Layout */
+  --header-h: 56px;
+  --content-max: 1280px;
+  --z-sticky: 100;
+  --z-dropdown: 1000;
+  --z-modal: 1100;
+
+  /* Compat aliases (legacy MiroFish-era names) */
+  --orange: var(--brand);
+  --black: var(--ink);
+  --white: var(--bg);
+  --gray-light: var(--bg-muted);
+  --gray-text: var(--ink-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -28,6 +28,64 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _default_agent_config(agent: Dict[str, Any]) -> Dict[str, Any]:
+    """无 LLM 配置时的规则兜底，保证 OASIS 每轮能激活 Agent。"""
+    entity_type = str(agent.get("entity_type") or "").lower()
+    agent_id = int(agent.get("agent_id", 0))
+    if any(k in entity_type for k in ("government", "official", "organization", "agency")):
+        activity = {
+            "activity_level": 0.35,
+            "active_hours": list(range(8, 22)),
+            "influence_weight": 2.5,
+            "stance": "neutral",
+        }
+    elif any(k in entity_type for k in ("media", "kol", "journalist", "selfmedia")):
+        activity = {
+            "activity_level": 0.65,
+            "active_hours": list(range(7, 24)),
+            "influence_weight": 2.0,
+            "stance": "observer",
+        }
+    elif any(k in entity_type for k in ("rider", "delivery", "merchant", "shop")):
+        activity = {
+            "activity_level": 0.8,
+            "active_hours": list(range(8, 23)),
+            "influence_weight": 1.2,
+            "stance": "opposing",
+        }
+    else:
+        activity = {
+            "activity_level": 0.7,
+            "active_hours": list(range(8, 23)),
+            "influence_weight": 1.0,
+            "stance": "neutral",
+        }
+    return {
+        "agent_id": agent_id,
+        "posts_per_hour": 0.5,
+        "comments_per_hour": 1.0,
+        "response_delay_min": 2,
+        "response_delay_max": 20,
+        "sentiment_bias": 0.0,
+        **activity,
+    }
+
+
+def ensure_agent_configs(
+    config: Dict[str, Any], agents: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """若 config 缺少 agent_configs，按 profiles 生成默认活跃配置。"""
+    cfg = deepcopy(config)
+    existing = cfg.get("agent_configs") or []
+    if existing:
+        return cfg
+    cfg["agent_configs"] = [_default_agent_config(a) for a in agents]
+    logger.info(
+        "已补齐 agent_configs: %s 个（规则兜底）", len(cfg["agent_configs"])
+    )
+    return cfg
+
+
 def _default_config(
     run_id: str,
     max_rounds: int = 10,
@@ -46,6 +104,7 @@ def _default_config(
             "initial_posts": [],
             "hot_topics": [],
         },
+        "agent_configs": [],
         "platform": "twitter",
         "seed": seed,
     }
@@ -153,6 +212,7 @@ def materialize_run_dir(
     profiles = _load_profiles_from_dir(run_dir)
     agents = load_agents_index(profiles)
     cfg = apply_to_config(cfg, intervention, agents)
+    cfg = ensure_agent_configs(cfg, agents)
 
     config_path = os.path.join(run_dir, "simulation_config.json")
     with open(config_path, "w", encoding="utf-8") as f:
@@ -290,7 +350,9 @@ def run_engine(
             with open(cfg_path, encoding="utf-8") as f:
                 cfg = json.load(f)
             profiles = _load_profiles_from_dir(materialized)
-            cfg = apply_to_config(cfg, intervention, load_agents_index(profiles))
+            agents = load_agents_index(profiles)
+            cfg = apply_to_config(cfg, intervention, agents)
+            cfg = ensure_agent_configs(cfg, agents)
             cfg["seed"] = seed
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)

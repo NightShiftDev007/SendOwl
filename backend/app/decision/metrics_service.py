@@ -150,6 +150,7 @@ def aggregate_scenario(runs_metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
         "activity_curve": first.get("activity_curve") or [],
         "reach_curve": first.get("reach_curve") or [],
         "stance_curve": first.get("stance_curve") or [],
+        "top_agents": first.get("top_agents") or [],
         "sample_count": len(runs_metrics),
         "runs": runs_metrics,
     }

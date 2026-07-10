@@ -164,7 +164,7 @@ class ScenarioRunner:
             network=network,
         )
 
-        # 基础 config 模板
+        # 基础 config 模板（agent_configs 在 materialize_run_dir 时按 profiles 补齐）
         base_cfg = {
             "time_config": {
                 "total_simulation_hours": int(dec.get("max_rounds") or 10),
@@ -173,6 +173,7 @@ class ScenarioRunner:
                 "agents_per_hour_max": 12,
             },
             "event_config": {"initial_posts": [], "hot_topics": []},
+            "agent_configs": [],
             "platform": "twitter",
         }
         with open(
@@ -230,10 +231,21 @@ class ScenarioRunner:
             for sc in scenarios:
                 runs = registry.list_runs_for_scenario(sc["id"])
                 for run in runs:
+                    # 续跑：跳过已完成；中断的 running 视为可重试
+                    st = (run.get("status") or "").lower()
+                    if st in ("completed", "done", "success"):
+                        continue
+                    if st == "failed" and run.get("error") and "服务器关闭" not in (
+                        run.get("error") or ""
+                    ):
+                        # 非中断类失败默认不自动重试
+                        continue
+
                     registry.update_run(
                         run["id"],
                         status="running",
-                        started_at=_utc_now(),
+                        started_at=run.get("started_at") or _utc_now(),
+                        error=None,
                     )
                     try:
                         result = run_engine(
@@ -263,9 +275,13 @@ class ScenarioRunner:
                         except Exception as me:
                             logger.warning(f"指标计算失败: {me}")
 
+                        final_status = result.get("status") or "completed"
+                        # OASIS 被热重载/SIGTERM 杀掉时会报 stopped
+                        if final_status in ("stopped", "error"):
+                            final_status = "failed"
                         registry.update_run(
                             run["id"],
-                            status=result.get("status") or "completed",
+                            status=final_status,
                             run_dir=run_dir,
                             metrics=metrics,
                             finished_at=_utc_now(),
@@ -280,7 +296,20 @@ class ScenarioRunner:
                             error=str(e),
                         )
 
-            registry.update_decision(decision_id, status="completed")
+            # 若仍有 pending/running，保持 running；否则 completed
+            leftover = []
+            for sc in registry.list_scenarios(decision_id):
+                for run in registry.list_runs_for_scenario(sc["id"]):
+                    if (run.get("status") or "").lower() in (
+                        "pending",
+                        "running",
+                        "created",
+                    ):
+                        leftover.append(run["id"])
+            registry.update_decision(
+                decision_id,
+                status="running" if leftover else "completed",
+            )
             return self.get_status(decision_id)
         except Exception as e:
             logger.error(traceback.format_exc())
@@ -324,11 +353,20 @@ class ScenarioRunner:
         )
         return {
             "decision": dec,
+            "status": dec.get("status"),
             "matrix": matrix,
             "progress": {"done": done, "total": total},
         }
 
     def get_decision_detail(self, decision_id: str) -> Dict[str, Any]:
         status = self.get_status(decision_id)
-        status["scenarios"] = registry.list_scenarios(decision_id)
+        scenarios = []
+        for sc in registry.list_scenarios(decision_id):
+            scenarios.append(
+                {
+                    **sc,
+                    "runs": registry.list_runs_for_scenario(sc["id"]),
+                }
+            )
+        status["scenarios"] = scenarios
         return status

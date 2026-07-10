@@ -1,8 +1,8 @@
-# AI 决策中心（AI Decision Center）
+# SandOwl · AI 决策中心
 
-> 本体层（持续同步的现实世界模型）× 群体智能推演引擎（MiroFish/OASIS）× 决策对比闭环
+> 本体层（持续同步的现实世界模型）× 群体智能推演引擎（OASIS）× 决策对比闭环
 >
-> **Palantir/Ontology 回答「现在世界是什么样」，MiroFish 回答「如果我做 X，世界会变成什么样」。**
+> **在沙盘里推演，再做决定。** Palantir/Ontology 回答「现在世界是什么样」，SandOwl 回答「如果我做 X，世界会变成什么样」。
 
 ## 项目状态
 
@@ -29,12 +29,15 @@ prototype/    # 早期 Demo（仍可用）
 
 ## 快速开始（MVP）
 
+前端品牌为 **SandOwl**：自有设计 token + AppHeader，决策指挥台式首页与对比结论条；API 接到本仓 `/api/ontology` `/api/decision` `/api/run`。
+
 ### 1. 环境
 
 ```bash
 # 根目录
 pnpm install
 pnpm run setup:backend   # uv sync
+cd frontend && pnpm install && cd ..
 
 # 配置密钥（与 MiroFish 相同变量名）
 cp .env.example .env
@@ -49,31 +52,22 @@ pnpm run dev
 # 前端 http://localhost:3000
 ```
 
-或分别：
+### 3. 产品路径（舆情模板）
+
+1. **首页**：上传种子文档 →「构建本体」进入本体工作台  
+2. **本体工作台**（`/ontology/:id`）：建图 → 快照 → 创建决策  
+3. **创建决策**（`/decision/new`）：强硬 / 柔性 / Baseline，`M=3` 采样  
+4. **运行监控**（`/decision/:id/monitor`）：Scenario 卡 + 动作流时间线  
+5. **对比面板**（`/decision/:id/compare`）：量化对比 + 报告 + Agent 采访  
+
+### 4. 离线验收
 
 ```bash
-pnpm run backend
-pnpm run frontend
+pnpm run smoke
+pnpm run e2e
 ```
 
-### 3. 离线验收（不依赖 Zep/OASIS）
-
-```bash
-cd backend
-uv run python scripts/smoke_offline_mvp.py   # 快速 smoke
-uv run python scripts/e2e_mvp_demo.py        # 2 方案 + Baseline × 3 采样
-```
-
-成功输出 `SMOKE_OK` / `E2E_OK`。随后可在前端「对比面板」打开对应 `decision_id`（见脚本打印）。
-
-### 4. 产品路径（舆情模板）
-
-1. **本体管理**：创建舆情模板本体 → 上传种子材料 → 建图 → 快照  
-2. **创建决策**：选本体 → 配置强硬 / 柔性 / Baseline → `M=3` 采样 → 启动  
-3. **运行监控**：查看 Scenario × Run 矩阵  
-4. **对比面板**：传播规模、观点结构、叙事报告  
-
-真推演需要可用的 `LLM_*` 与 `ZEP_API_KEY`，耗时较长；离线路径用合成 actions 验证闭环。
+真推演需要可用的 `LLM_*` 与 `ZEP_API_KEY`；离线路径用合成 actions 验证闭环。
 
 ## 旧 Demo（prototype）
 
