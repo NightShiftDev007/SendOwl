@@ -12,6 +12,16 @@ export function getDecision(decisionId) {
   return service.get(`/api/decision/${decisionId}`)
 }
 
+export function prepareDecision(decisionId, body = {}) {
+  return requestWithRetry(() =>
+    service.post(`/api/decision/${decisionId}/prepare`, body),
+  )
+}
+
+export function getDecisionWorld(decisionId) {
+  return service.get(`/api/decision/${decisionId}/world`)
+}
+
 export function startDecision(decisionId, body = {}) {
   return requestWithRetry(() =>
     service.post(`/api/decision/${decisionId}/start`, body),
@@ -32,6 +42,10 @@ export function getRun(runId) {
 
 export function getRunActions(runId, params = {}) {
   return service.get(`/api/run/${runId}/actions`, { params })
+}
+
+export function getRunAgents(runId) {
+  return service.get(`/api/run/${runId}/agents`)
 }
 
 export function interviewRun(runId, body) {

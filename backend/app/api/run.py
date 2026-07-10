@@ -37,6 +37,30 @@ _TRACE_ACTION_MAP = {
 }
 
 
+def _resolve_run_context(run_id: str) -> Tuple[Dict[str, Any], str, str]:
+    """
+    返回 (run_record_or_stub, sim_id, run_dir)。
+    终局：SimulationRunner 按 sim_id 操作；run_dir 指向 uploads/runs/<sim_id>。
+    """
+    registry.init_schema()
+    run = registry.get_run(run_id)
+    if run:
+        sim_id = run.get("sim_id") or run_id
+        run_dir = run.get("run_dir") or os.path.join(
+            Config.OASIS_SIMULATION_DATA_DIR, sim_id
+        )
+        return run, sim_id, run_dir
+    # 兼容：直接传 sim_id
+    run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, run_id)
+    if os.path.isdir(run_dir):
+        return {"id": run_id, "sim_id": run_id, "run_dir": run_dir, "status": "unknown"}, run_id, run_dir
+    # 旧 run_* 目录
+    legacy = os.path.join(Config.RUN_DIR, run_id)
+    if os.path.isdir(legacy):
+        return {"id": run_id, "run_dir": legacy, "status": "unknown"}, run_id, legacy
+    return {}, run_id, run_dir
+
+
 @run_bp.get("/health")
 def health():
     return jsonify({"status": "ok", "module": "run"})
@@ -44,20 +68,16 @@ def health():
 
 @run_bp.get("/<run_id>")
 def get_run(run_id: str):
-    registry.init_schema()
-    run = registry.get_run(run_id)
+    run, sim_id, run_dir = _resolve_run_context(run_id)
+    if not run and not os.path.isdir(run_dir):
+        return jsonify({"success": False, "error": "not found"}), 404
     if not run:
-        run_dir = os.path.join(Config.RUN_DIR, run_id)
-        if not os.path.isdir(run_dir):
-            return jsonify({"success": False, "error": "not found"}), 404
         run = {"id": run_id, "run_dir": run_dir, "status": "unknown"}
-    else:
-        run_dir = run.get("run_dir") or os.path.join(Config.RUN_DIR, run_id)
 
     try:
         from app.engine.simulation_runner import SimulationRunner
 
-        state = SimulationRunner.get_run_state(run_id)
+        state = SimulationRunner.get_run_state(sim_id)
         if state:
             run["runner"] = state.to_dict() if hasattr(state, "to_dict") else {
                 "runner_status": getattr(state, "runner_status", None),
@@ -67,7 +87,128 @@ def get_run(run_id: str):
         pass
 
     run["run_dir"] = run_dir
+    run["sim_id"] = sim_id
     return jsonify({"success": True, "data": run})
+
+
+def _load_agents_for_run(run_dir: str) -> List[Dict[str, Any]]:
+    """从 profiles / OASIS DB 列出可采访 Agent。"""
+    agents: List[Dict[str, Any]] = []
+    seen = set()
+
+    reddit = Path(run_dir) / "reddit_profiles.json"
+    if reddit.exists():
+        try:
+            rows = json.loads(reddit.read_text(encoding="utf-8"))
+            for row in rows if isinstance(rows, list) else []:
+                aid = row.get("user_id", row.get("agent_id"))
+                if aid is None:
+                    continue
+                aid = int(aid)
+                if aid in seen:
+                    continue
+                seen.add(aid)
+                agents.append(
+                    {
+                        "agent_id": aid,
+                        "name": row.get("name") or row.get("username") or f"Agent_{aid}",
+                        "username": row.get("username") or "",
+                        "entity_type": row.get("source_entity_type")
+                        or row.get("profession")
+                        or "",
+                        "bio": (row.get("bio") or "")[:160],
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"load reddit profiles failed: {e}")
+
+    if not agents:
+        csv_path = Path(run_dir) / "twitter_profiles.csv"
+        if csv_path.exists():
+            try:
+                import csv
+
+                with csv_path.open(encoding="utf-8") as f:
+                    for row in csv.DictReader(f):
+                        aid = row.get("user_id") or row.get("agent_id")
+                        if aid is None or aid == "":
+                            continue
+                        aid = int(aid)
+                        if aid in seen:
+                            continue
+                        seen.add(aid)
+                        agents.append(
+                            {
+                                "agent_id": aid,
+                                "name": row.get("name") or row.get("username") or f"Agent_{aid}",
+                                "username": row.get("username") or "",
+                                "entity_type": "",
+                                "bio": (row.get("description") or row.get("user_char") or "")[
+                                    :160
+                                ],
+                            }
+                        )
+            except Exception as e:
+                logger.warning(f"load twitter profiles failed: {e}")
+
+    if not agents:
+        for db in _db_candidates(run_dir):
+            if not db.exists():
+                continue
+            try:
+                conn = sqlite3.connect(str(db))
+                conn.row_factory = sqlite3.Row
+                tables = {
+                    r[0]
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if "user" in tables:
+                    for r in conn.execute(
+                        "SELECT user_id, agent_id, name, user_name, bio FROM user"
+                    ):
+                        aid = r["agent_id"] if r["agent_id"] is not None else r["user_id"]
+                        aid = int(aid)
+                        if aid in seen:
+                            continue
+                        seen.add(aid)
+                        agents.append(
+                            {
+                                "agent_id": aid,
+                                "name": r["name"] or r["user_name"] or f"Agent_{aid}",
+                                "username": r["user_name"] or "",
+                                "entity_type": "",
+                                "bio": (r["bio"] or "")[:160],
+                            }
+                        )
+                conn.close()
+                if agents:
+                    break
+            except Exception as e:
+                logger.warning(f"load agents from db failed: {e}")
+
+    agents.sort(key=lambda a: a["agent_id"])
+    return agents
+
+
+@run_bp.get("/<run_id>/agents")
+def list_agents(run_id: str):
+    run, sim_id, run_dir = _resolve_run_context(run_id)
+    if not os.path.isdir(run_dir):
+        return jsonify({"success": False, "error": "run not found"}), 404
+    agents = _load_agents_for_run(run_dir)
+    return jsonify(
+        {
+            "success": True,
+            "data": {
+                "run_id": run_id,
+                "sim_id": sim_id,
+                "agents": agents,
+                "count": len(agents),
+            },
+        }
+    )
 
 
 def _action_candidates(run_dir: str) -> List[Path]:
@@ -287,9 +428,7 @@ def _load_actions_from_jsonl(
 
 @run_bp.get("/<run_id>/actions")
 def get_actions(run_id: str):
-    registry.init_schema()
-    run = registry.get_run(run_id)
-    run_dir = (run or {}).get("run_dir") or os.path.join(Config.RUN_DIR, run_id)
+    run, sim_id, run_dir = _resolve_run_context(run_id)
     limit = int(request.args.get("limit") or 500)
     include_events = str(request.args.get("include_events") or "").lower() in (
         "1",
@@ -360,8 +499,8 @@ def get_actions(run_id: str):
 
 @run_bp.post("/<run_id>/interview")
 def interview(run_id: str):
-    """代理到 SimulationRunner.interview；环境不可用时返回 stub。"""
-    registry.init_schema()
+    """代理到 SimulationRunner.interview（按 sim_id）；环境不可用时返回 stub。"""
+    run, sim_id, run_dir = _resolve_run_context(run_id)
     body = request.get_json(silent=True) or {}
     agent_id = body.get("agent_id")
     prompt = body.get("prompt") or body.get("question") or "你怎么看当前政策？"
@@ -369,14 +508,20 @@ def interview(run_id: str):
     try:
         from app.engine.simulation_runner import SimulationRunner
 
-        state = SimulationRunner.get_run_state(run_id)
+        state = SimulationRunner.get_run_state(sim_id)
         status = getattr(getattr(state, "runner_status", None), "value", None) or (
             str(getattr(state, "runner_status", "")) if state else ""
         )
-        if state and status in ("running", "completed", "paused", "alive"):
+        # 也检查 env alive
+        alive = False
+        try:
+            alive = bool(SimulationRunner.check_env_alive(sim_id))
+        except Exception:
+            alive = False
+        if state and (status in ("running", "completed", "paused", "alive") or alive):
             if agent_id is not None:
                 result = SimulationRunner.interview_agent(
-                    simulation_id=run_id,
+                    simulation_id=sim_id,
                     agent_id=int(agent_id),
                     prompt=prompt,
                 )
@@ -386,10 +531,12 @@ def interview(run_id: str):
                     {"agent_id": i, "prompt": prompt} for i in range(max_agents)
                 ]
                 result = SimulationRunner.interview_agents_batch(
-                    simulation_id=run_id,
+                    simulation_id=sim_id,
                     interviews=interviews,
                 )
-            return jsonify({"success": True, "data": result, "mode": "live"})
+            return jsonify(
+                {"success": True, "data": result, "mode": "live", "sim_id": sim_id}
+            )
     except Exception as e:
         logger.warning(f"interview live failed: {e}")
 
@@ -401,6 +548,7 @@ def interview(run_id: str):
                 "reply": f"[stub] Agent {agent_id}：关于「{prompt}」，我需要更多上下文才能判断。",
                 "agent_id": agent_id,
                 "run_id": run_id,
+                "sim_id": sim_id,
             },
         }
     )

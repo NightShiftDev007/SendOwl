@@ -89,6 +89,14 @@
             <span class="action-bar-subtitle mono">{{ $t('step5.agentsAvailable', { count: profiles.length }) }}</span>
           </div>
         </div>
+          <div v-if="runOptions.length > 1" class="run-select-bar">
+            <label class="mono">Run</label>
+            <select v-model="selectedSimId" @change="loadProfiles">
+              <option v-for="o in runOptions" :key="o.sim_id || o.run_id" :value="o.sim_id">
+                {{ o.label }} ({{ o.status }})
+              </option>
+            </select>
+          </div>
           <div class="action-bar-tabs">
             <button 
               class="tab-pill"
@@ -415,6 +423,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
 import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { getDecisionStatus } from '../api/decision'
 
 const { t } = useI18n()
 
@@ -433,6 +442,8 @@ const selectedAgent = ref(null)
 const selectedAgentIndex = ref(null)
 const showFullProfile = ref(true)
 const showToolsDetail = ref(true)
+const runOptions = ref([])
+const selectedSimId = ref(null)
 
 // Chat State
 const chatInput = ref('')
@@ -729,6 +740,7 @@ const sendToAgent = async (message) => {
   
   const res = await interviewAgents({
     simulation_id: props.simulationId,
+    sim_id: selectedSimId.value || undefined,
     interviews: [{
       agent_id: selectedAgentIndex.value,
       prompt: prompt
@@ -816,6 +828,7 @@ const submitSurvey = async () => {
     
     const res = await interviewAgents({
       simulation_id: props.simulationId,
+      sim_id: selectedSimId.value || undefined,
       interviews: interviews
     })
     
@@ -918,7 +931,36 @@ const loadProfiles = async () => {
   if (!props.simulationId) return
   
   try {
-    const res = await getSimulationProfilesRealtime(props.simulationId, 'reddit')
+    // 加载多 Run 选项（N>1）
+    try {
+      if (String(props.simulationId).startsWith('dec_')) {
+        const st = await getDecisionStatus(props.simulationId)
+        const opts = []
+        for (const sc of st.data?.matrix || []) {
+          for (const r of sc.runs || []) {
+            if (r.sim_id || r.run_id) {
+              opts.push({
+                label: `${sc.scenario_name || sc.kind} · seed ${r.seed}`,
+                sim_id: r.sim_id,
+                run_id: r.run_id,
+                status: r.status,
+              })
+            }
+          }
+        }
+        runOptions.value = opts
+        if (!selectedSimId.value && opts[0]) {
+          selectedSimId.value = opts[0].sim_id
+        }
+      }
+    } catch (_) {
+      /* ignore */
+    }
+
+    const res = await getSimulationProfilesRealtime(
+      selectedSimId.value || props.simulationId,
+      'reddit',
+    )
     if (res.success && res.data) {
       profiles.value = res.data.profiles || []
       addLog(t('log.loadedProfiles', { count: profiles.value.length }))
@@ -1320,6 +1362,19 @@ watch(() => props.simulationId, (newId) => {
   border-bottom: 1px solid #E5E7EB;
   background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
   gap: 16px;
+}
+
+.run-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.run-select-bar select {
+  border: 1px solid #E5E7EB;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  background: #fff;
 }
 
 .action-bar-header {

@@ -8,6 +8,7 @@ export {
   getBuildStatus,
   getGraphData,
   getOntologyGraph,
+  getOntologyGraphLive,
   getProject,
   getOntology,
   listOntologies,

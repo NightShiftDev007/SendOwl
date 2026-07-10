@@ -326,10 +326,10 @@ def run_engine(
     wait: bool = True,
 ) -> Dict[str, Any]:
     """
-    物化 run 目录并启动模拟。
-
-    若 run_dir 已存在且含 simulation_config.json，可跳过 profiles_dir。
+    [DEPRECATED] 旧物化管线。终局请用 ScenarioRunner → SimulationManager/Runner。
+    保留 materialize_run_dir / wait_for_simulation 供编排器复用。
     """
+    logger.warning("run_engine 已退役，请改用 ScenarioRunner；本次仍按兼容路径执行")
     Config.ensure_directories()
     run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
 

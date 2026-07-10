@@ -36,6 +36,8 @@ def init_schema(db_path: str | None = None) -> None:
               schema_json TEXT,
               schema_locked INTEGER DEFAULT 0,
               status TEXT DEFAULT 'created',
+              build_task_id TEXT,
+              simulation_requirement TEXT,
               created_at TEXT,
               updated_at TEXT
             );
@@ -82,6 +84,7 @@ def init_schema(db_path: str | None = None) -> None:
               seed INTEGER,
               status TEXT DEFAULT 'pending',
               run_dir TEXT,
+              sim_id TEXT,
               metrics_json TEXT,
               started_at TEXT,
               finished_at TEXT,
@@ -89,6 +92,26 @@ def init_schema(db_path: str | None = None) -> None:
             );
             """
         )
+        # 兼容旧库：补列
+        try:
+            run_cols = {
+                r[1]
+                for r in conn.execute("PRAGMA table_info(runs)").fetchall()
+            }
+            if "sim_id" not in run_cols:
+                conn.execute("ALTER TABLE runs ADD COLUMN sim_id TEXT")
+            ont_cols = {
+                r[1]
+                for r in conn.execute("PRAGMA table_info(ontologies)").fetchall()
+            }
+            if "build_task_id" not in ont_cols:
+                conn.execute("ALTER TABLE ontologies ADD COLUMN build_task_id TEXT")
+            if "simulation_requirement" not in ont_cols:
+                conn.execute(
+                    "ALTER TABLE ontologies ADD COLUMN simulation_requirement TEXT"
+                )
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -101,6 +124,7 @@ def create_ontology(
     schema_locked: bool = False,
     status: str = "created",
     graph_id: Optional[str] = None,
+    simulation_requirement: str = "",
 ) -> Dict[str, Any]:
     oid = f"ont_{uuid.uuid4().hex[:12]}"
     now = _utc_now()
@@ -109,8 +133,9 @@ def create_ontology(
         conn.execute(
             """
             INSERT INTO ontologies
-              (id, name, template, graph_id, schema_json, schema_locked, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (id, name, template, graph_id, schema_json, schema_locked, status,
+               simulation_requirement, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 oid,
@@ -120,6 +145,7 @@ def create_ontology(
                 schema_json,
                 1 if schema_locked else 0,
                 status,
+                simulation_requirement or "",
                 now,
                 now,
             ),
@@ -127,12 +153,39 @@ def create_ontology(
     return get_ontology(oid)
 
 
+def list_documents_by_ontology_ids(
+    ontology_ids: List[str],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """批量按本体 ID 拉取文档，避免列表接口 N+1。"""
+    if not ontology_ids:
+        return {}
+    placeholders = ",".join("?" * len(ontology_ids))
+    with connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM ontology_documents
+            WHERE ontology_id IN ({placeholders})
+            ORDER BY created_at
+            """,
+            list(ontology_ids),
+        ).fetchall()
+    result: Dict[str, List[Dict[str, Any]]] = {oid: [] for oid in ontology_ids}
+    for row in rows:
+        doc = _row_to_dict(row)
+        result.setdefault(doc["ontology_id"], []).append(doc)
+    return result
+
+
 def list_ontologies() -> List[Dict[str, Any]]:
     with connection() as conn:
         rows = conn.execute(
             "SELECT * FROM ontologies ORDER BY created_at DESC"
         ).fetchall()
-    return [_enrich_ontology(_row_to_dict(r)) for r in rows]
+    items = [_enrich_ontology(_row_to_dict(r)) for r in rows]
+    docs_map = list_documents_by_ontology_ids([o["id"] for o in items if o.get("id")])
+    for item in items:
+        item["documents"] = docs_map.get(item["id"], [])
+    return items
 
 
 def get_ontology(ontology_id: str) -> Optional[Dict[str, Any]]:
@@ -168,6 +221,8 @@ def update_ontology(ontology_id: str, **fields) -> Optional[Dict[str, Any]]:
         "schema_json",
         "schema_locked",
         "status",
+        "build_task_id",
+        "simulation_requirement",
     }
     updates = {}
     for k, v in fields.items():
@@ -394,15 +449,16 @@ def add_run(
     seed: int,
     run_dir: str = "",
     status: str = "pending",
+    sim_id: str = "",
 ) -> Dict[str, Any]:
     rid = f"run_{uuid.uuid4().hex[:12]}"
     with connection() as conn:
         conn.execute(
             """
-            INSERT INTO runs (id, scenario_id, seed, status, run_dir)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO runs (id, scenario_id, seed, status, run_dir, sim_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (rid, scenario_id, seed, status, run_dir),
+            (rid, scenario_id, seed, status, run_dir, sim_id or None),
         )
     return get_run(rid)
 
@@ -428,6 +484,7 @@ def update_run(run_id: str, **fields) -> Optional[Dict[str, Any]]:
     allowed = {
         "status",
         "run_dir",
+        "sim_id",
         "metrics_json",
         "started_at",
         "finished_at",

@@ -48,7 +48,7 @@
     "statOntologies": "Ontologies",
     "statDecisions": "Decisions",
     "statEngine": "Engine",
-    "createDecision": "New Decision",
+    "createDecision": "Multi-scenario",
     "metricLowCost": "Low Cost",
     "metricLowCostDesc": "Avg. $5/sim",
     "metricHighAvail": "Scalable",

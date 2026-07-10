@@ -74,11 +74,11 @@
           </div>
 
           <!-- Generated Entity Tags -->
-          <div v-if="projectData?.ontology?.entity_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
+          <div v-if="ontologySchema?.entity_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
             <span class="tag-label">GENERATED ENTITY TYPES</span>
             <div class="tags-list">
               <span 
-                v-for="entity in projectData.ontology.entity_types" 
+                v-for="entity in ontologySchema.entity_types" 
                 :key="entity.name" 
                 class="entity-tag clickable"
                 @click="selectOntologyItem(entity, 'entity')"
@@ -89,11 +89,11 @@
           </div>
 
           <!-- Generated Relation Tags -->
-          <div v-if="projectData?.ontology?.edge_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
+          <div v-if="ontologySchema?.edge_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
             <span class="tag-label">GENERATED RELATION TYPES</span>
             <div class="tags-list">
               <span 
-                v-for="rel in projectData.ontology.edge_types" 
+                v-for="rel in ontologySchema.edge_types" 
                 :key="rel.name" 
                 class="entity-tag clickable"
                 @click="selectOntologyItem(rel, 'relation')"
@@ -174,7 +174,7 @@
     <div class="system-logs">
       <div class="log-header">
         <span class="log-title">SYSTEM DASHBOARD</span>
-        <span class="log-id">{{ projectData?.project_id || 'NO_PROJECT' }}</span>
+        <span class="log-id">{{ projectData?.project_id || projectData?.id || 'NO_PROJECT' }}</span>
       </div>
       <div class="log-content" ref="logContent">
         <div class="log-line" v-for="(log, idx) in systemLogs" :key="idx">
@@ -210,28 +210,41 @@ const selectedOntologyItem = ref(null)
 const logContent = ref(null)
 const creatingSimulation = ref(false)
 
-// 进入环境搭建 - 创建 simulation 并跳转
+const ontologySchema = computed(
+  () => props.projectData?.ontology || props.projectData?.schema || null,
+)
+
+// 进入环境搭建 - 创建决策（兼容 simulation）并跳转
 const handleEnterEnvSetup = async () => {
-  if (!props.projectData?.project_id || !props.projectData?.graph_id) {
-    console.error('缺少项目或图谱信息')
+  const ontologyId =
+    props.projectData?.project_id ||
+    props.projectData?.ontology_id ||
+    props.projectData?.id
+  const graphId = props.projectData?.graph_id
+  if (!ontologyId) {
+    console.error('缺少本体信息')
+    alert(t('step1.createSimulationFailed', { error: '缺少本体 ID' }))
     return
   }
-  
+
   creatingSimulation.value = true
-  
+
   try {
     const res = await createSimulation({
-      project_id: props.projectData.project_id,
-      graph_id: props.projectData.graph_id,
+      project_id: ontologyId,
+      ontology_id: ontologyId,
+      graph_id: graphId,
+      title: props.projectData?.name || props.projectData?.simulation_requirement,
+      simulation_requirement:
+        props.projectData?.simulation_requirement || props.projectData?.name || '',
       enable_twitter: true,
-      enable_reddit: true
+      enable_reddit: true,
     })
-    
+
     if (res.success && res.data?.simulation_id) {
-      // 跳转到 simulation 页面
       router.push({
         name: 'Simulation',
-        params: { simulationId: res.data.simulation_id }
+        params: { simulationId: res.data.simulation_id },
       })
     } else {
       console.error('创建模拟失败:', res.error)
@@ -252,7 +265,8 @@ const selectOntologyItem = (item, type) => {
 const graphStats = computed(() => {
   const nodes = props.graphData?.node_count || props.graphData?.nodes?.length || 0
   const edges = props.graphData?.edge_count || props.graphData?.edges?.length || 0
-  const types = props.projectData?.ontology?.entity_types?.length || 0
+  const ontology = props.projectData?.ontology || props.projectData?.schema || {}
+  const types = ontology?.entity_types?.length || 0
   return { nodes, edges, types }
 })
 

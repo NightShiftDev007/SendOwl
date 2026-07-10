@@ -54,6 +54,25 @@ def _save_document_bytes(
     return path, text, len(text)
 
 
+def _extracted_text_path(ontology_id: str) -> str:
+    return os.path.join(Config.ONTOLOGY_DIR, ontology_id, "extracted_text.txt")
+
+
+def save_extracted_text(ontology_id: str, text: str) -> None:
+    path = _extracted_text_path(ontology_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def get_extracted_text(ontology_id: str) -> Optional[str]:
+    path = _extracted_text_path(ontology_id)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def create_from_files(
     name: str,
     files: List[Union[FileStorage, tuple]],
@@ -66,9 +85,11 @@ def create_from_files(
     创建本体记录、保存文档、生成或加载 schema。
 
     files: FileStorage 列表，或 (filename, bytes) 元组列表。
+    对齐 MiroFish：preprocess 后落盘 extracted_text.txt，并持久化 simulation_requirement。
     """
     schema: Optional[Dict[str, Any]] = None
     document_texts: List[str] = []
+    all_text_parts: List[str] = []
 
     # 先创建记录拿到 id
     ont = registry.create_ontology(
@@ -77,6 +98,7 @@ def create_from_files(
         schema=None,
         schema_locked=False,
         status="created",
+        simulation_requirement=simulation_requirement or "",
     )
     ontology_id = ont["id"]
 
@@ -92,8 +114,15 @@ def create_from_files(
                 item.seek(0)
 
         path, text, char_count = _save_document_bytes(ontology_id, filename, raw)
-        registry.add_document(ontology_id, filename, path, char_count)
+        text = TextProcessor.preprocess_text(text)
+        registry.add_document(ontology_id, filename, path, len(text))
         document_texts.append(text)
+        display_name = os.path.basename(filename)
+        all_text_parts.append(f"\n\n=== {display_name} ===\n{text}")
+
+    all_text = "".join(all_text_parts)
+    if all_text.strip():
+        save_extracted_text(ontology_id, all_text)
 
     if use_llm_ontology and document_texts:
         try:
@@ -115,23 +144,38 @@ def create_from_files(
         ontology_id,
         schema=schema,
         schema_locked=lock_schema,
-        status="created",
+        simulation_requirement=simulation_requirement or "",
+        status="ontology_generated",
     )
     return registry.get_ontology(ontology_id)
 
 
 def _combined_document_text(ontology_id: str) -> str:
+    """优先读落盘的 extracted_text（与 MiroFish 建图同源）；否则重提取并 preprocess。"""
+    cached = get_extracted_text(ontology_id)
+    if cached and cached.strip():
+        return cached
+
     docs = registry.list_documents(ontology_id)
     parts = []
     for d in docs:
         path = d.get("path")
+        filename = d.get("filename") or os.path.basename(path or "doc")
         if path and os.path.exists(path):
             try:
-                parts.append(FileParser.extract_text(path))
+                text = FileParser.extract_text(path)
             except Exception:
                 with open(path, encoding="utf-8", errors="replace") as f:
-                    parts.append(f.read())
-    return "\n\n---\n\n".join(parts)
+                    text = f.read()
+            text = TextProcessor.preprocess_text(text)
+            parts.append(f"\n\n=== {filename} ===\n{text}")
+    all_text = "".join(parts)
+    if all_text.strip():
+        try:
+            save_extracted_text(ontology_id, all_text)
+        except Exception:
+            pass
+    return all_text
 
 
 def build_graph(
@@ -156,8 +200,6 @@ def build_graph(
     if not text.strip():
         raise ValueError("没有可建图的文档内容")
 
-    registry.update_ontology(ontology_id, status="building")
-
     from app.ontology.graph_builder import GraphBuilderService
 
     builder = GraphBuilderService()
@@ -169,6 +211,9 @@ def build_graph(
             graph_name=ont.get("name") or ontology_id,
             chunk_size=Config.DEFAULT_CHUNK_SIZE,
             chunk_overlap=Config.DEFAULT_CHUNK_OVERLAP,
+        )
+        registry.update_ontology(
+            ontology_id, status="building", build_task_id=task_id
         )
         # 后台监视任务完成，回写 graph_id / status
         thread = threading.Thread(
@@ -219,10 +264,22 @@ def _watch_build_task(ontology_id: str, task_id: str) -> None:
         task = tm.get_task(task_id)
         if not task:
             return
+        # 建图早期就把 graph_id 回写，live 端点才能在 Zep 处理中刷图
+        early_gid = (task.result or {}).get("graph_id")
+        if early_gid:
+            ont = registry.get_ontology(ontology_id)
+            if ont and not ont.get("graph_id"):
+                try:
+                    registry.update_ontology(ontology_id, graph_id=early_gid)
+                except Exception:
+                    pass
         if task.status == TaskStatus.COMPLETED:
             graph_id = (task.result or {}).get("graph_id")
             registry.update_ontology(
-                ontology_id, graph_id=graph_id, status="ready"
+                ontology_id,
+                graph_id=graph_id,
+                status="ready",
+                build_task_id=None,
             )
             try:
                 export_snapshot(ontology_id, graph_id)
@@ -230,7 +287,9 @@ def _watch_build_task(ontology_id: str, task_id: str) -> None:
                 logger.warning(f"建图后自动快照失败: {e}")
             return
         if task.status == TaskStatus.FAILED:
-            registry.update_ontology(ontology_id, status="failed")
+            registry.update_ontology(
+                ontology_id, status="failed", build_task_id=None
+            )
             return
         time.sleep(2)
 
@@ -246,6 +305,85 @@ def get_build_status(ontology_id: str, task_id: Optional[str] = None) -> Dict[st
         task = TaskManager().get_task(task_id)
         if task:
             result["task"] = task.to_dict()
+            # 用任务状态覆盖本体状态，便于前端判断完成/失败
+            result["status"] = task.status.value
+            result["progress"] = task.progress
+            result["message"] = task.message
+            if task.result and task.result.get("graph_id"):
+                result["graph_id"] = task.result.get("graph_id")
+            if task.error:
+                result["error"] = task.error
+
+            # 任务已完成时，在 status 查询里同步落库 + 快照，避免前端抢跑 404
+            if task.status == TaskStatus.COMPLETED:
+                gid = (task.result or {}).get("graph_id") or result.get("graph_id")
+                if gid:
+                    try:
+                        registry.update_ontology(
+                            ontology_id,
+                            graph_id=gid,
+                            status="ready",
+                            build_task_id=None,
+                        )
+                        result["graph_id"] = gid
+                        if not registry.get_latest_version(ontology_id):
+                            export_snapshot(ontology_id, gid)
+                    except Exception as e:
+                        logger.warning(f"完成态同步落库/快照失败: {e}")
+
+            # 建图中途提前回写 graph_id，供 live 刷图
+            elif (
+                task.result
+                and task.result.get("graph_id")
+                and ont
+                and not ont.get("graph_id")
+            ):
+                try:
+                    registry.update_ontology(
+                        ontology_id, graph_id=task.result["graph_id"]
+                    )
+                except Exception:
+                    pass
+
+            # 若曾被旧 task 误标 failed，但当前任务仍在跑，纠正回 building
+            if (
+                ont
+                and ont.get("status") == "failed"
+                and task.status
+                not in (TaskStatus.FAILED, TaskStatus.COMPLETED)
+                and not ont.get("graph_id")
+            ):
+                try:
+                    registry.update_ontology(
+                        ontology_id, status="building", build_task_id=task_id
+                    )
+                    result["status"] = task.status.value
+                except Exception:
+                    pass
+        else:
+            # 进程重启后 TaskManager 内存任务会丢失。
+            # 仅当轮询的是「当前」build_task_id 时才标失败，避免旧 task_id 误杀新建图。
+            current_tid = (ont or {}).get("build_task_id")
+            is_current = (not current_tid) or (task_id == current_tid)
+            if (
+                is_current
+                and ont
+                and ont.get("status") == "building"
+                and not ont.get("graph_id")
+            ):
+                result["status"] = "failed"
+                result["error"] = "建图任务已丢失（服务可能重启过），请重新点击建图"
+                result["task_lost"] = True
+                try:
+                    registry.update_ontology(
+                        ontology_id, status="failed", build_task_id=None
+                    )
+                except Exception:
+                    pass
+            elif not is_current:
+                result["status"] = "stale"
+                result["error"] = "该任务已过期，请使用最新建图任务"
+                result["task_lost"] = True
     return result
 
 
@@ -270,9 +408,19 @@ def append_documents(
             raw = item.read()
 
         path, text, char_count = _save_document_bytes(ontology_id, filename, raw)
-        doc = registry.add_document(ontology_id, filename, path, char_count)
+        text = TextProcessor.preprocess_text(text)
+        doc = registry.add_document(ontology_id, filename, path, len(text))
         docs.append(doc)
         new_texts.append(text)
+
+    # 追加后重建 extracted_text，保证后续建图/prepare 同源
+    try:
+        cached_path = _extracted_text_path(ontology_id)
+        if os.path.exists(cached_path):
+            os.remove(cached_path)
+        _combined_document_text(ontology_id)
+    except Exception as e:
+        logger.warning(f"更新 extracted_text 失败: {e}")
 
     graph_id = ont.get("graph_id")
     if graph_id and new_texts and Config.ZEP_API_KEY:
@@ -280,7 +428,10 @@ def append_documents(
             from app.ontology.graph_builder import GraphBuilderService
 
             builder = GraphBuilderService()
-            combined = "\n\n---\n\n".join(new_texts)
+            combined = "\n\n".join(
+                f"=== {d.get('filename')} ===\n{t}"
+                for d, t in zip(docs, new_texts)
+            )
             chunks = TextProcessor.split_text(
                 combined, Config.DEFAULT_CHUNK_SIZE, Config.DEFAULT_CHUNK_OVERLAP
             )

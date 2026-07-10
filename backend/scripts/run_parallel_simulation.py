@@ -763,11 +763,17 @@ def _enrich_action_context(
     """
     try:
         # 点赞/踩帖子：补充帖子内容和作者
+        # OASIS trace 里常用 like_id / dislike_id 表示被赞帖，而非 post_id
         if action_type in ('LIKE_POST', 'DISLIKE_POST'):
-            post_id = action_args.get('post_id')
+            post_id = (
+                action_args.get('post_id')
+                or action_args.get('like_id')
+                or action_args.get('dislike_id')
+            )
             if post_id:
                 post_info = _get_post_info(cursor, post_id, agent_names)
                 if post_info:
+                    action_args['post_id'] = post_id
                     action_args['post_content'] = post_info.get('content', '')
                     action_args['post_author_name'] = post_info.get('author_name', '')
         

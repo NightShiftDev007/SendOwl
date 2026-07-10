@@ -44,6 +44,7 @@ class Config:
     SNAPSHOT_DIR = os.path.join(UPLOAD_FOLDER, 'snapshots')
     DECISION_DIR = os.path.join(UPLOAD_FOLDER, 'decisions')
     RUN_DIR = os.path.join(UPLOAD_FOLDER, 'runs')
+    REPORTS_DIR = os.path.join(UPLOAD_FOLDER, 'reports')
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
 
     # 文本处理配置
@@ -88,5 +89,6 @@ class Config:
             cls.SNAPSHOT_DIR,
             cls.DECISION_DIR,
             cls.RUN_DIR,
+            cls.REPORTS_DIR,
         ):
             os.makedirs(path, exist_ok=True)

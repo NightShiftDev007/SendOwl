@@ -230,17 +230,34 @@ def build_compare_payload(decision_id: str) -> Dict[str, Any]:
         )
 
     narratives = {}
-    if flat_for_narrative:
+    # 默认用规则叙事，避免对比页首屏被 LLM 拖成空白；需要 LLM 时传 llm=1
+    use_llm = False
+    try:
+        from flask import has_request_context, request
+
+        if has_request_context():
+            use_llm = str(request.args.get("llm") or "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+    except Exception:
+        use_llm = False
+
+    if flat_for_narrative and use_llm:
         try:
             narratives = mc.llm_summarize(flat_for_narrative)
         except Exception:
-            for m in flat_for_narrative:
-                share = m["summary"]["stance_share"]
-                narratives[m["scenario_id"]] = (
-                    f"{m['scenario_name']}：总互动 {m['summary']['total_actions']}，"
-                    f"赞成{share['supportive']:.0%} / 反对{share['opposing']:.0%} / "
-                    f"中立{share['neutral']:.0%}。"
-                )
+            narratives = {}
+
+    if flat_for_narrative and not narratives:
+        for m in flat_for_narrative:
+            share = m["summary"]["stance_share"]
+            narratives[m["scenario_id"]] = (
+                f"{m['scenario_name']}：总互动 {m['summary']['total_actions']:.1f}，"
+                f"赞成{share['supportive']:.0%} / 反对{share['opposing']:.0%} / "
+                f"中立{share['neutral']:.0%}。"
+            )
 
     for agg in aggregated:
         sid = agg.get("scenario_id")

@@ -118,12 +118,13 @@ class GraphBuilderService:
                 message=t('progress.startBuildingGraph')
             )
             
-            # 1. 创建图谱
+            # 1. 创建图谱（尽早写入 result，便于建图中 live 刷图）
             graph_id = self.create_graph(graph_name)
             self.task_manager.update_task(
                 task_id,
                 progress=10,
-                message=t('progress.graphCreated', graphId=graph_id)
+                message=t('progress.graphCreated', graphId=graph_id),
+                result={"graph_id": graph_id},
             )
             
             # 2. 设置本体

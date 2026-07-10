@@ -65,10 +65,12 @@ def create_app(config_class=Config):
         req_logger.debug(f"响应: {response.status_code}")
         return response
 
-    from app.api import ontology_bp, decision_bp, run_bp
+    from app.api import ontology_bp, decision_bp, run_bp, simulation_bp, report_bp
     app.register_blueprint(ontology_bp)
     app.register_blueprint(decision_bp)
     app.register_blueprint(run_bp)
+    app.register_blueprint(simulation_bp)
+    app.register_blueprint(report_bp)
 
     @app.route('/health')
     def health():

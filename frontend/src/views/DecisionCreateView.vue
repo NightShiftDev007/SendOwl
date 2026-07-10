@@ -96,7 +96,7 @@ const err = ref(false)
 
 const form = reactive({
   ontology_id: route.query.ontology_id || '',
-  version_id: '',
+  version_id: route.query.version_id || '',
   title: '限行新政发布策略对比',
   sample_count: 3,
   max_rounds: 10,

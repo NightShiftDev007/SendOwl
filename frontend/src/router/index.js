@@ -1,74 +1,73 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import MainView from '../views/MainView.vue'
-import DecisionCreateView from '../views/DecisionCreateView.vue'
-import DecisionMonitorView from '../views/DecisionMonitorView.vue'
-import DecisionCompareView from '../views/DecisionCompareView.vue'
+import SimulationView from '../views/SimulationView.vue'
+import SimulationRunView from '../views/SimulationRunView.vue'
+import ReportView from '../views/ReportView.vue'
+import InteractionView from '../views/InteractionView.vue'
 
+/**
+ * 终局：唯一五步流程
+ *   / → /process/:id → /simulation/:id → /start → /report/:id → /interaction/:id
+ * 旧 /decision/* 路由重定向进五步
+ */
 const routes = [
   { path: '/', name: 'Home', component: Home },
+
   {
-    path: '/ontology/:ontologyId',
-    name: 'OntologyWorkspace',
+    path: '/process/:projectId',
+    name: 'Process',
     component: MainView,
     props: true,
   },
-  // 兼容 MiroFish 旧路由
   {
-    path: '/process/:projectId',
+    path: '/ontology/:ontologyId',
     redirect: (to) => ({
-      name: 'OntologyWorkspace',
-      params: { ontologyId: to.params.projectId },
+      name: 'Process',
+      params: { projectId: to.params.ontologyId },
     }),
   },
-  {
-    path: '/ontology',
-    redirect: '/',
-  },
-  {
-    path: '/decision/new',
-    name: 'DecisionCreate',
-    component: DecisionCreateView,
-  },
-  {
-    path: '/decision/:id/monitor',
-    name: 'DecisionMonitor',
-    component: DecisionMonitorView,
-    props: true,
-  },
-  {
-    path: '/decision/:id/compare',
-    name: 'DecisionCompare',
-    component: DecisionCompareView,
-    props: true,
-  },
-  // 兼容旧模拟/报告路由 → 决策中心对应页
+  { path: '/ontology', redirect: '/' },
+
   {
     path: '/simulation/:simulationId',
-    redirect: (to) => ({
-      name: 'DecisionMonitor',
-      params: { id: to.params.simulationId },
-    }),
+    name: 'Simulation',
+    component: SimulationView,
+    props: true,
   },
   {
     path: '/simulation/:simulationId/start',
-    redirect: (to) => ({
-      name: 'DecisionMonitor',
-      params: { id: to.params.simulationId },
-    }),
+    name: 'SimulationRun',
+    component: SimulationRunView,
+    props: true,
   },
   {
     path: '/report/:reportId',
-    redirect: (to) => ({
-      name: 'DecisionCompare',
-      params: { id: to.params.reportId },
-    }),
+    name: 'Report',
+    component: ReportView,
+    props: true,
   },
   {
     path: '/interaction/:reportId',
+    name: 'Interaction',
+    component: InteractionView,
+    props: true,
+  },
+
+  // 旧决策入口退役 → 五步
+  { path: '/decision/new', redirect: '/' },
+  {
+    path: '/decision/:id/monitor',
     redirect: (to) => ({
-      name: 'DecisionCompare',
-      params: { id: to.params.reportId },
+      name: 'SimulationRun',
+      params: { simulationId: to.params.id },
+    }),
+  },
+  {
+    path: '/decision/:id/compare',
+    redirect: (to) => ({
+      name: 'Report',
+      params: { reportId: to.params.id },
     }),
   },
 ]

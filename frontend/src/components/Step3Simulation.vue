@@ -1,5 +1,12 @@
 <template>
   <div class="simulation-panel">
+    <RunMatrixPanel
+      :matrix="runMatrix"
+      :progress="runProgress"
+      :selected-run-id="selectedRunId"
+      :selected-sim-id="selectedSimId"
+      @select="onSelectRun"
+    />
     <!-- Top Control Bar -->
     <div class="control-bar">
       <div class="status-group">
@@ -104,7 +111,7 @@
     </div>
 
     <!-- Main Content: Dual Timeline -->
-    <div class="main-content-area" ref="scrollContainer">
+    <div class="main-content-area" ref="scrollContainer" @scroll="onTimelineScroll">
       <!-- Timeline Header -->
       <div class="timeline-header" v-if="allActions.length > 0">
         <div class="timeline-stats">
@@ -189,11 +196,17 @@
                   </div>
                 </template>
 
-                <!-- LIKE_POST: 点赞帖子 -->
-                <template v-if="action.action_type === 'LIKE_POST'">
+                <!-- LIKE_POST / DISLIKE_POST: 点赞/踩帖子 -->
+                <template v-if="action.action_type === 'LIKE_POST' || action.action_type === 'DISLIKE_POST'">
                   <div class="like-info">
                     <svg class="icon-small filled" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                    <span class="like-label">Liked @{{ action.action_args?.post_author_name || 'User' }}'s post</span>
+                    <span class="like-label">
+                      {{ action.action_type === 'DISLIKE_POST' ? 'Disliked' : 'Liked' }}
+                      @{{ action.action_args?.post_author_name || 'User' }}'s post
+                      <template v-if="!action.action_args?.post_content && (action.action_args?.like_id || action.action_args?.post_id || action.action_args?.dislike_id)">
+                        #{{ action.action_args?.like_id || action.action_args?.dislike_id || action.action_args?.post_id }}
+                      </template>
+                    </span>
                   </div>
                   <div v-if="action.action_args?.post_content" class="liked-content">
                     "{{ truncateContent(action.action_args.post_content, 120) }}"
@@ -249,7 +262,7 @@
                 </template>
 
                 <!-- 通用回退：未知类型或有 content 但未被上述处理 -->
-                <div v-if="!['CREATE_POST', 'QUOTE_POST', 'REPOST', 'LIKE_POST', 'CREATE_COMMENT', 'SEARCH_POSTS', 'FOLLOW', 'UPVOTE_POST', 'DOWNVOTE_POST', 'DO_NOTHING'].includes(action.action_type) && action.action_args?.content" class="content-text">
+                <div v-if="!['CREATE_POST', 'QUOTE_POST', 'REPOST', 'LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT', 'SEARCH_POSTS', 'FOLLOW', 'UPVOTE_POST', 'DOWNVOTE_POST', 'DO_NOTHING'].includes(action.action_type) && action.action_args?.content" class="content-text">
                   {{ action.action_args.content }}
                 </div>
               </div>
@@ -296,6 +309,7 @@ import {
   getRunStatusDetail
 } from '../api/simulation'
 import { generateReport } from '../api/report'
+import RunMatrixPanel from './RunMatrixPanel.vue'
 
 const { t } = useI18n()
 
@@ -317,6 +331,10 @@ const router = useRouter()
 
 // State
 const isGeneratingReport = ref(false)
+const runMatrix = ref([])
+const runProgress = ref({ done: 0, total: 0 })
+const selectedRunId = ref(null)
+const selectedSimId = ref(null)
 const phase = ref(0) // 0: 未开始, 1: 运行中, 2: 已完成
 const isStarting = ref(false)
 const isStopping = ref(false)
@@ -325,6 +343,9 @@ const runStatus = ref({})
 const allActions = ref([]) // 所有动作（增量累积）
 const actionIds = ref(new Set()) // 用于去重的动作ID集合
 const scrollContainer = ref(null)
+/** 贴底时自动滚；用户上滑离开底部后暂停，回到底部再恢复 */
+const stickTimelineToBottom = ref(true)
+const TIMELINE_BOTTOM_THRESHOLD = 80
 
 // Computed
 // 按时间顺序显示动作（最新的在最后面，即底部）
@@ -371,6 +392,7 @@ const resetAllState = () => {
   runStatus.value = {}
   allActions.value = []
   actionIds.value = new Set()
+  stickTimelineToBottom.value = true
   prevTwitterRound.value = 0
   prevRedditRound.value = 0
   startError.value = null
@@ -489,6 +511,13 @@ const stopPolling = () => {
 const prevTwitterRound = ref(0)
 const prevRedditRound = ref(0)
 
+const onSelectRun = (row) => {
+  selectedRunId.value = row.run_id
+  selectedSimId.value = row.sim_id
+  addLog(`切换到 Run ${row.run_id} / ${row.sim_id || ''}`)
+  fetchRunStatusDetail()
+}
+
 const fetchRunStatus = async () => {
   if (!props.simulationId) return
   
@@ -497,6 +526,21 @@ const fetchRunStatus = async () => {
     
     if (res.success && res.data) {
       const data = res.data
+
+      if (data.matrix) {
+        runMatrix.value = data.matrix
+        runProgress.value = data.progress || { done: 0, total: 0 }
+        if (!selectedSimId.value && data.sim_id) {
+          selectedSimId.value = data.sim_id
+        }
+        if (!selectedRunId.value) {
+          const first = (data.matrix[0]?.runs || [])[0]
+          if (first) {
+            selectedRunId.value = first.run_id
+            selectedSimId.value = first.sim_id || selectedSimId.value
+          }
+        }
+      }
       
       runStatus.value = data
       
@@ -686,6 +730,26 @@ watch(() => props.systemLogs?.length, () => {
     }
   })
 })
+
+function onTimelineScroll() {
+  const el = scrollContainer.value
+  if (!el) return
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  stickTimelineToBottom.value = dist <= TIMELINE_BOTTOM_THRESHOLD
+}
+
+function scrollTimelineToBottom() {
+  const el = scrollContainer.value
+  if (!el || !stickTimelineToBottom.value) return
+  el.scrollTop = el.scrollHeight
+}
+
+watch(
+  () => allActions.value.length,
+  () => {
+    nextTick(scrollTimelineToBottom)
+  },
+)
 
 onMounted(() => {
   addLog(t('log.step3Init'))

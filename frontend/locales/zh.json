@@ -48,7 +48,7 @@
     "statOntologies": "本体",
     "statDecisions": "决策任务",
     "statEngine": "引擎",
-    "createDecision": "创建决策",
+    "createDecision": "多方案决策",
     "metricLowCost": "低成本",
     "metricLowCostDesc": "常规模拟平均5$/次",
     "metricHighAvail": "高可用",

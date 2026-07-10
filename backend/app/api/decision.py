@@ -35,7 +35,8 @@ def create_decision():
             version_id=body.get("version_id"),
             title=title,
             scenarios=body.get("scenarios") or [],
-            sample_count=int(body.get("sample_count") or 3),
+            # 终局默认 N=1 M=1（单次推演）
+            sample_count=int(body.get("sample_count") if body.get("sample_count") is not None else 1),
             max_rounds=int(body.get("max_rounds") or 10),
         )
         return jsonify({"success": True, "data": data})
@@ -55,6 +56,29 @@ def get_decision(decision_id: str):
     registry.init_schema()
     try:
         data = ScenarioRunner().get_decision_detail(decision_id)
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+
+
+@decision_bp.post("/<decision_id>/prepare")
+def prepare_decision(decision_id: str):
+    """构建共享世界（切片/人口/网络），对应 MiroFish Step2 prepare。"""
+    registry.init_schema()
+    try:
+        data = ScenarioRunner().prepare_decision(decision_id)
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.exception("prepare decision failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@decision_bp.get("/<decision_id>/world")
+def decision_world(decision_id: str):
+    """返回共享世界 profiles / config，供 Step2 展示。"""
+    registry.init_schema()
+    try:
+        data = ScenarioRunner().get_world_assets(decision_id)
         return jsonify({"success": True, "data": data})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 404

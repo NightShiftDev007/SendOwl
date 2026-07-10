@@ -405,37 +405,39 @@ const closeModal = () => {
   selectedProject.value = null
 }
 
-// 本体工作台
+// 本体工作台（Step1）
 const goToProject = () => {
   const oid = selectedProject.value?.ontology_id || selectedProject.value?.project_id
   if (oid) {
-    router.push({ name: 'OntologyWorkspace', params: { ontologyId: oid } })
+    router.push({ name: 'Process', params: { projectId: oid } })
     closeModal()
   }
 }
 
-// 创建决策 / 监控
+// 进入五步推演 / 环境搭建
 const goToSimulation = () => {
   const p = selectedProject.value
-  if (p?.kind === 'decision' && p.decision_id) {
-    router.push({ name: 'DecisionMonitor', params: { id: p.decision_id } })
+  if (p?.kind === 'decision' && (p.decision_id || p.simulation_id)) {
+    router.push({
+      name: 'Simulation',
+      params: { simulationId: p.decision_id || p.simulation_id },
+    })
     closeModal()
     return
   }
-  if (p?.ontology_id || p?.project_id) {
-    router.push({
-      name: 'DecisionCreate',
-      query: { ontology_id: p.ontology_id || p.project_id },
-    })
+  // 本体：进 Step1，由用户点「进入环境搭建」创建推演
+  const oid = p?.ontology_id || p?.project_id
+  if (oid) {
+    router.push({ name: 'Process', params: { projectId: oid } })
     closeModal()
   }
 }
 
-// 对比面板
+// 报告（五步 Step4）
 const goToReport = () => {
   const id = selectedProject.value?.decision_id || selectedProject.value?.report_id
   if (id) {
-    router.push({ name: 'DecisionCompare', params: { id } })
+    router.push({ name: 'Report', params: { reportId: id } })
     closeModal()
   }
 }

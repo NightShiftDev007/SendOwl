@@ -1,6 +1,16 @@
 <template>
   <div class="env-setup-panel">
     <div class="scroll-container">
+      <ScenarioEditor
+        v-model="scenarios"
+        v-model:sample-count="sampleCount"
+        v-model:max-rounds="editorMaxRounds"
+      />
+      <div v-if="scenarios.length > 1" class="apply-bar">
+        <button type="button" class="apply-btn" :disabled="applyingScenarios" @click="applyScenariosAndPrepare">
+          {{ applyingScenarios ? '正在应用多方案…' : `应用 ${scenarios.length} 方案并重新准备` }}
+        </button>
+      </div>
       <!-- Step 01: 模拟实例 -->
       <div class="step-card" :class="{ 'active': phase === 0, 'completed': phase > 0 }">
         <div class="card-header">
@@ -367,6 +377,12 @@
           </p>
 
           <div v-if="simulationConfig?.event_config" class="orchestration-content">
+            <div
+              v-if="!simulationConfig.event_config.narrative_direction && !(simulationConfig.event_config.hot_topics || []).length && !(simulationConfig.event_config.initial_posts || []).length"
+              class="orchestration-empty-hint"
+            >
+              初始激活内容为空：事件配置 LLM 可能失败（常见原因：当前 API 端点不支持所配模型）。请检查后端日志后更换模型并重新「环境搭建」。
+            </div>
             <!-- 叙事方向 -->
             <div class="narrative-box">
               <span class="box-label narrative-label">
@@ -528,92 +544,94 @@
       </div>
     </div>
 
-    <!-- Profile Detail Modal -->
-    <Transition name="modal">
-      <div v-if="selectedProfile" class="profile-modal-overlay" @click.self="selectedProfile = null">
-        <div class="profile-modal">
-          <div class="modal-header">
-          <div class="modal-header-info">
-            <div class="modal-name-row">
-              <span class="modal-realname">{{ selectedProfile.username }}</span>
-              <span class="modal-username">@{{ selectedProfile.name }}</span>
+    <!-- Profile Detail Modal：Teleport 到 body，避免被右栏 transform/overflow 裁切 -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="selectedProfile" class="profile-modal-overlay" @click.self="selectedProfile = null">
+          <div class="profile-modal">
+            <div class="modal-header">
+            <div class="modal-header-info">
+              <div class="modal-name-row">
+                <span class="modal-realname">{{ selectedProfile.username }}</span>
+                <span class="modal-username">@{{ selectedProfile.name }}</span>
+              </div>
+              <span class="modal-profession">{{ selectedProfile.profession }}</span>
             </div>
-            <span class="modal-profession">{{ selectedProfile.profession }}</span>
+            <button class="close-btn" @click="selectedProfile = null">×</button>
           </div>
-          <button class="close-btn" @click="selectedProfile = null">×</button>
+          
+          <div class="modal-body">
+            <!-- 基本信息 -->
+            <div class="modal-info-grid">
+              <div class="info-item">
+                <span class="info-label">{{ $t('step2.profileModalAge') }}</span>
+                <span class="info-value">{{ selectedProfile.age || '-' }} {{ $t('step2.yearsOld') }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">{{ $t('step2.profileModalGender') }}</span>
+                <span class="info-value">{{ { male: $t('step2.genderMale'), female: $t('step2.genderFemale'), other: $t('step2.genderOther') }[selectedProfile.gender] || selectedProfile.gender }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">{{ $t('step2.profileModalCountry') }}</span>
+                <span class="info-value">{{ selectedProfile.country || '-' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">{{ $t('step2.profileModalMbti') }}</span>
+                <span class="info-value mbti">{{ selectedProfile.mbti || '-' }}</span>
+              </div>
+            </div>
+
+            <!-- 简介 -->
+            <div class="modal-section">
+              <span class="section-label">{{ $t('step2.profileModalBio') }}</span>
+              <p class="section-bio">{{ selectedProfile.bio || $t('step2.noBio') }}</p>
+            </div>
+
+            <!-- 关注话题 -->
+            <div class="modal-section" v-if="selectedProfile.interested_topics?.length">
+              <span class="section-label">{{ $t('step2.profileModalTopics') }}</span>
+              <div class="topics-grid">
+                <span 
+                  v-for="topic in selectedProfile.interested_topics" 
+                  :key="topic" 
+                  class="topic-item"
+                >{{ topic }}</span>
+              </div>
+            </div>
+
+            <!-- 详细人设 -->
+            <div class="modal-section" v-if="selectedProfile.persona">
+              <span class="section-label">{{ $t('step2.profileModalPersona') }}</span>
+              
+              <!-- 人设维度概览 -->
+              <div class="persona-dimensions">
+                <div class="dimension-card">
+                  <span class="dim-title">{{ $t('step2.personaDimExperience') }}</span>
+                  <span class="dim-desc">{{ $t('step2.personaDimExperienceDesc') }}</span>
+                </div>
+                <div class="dimension-card">
+                  <span class="dim-title">{{ $t('step2.personaDimBehavior') }}</span>
+                  <span class="dim-desc">{{ $t('step2.personaDimBehaviorDesc') }}</span>
+                </div>
+                <div class="dimension-card">
+                  <span class="dim-title">{{ $t('step2.personaDimMemory') }}</span>
+                  <span class="dim-desc">{{ $t('step2.personaDimMemoryDesc') }}</span>
+                </div>
+                <div class="dimension-card">
+                  <span class="dim-title">{{ $t('step2.personaDimSocial') }}</span>
+                  <span class="dim-desc">{{ $t('step2.personaDimSocialDesc') }}</span>
+                </div>
+              </div>
+
+              <div class="persona-content">
+                <p class="section-persona">{{ selectedProfile.persona }}</p>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        <div class="modal-body">
-          <!-- 基本信息 -->
-          <div class="modal-info-grid">
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalAge') }}</span>
-              <span class="info-value">{{ selectedProfile.age || '-' }} {{ $t('step2.yearsOld') }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalGender') }}</span>
-              <span class="info-value">{{ { male: $t('step2.genderMale'), female: $t('step2.genderFemale'), other: $t('step2.genderOther') }[selectedProfile.gender] || selectedProfile.gender }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalCountry') }}</span>
-              <span class="info-value">{{ selectedProfile.country || '-' }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('step2.profileModalMbti') }}</span>
-              <span class="info-value mbti">{{ selectedProfile.mbti || '-' }}</span>
-            </div>
-          </div>
-
-          <!-- 简介 -->
-          <div class="modal-section">
-            <span class="section-label">{{ $t('step2.profileModalBio') }}</span>
-            <p class="section-bio">{{ selectedProfile.bio || $t('step2.noBio') }}</p>
-          </div>
-
-          <!-- 关注话题 -->
-          <div class="modal-section" v-if="selectedProfile.interested_topics?.length">
-            <span class="section-label">{{ $t('step2.profileModalTopics') }}</span>
-            <div class="topics-grid">
-              <span 
-                v-for="topic in selectedProfile.interested_topics" 
-                :key="topic" 
-                class="topic-item"
-              >{{ topic }}</span>
-            </div>
-          </div>
-
-          <!-- 详细人设 -->
-          <div class="modal-section" v-if="selectedProfile.persona">
-            <span class="section-label">{{ $t('step2.profileModalPersona') }}</span>
-            
-            <!-- 人设维度概览 -->
-            <div class="persona-dimensions">
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimExperience') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimExperienceDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimBehavior') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimBehaviorDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimMemory') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimMemoryDesc') }}</span>
-              </div>
-              <div class="dimension-card">
-                <span class="dim-title">{{ $t('step2.personaDimSocial') }}</span>
-                <span class="dim-desc">{{ $t('step2.personaDimSocialDesc') }}</span>
-              </div>
-            </div>
-
-            <div class="persona-content">
-              <p class="section-persona">{{ selectedProfile.persona }}</p>
-            </div>
-          </div>
         </div>
-      </div>
-      </div>
-    </Transition>
+      </Transition>
+    </Teleport>
 
     <!-- Bottom Info / Logs -->
     <div class="system-logs">
@@ -634,15 +652,19 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   prepareSimulation,
   getPrepareStatus,
   getSimulationProfilesRealtime,
   getSimulationConfig,
-  getSimulationConfigRealtime
+  getSimulationConfigRealtime,
+  createSimulation,
 } from '../api/simulation'
+import ScenarioEditor from './ScenarioEditor.vue'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const props = defineProps({
   simulationId: String,  // 从父组件传入
@@ -665,6 +687,19 @@ const expectedTotal = ref(null)
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
+
+const scenarios = ref([
+  {
+    name: '默认方案',
+    kind: 'default',
+    color: '#3498db',
+    poster_hint: 'official',
+    content: '',
+  },
+])
+const sampleCount = ref(1)
+const editorMaxRounds = ref(10)
+const applyingScenarios = ref(false)
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -786,7 +821,8 @@ const startPrepareSimulation = async () => {
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
-      parallel_profile_count: 5
+      parallel_profile_count: 5,
+      scenario_count: scenarios.value.length,
     })
     
     if (res.success && res.data) {
@@ -821,6 +857,38 @@ const startPrepareSimulation = async () => {
   } catch (err) {
     addLog(t('log.prepareException', { error: err.message }))
     emit('update-status', 'error')
+  }
+}
+
+/** 多方案：重建决策后重新 prepare */
+const applyScenariosAndPrepare = async () => {
+  if (applyingScenarios.value) return
+  applyingScenarios.value = true
+  try {
+    const ontologyId =
+      props.projectData?.ontology_id ||
+      props.projectData?.project_id ||
+      props.projectData?.id
+    if (!ontologyId) throw new Error('缺少 ontology_id')
+    addLog(`应用 ${scenarios.value.length} 个方案 × ${sampleCount.value} 采样…`)
+    const res = await createSimulation({
+      ontology_id: ontologyId,
+      project_id: ontologyId,
+      title: props.projectData?.name || scenarios.value[0]?.name,
+      scenarios: scenarios.value,
+      sample_count: sampleCount.value,
+      max_rounds: editorMaxRounds.value || customMaxRounds.value || 10,
+    })
+    const newId = res.data?.decision_id || res.data?.simulation_id
+    if (!newId) throw new Error('重建决策失败')
+    addLog(`已创建多方案决策 ${newId}`)
+    await router.replace({ name: 'Simulation', params: { simulationId: newId } })
+    // 路由更新后父组件会换 simulationId；主动再 prepare
+    setTimeout(() => startPrepareSimulation(), 300)
+  } catch (e) {
+    addLog(`应用方案失败: ${e.message}`)
+  } finally {
+    applyingScenarios.value = false
   }
 }
 
@@ -1099,6 +1167,24 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.apply-bar {
+  margin-top: -8px;
+}
+.apply-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: var(--ink, #111);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  cursor: pointer;
+}
+.apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Step Card */
@@ -1820,7 +1906,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 4000;
   backdrop-filter: blur(4px);
 }
 
@@ -2125,6 +2211,15 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 20px;
   margin-top: 16px;
+}
+
+.orchestration-empty-hint {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .box-label {

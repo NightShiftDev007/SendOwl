@@ -2,7 +2,7 @@
   <div class="home">
     <AppHeader show-subtitle>
       <template #right>
-        <RouterLink class="nav-link" to="/decision/new">{{ $t('home.createDecision') }}</RouterLink>
+        <span class="nav-link muted">{{ $t('home.tagline') }}</span>
       </template>
     </AppHeader>
 
@@ -191,7 +191,7 @@ const removeFile = (index) => {
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
   setPendingUpload(files.value, formData.value.simulationRequirement)
-  router.push({ name: 'OntologyWorkspace', params: { ontologyId: 'new' } })
+  router.push({ name: 'Process', params: { projectId: 'new' } })
 }
 
 onMounted(async () => {

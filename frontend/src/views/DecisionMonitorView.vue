@@ -35,7 +35,7 @@
     </div>
 
     <main class="content-area">
-      <div class="timeline-panel">
+      <div class="timeline-panel" ref="timelinePanel" @scroll="onTimelineScroll">
         <div class="total-pill mono">
           ACTIONS · {{ actions.length }}
           <span v-if="eventCount" class="pill-sub">· sys {{ eventCount }}</span>
@@ -113,7 +113,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppHeader from '../components/AppHeader.vue'
 import { getDecision, getDecisionStatus, getRunActions } from '../api/decision'
 
@@ -125,6 +125,9 @@ const selectedScenarioId = ref('')
 const actions = ref([])
 const eventCount = ref(0)
 const logs = ref([])
+const timelinePanel = ref(null)
+const stickTimelineToBottom = ref(true)
+const TIMELINE_BOTTOM_THRESHOLD = 80
 let timer = null
 
 const rows = computed(() => {
@@ -228,6 +231,26 @@ function addLog(msg) {
   logs.value.push({ time, msg })
   if (logs.value.length > 80) logs.value.shift()
 }
+
+function onTimelineScroll() {
+  const el = timelinePanel.value
+  if (!el) return
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  stickTimelineToBottom.value = dist <= TIMELINE_BOTTOM_THRESHOLD
+}
+
+function scrollTimelineToBottom() {
+  const el = timelinePanel.value
+  if (!el || !stickTimelineToBottom.value) return
+  el.scrollTop = el.scrollHeight
+}
+
+watch(
+  () => actions.value.length,
+  () => {
+    nextTick(scrollTimelineToBottom)
+  },
+)
 
 async function loadActions(runId) {
   if (!runId) {

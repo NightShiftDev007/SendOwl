@@ -12,6 +12,7 @@
 
     <main class="split">
       <section class="left">
+        <p v-if="loading && !scenarios.length" class="muted pad">正在加载对比指标…</p>
         <p v-if="error" class="error">{{ error }}</p>
 
         <div v-if="verdict" class="verdict-bar">
@@ -63,10 +64,12 @@
           <div ref="curveEl" class="chart tall"></div>
         </div>
 
-        <article class="report-style" v-if="report">
+        <article class="report-style" v-if="report || reportLoading || reportError">
           <span class="report-tag">COMPARE REPORT</span>
           <h1>{{ compare?.title || '决策对比报告' }}</h1>
-          <pre class="report-body">{{ report }}</pre>
+          <p v-if="reportLoading" class="muted">报告生成中（LLM）…</p>
+          <p v-else-if="reportError" class="error">{{ reportError }}</p>
+          <pre v-else class="report-body">{{ report }}</pre>
         </article>
       </section>
 
@@ -86,8 +89,16 @@
                 {{ r.label }}
               </option>
             </select>
-            <label class="muted" style="margin-top:8px;display:block">Agent ID</label>
-            <input v-model.number="agentId" type="number" min="0" />
+            <label class="muted" style="margin-top:8px;display:block">采访对象</label>
+            <select v-model="agentId" :disabled="!runId || agentsLoading">
+              <option disabled :value="null">
+                {{ agentsLoading ? '加载 Agent…' : (agentOptions.length ? '选择 Agent' : '暂无 Agent') }}
+              </option>
+              <option v-for="a in agentOptions" :key="a.agent_id" :value="a.agent_id">
+                {{ a.agent_id }} · {{ a.name }}{{ a.entity_type ? ` (${a.entity_type})` : '' }}
+              </option>
+            </select>
+            <p v-if="selectedAgent?.bio" class="agent-bio muted">{{ selectedAgent.bio }}</p>
           </div>
           <div class="chat-messages" ref="chatEl">
             <div
@@ -102,7 +113,7 @@
           </div>
           <div class="chat-input-area">
             <textarea v-model="prompt" rows="2" placeholder="你怎么看当前政策？" @keydown.enter.exact.prevent="send" />
-            <button class="cta" :disabled="sending || !runId" @click="send">
+            <button class="cta" :disabled="sending || !runId || agentId == null" @click="send">
               {{ sending ? '…' : '发送' }}
             </button>
           </div>
@@ -113,16 +124,18 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import AppHeader from '../components/AppHeader.vue'
-import { getDecision, getDecisionCompare, interviewRun } from '../api/decision'
+import { getDecision, getDecisionCompare, getRunAgents, interviewRun } from '../api/decision'
 
 const props = defineProps({ id: String })
 const compare = ref(null)
 const scenarios = ref([])
 const report = ref('')
 const loading = ref(false)
+const reportLoading = ref(false)
+const reportError = ref('')
 const error = ref('')
 const barEl = ref(null)
 const stanceEl = ref(null)
@@ -130,12 +143,18 @@ const curveEl = ref(null)
 const chatEl = ref(null)
 const tab = ref('chat')
 const runId = ref('')
-const agentId = ref(0)
+const agentId = ref(null)
+const agentOptions = ref([])
+const agentsLoading = ref(false)
 const prompt = ref('')
 const sending = ref(false)
 const messages = ref([])
 const decision = ref(null)
 let charts = []
+
+const selectedAgent = computed(() =>
+  agentOptions.value.find((a) => a.agent_id === agentId.value) || null,
+)
 
 const hasCurves = computed(() =>
   scenarios.value.some((s) => (s.activity_curve || []).length > 1),
@@ -292,26 +311,77 @@ function renderCharts() {
   }
 }
 
-async function load() {
-  loading.value = true
-  error.value = ''
+async function loadAgents(rid) {
+  agentOptions.value = []
+  agentId.value = null
+  if (!rid) return
+  agentsLoading.value = true
   try {
-    const [cmp, dec] = await Promise.all([
-      getDecisionCompare(props.id, { report: true }),
-      getDecision(props.id).catch(() => null),
-    ])
+    const res = await getRunAgents(rid)
+    const list = res.data?.agents || res.agents || []
+    agentOptions.value = list
+    // 优先选有名字的活跃角色，否则第一个
+    const prefer = list.find((a) => a.name && !String(a.name).startsWith('Agent_')) || list[0]
+    agentId.value = prefer ? prefer.agent_id : null
+  } catch (e) {
+    agentOptions.value = []
+  } finally {
+    agentsLoading.value = false
+  }
+}
+
+watch(runId, (rid) => {
+  messages.value = []
+  loadAgents(rid)
+})
+
+async function loadReport() {
+  reportLoading.value = true
+  reportError.value = ''
+  try {
+    const cmp = await getDecisionCompare(props.id, { report: true })
     const data = cmp.data || cmp
-    compare.value = data
-    scenarios.value = data.scenarios || []
     const rpt = data.report
     report.value =
       typeof rpt === 'string'
         ? rpt
         : rpt?.markdown ||
           data.narrative ||
-          scenarios.value.map((s) => s.narrative).filter(Boolean).join('\n\n')
+          (data.scenarios || []).map((s) => s.narrative).filter(Boolean).join('\n\n') ||
+          ''
+    if (!report.value) report.value = '（报告为空）'
+  } catch (e) {
+    reportError.value = e.message || '报告生成失败'
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  report.value = ''
+  reportError.value = ''
+  try {
+    // 先拉指标（不含 LLM 报告），避免首屏空白
+    const [cmp, dec] = await Promise.all([
+      getDecisionCompare(props.id, { report: false }),
+      getDecision(props.id).catch(() => null),
+    ])
+    const data = cmp.data || cmp
+    compare.value = data
+    scenarios.value = data.scenarios || []
+    // 先用规则叙事占位
+    if (!report.value) {
+      report.value = scenarios.value.map((s) => s.narrative).filter(Boolean).join('\n\n')
+    }
     decision.value = dec?.data || dec
-    if (!runId.value && runOptions.value[0]) runId.value = runOptions.value[0].id
+    if (!runId.value && runOptions.value[0]) {
+      runId.value = runOptions.value[0].id
+      // watch(runId) 会拉 agents
+    } else if (runId.value && !agentOptions.value.length) {
+      await loadAgents(runId.value)
+    }
     await nextTick()
     renderCharts()
   } catch (e) {
@@ -319,12 +389,15 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // 报告异步生成，不阻塞图表
+  loadReport()
 }
 
 async function send() {
-  if (!prompt.value.trim() || !runId.value) return
+  if (!prompt.value.trim() || !runId.value || agentId.value == null) return
   const q = prompt.value.trim()
-  messages.value.push({ role: 'user', content: q })
+  const who = selectedAgent.value?.name || `Agent ${agentId.value}`
+  messages.value.push({ role: 'user', content: `【问 ${who}】${q}` })
   prompt.value = ''
   sending.value = true
   try {
@@ -452,6 +525,9 @@ onMounted(load)
   color: #888;
   font-size: 11px;
 }
+.pad {
+  padding: 16px 0;
+}
 .val {
   font-family: var(--font-mono);
   font-weight: 800;
@@ -554,6 +630,13 @@ onMounted(load)
   font: inherit;
   box-sizing: border-box;
   margin-top: 4px;
+}
+.agent-bio {
+  margin-top: 8px;
+  line-height: 1.45;
+  font-size: 11px;
+  max-height: 64px;
+  overflow: auto;
 }
 .chat-messages {
   flex: 1;

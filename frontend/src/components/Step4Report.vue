@@ -16,6 +16,8 @@
             <div class="header-divider"></div>
           </div>
 
+          <CompareChapter :compare="comparePayload" />
+
           <!-- Sections List -->
           <div class="sections-list">
             <div 
@@ -394,6 +396,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } f
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog } from '../api/report'
+import { getDecisionCompare } from '../api/decision'
+import CompareChapter from './CompareChapter.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -430,6 +434,7 @@ const leftPanel = ref(null)
 const rightPanel = ref(null)
 const logContent = ref(null)
 const showRawResult = reactive({})
+const comparePayload = ref(null)
 
 // Toggle functions
 const toggleRawResult = (timestamp, event) => {
@@ -2176,10 +2181,22 @@ const stopPolling = () => {
 }
 
 // Lifecycle
+const loadCompareIfNeeded = async () => {
+  const id = props.simulationId || props.reportId
+  if (!id || !String(id).startsWith('dec_')) return
+  try {
+    const res = await getDecisionCompare(id, { report: true })
+    comparePayload.value = res.data || null
+  } catch (_) {
+    comparePayload.value = null
+  }
+}
+
 onMounted(() => {
   if (props.reportId) {
     addLog(`Report Agent initialized: ${props.reportId}`)
     startPolling()
+    loadCompareIfNeeded()
   }
 })
 
@@ -2201,8 +2218,10 @@ watch(() => props.reportId, (newId) => {
     collapsedSections.value = new Set()
     isComplete.value = false
     startTime.value = null
+    comparePayload.value = null
     
     startPolling()
+    loadCompareIfNeeded()
   }
 }, { immediate: true })
 </script>

@@ -10,14 +10,20 @@
             :class="{ active: viewMode === mode }"
             @click="viewMode = mode"
           >
-            {{ { graph: $t('main.layoutGraph'), split: $t('main.layoutSplit'), workbench: $t('main.layoutWorkbench') }[mode] }}
+            {{
+              {
+                graph: $t('main.layoutGraph'),
+                split: $t('main.layoutSplit'),
+                workbench: $t('main.layoutWorkbench'),
+              }[mode]
+            }}
           </button>
         </div>
       </template>
       <template #right>
         <div class="workflow-step">
-          <span class="step-num">本体工作台</span>
-          <span class="step-name">{{ ontologyId === 'new' ? '新建' : ontologyId }}</span>
+          <span class="step-num">Step {{ currentStep }}/5</span>
+          <span class="step-name">{{ $tm('main.stepNames')[currentStep - 1] }}</span>
         </div>
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -39,105 +45,64 @@
       </div>
 
       <div class="panel-wrapper right" :style="rightPanelStyle">
-        <div class="workbench">
-          <div class="scroll-container">
-            <div class="step-card" :class="phaseClass(0)">
-              <div class="card-header">
-                <span class="card-index">01</span>
-                <span class="card-title">创建本体</span>
-                <span class="badge" :class="badgeClass(0)">{{ badgeText(0) }}</span>
-              </div>
-              <p class="api-note">POST /api/ontology/create</p>
-              <p class="card-desc">上传种子文档并生成/锁定舆情模板 schema，形成常驻本体记录。</p>
-              <p v-if="projectData" class="mono-line">id={{ projectData.id }} · {{ projectData.name }}</p>
-            </div>
-
-            <div class="step-card" :class="phaseClass(1)">
-              <div class="card-header">
-                <span class="card-index">02</span>
-                <span class="card-title">建图</span>
-                <span class="badge" :class="badgeClass(1)">{{ badgeText(1) }}</span>
-              </div>
-              <p class="api-note">POST /api/ontology/:id/build</p>
-              <p class="card-desc">向 Zep 写入 episode，抽取实体关系；进度写入系统日志。</p>
-              <div v-if="buildProgress" class="progress-line">
-                {{ buildProgress.message || 'building…' }}
-                <span v-if="buildProgress.progress != null"> · {{ buildProgress.progress }}%</span>
-              </div>
-              <button class="cta" :disabled="currentPhase < 0 || building" @click="startBuildGraph">
-                {{ building ? '建图中…' : '开始/重试建图' }}
-              </button>
-            </div>
-
-            <div class="step-card" :class="phaseClass(2)">
-              <div class="card-header">
-                <span class="card-index">03</span>
-                <span class="card-title">快照版本</span>
-                <span class="badge" :class="badgeClass(2)">{{ badgeText(2) }}</span>
-              </div>
-              <p class="api-note">POST /api/ontology/:id/snapshot</p>
-              <p class="card-desc">导出本地 JSON 快照，作为后续世界切片与推演的可复现数据源。</p>
-              <button class="cta" :disabled="!projectData?.id" @click="doSnapshot">导出版本快照</button>
-              <button class="cta secondary" :disabled="!projectData?.id" @click="goCreateDecision">
-                基于此本体创建决策 →
-              </button>
-              <ul class="version-list" v-if="versions.length">
-                <li v-for="v in versions" :key="v.id" class="mono-line">
-                  v{{ v.version }} · {{ v.id }}
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="system-logs">
-            <div class="logs-title">SYSTEM DASHBOARD</div>
-            <div class="logs-body" ref="logsEl">
-              <div v-for="(log, i) in systemLogs" :key="i" class="log-line">
-                <span class="log-time">{{ log.time }}</span>
-                <span class="log-msg">{{ log.msg }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Step1GraphBuild
+          v-if="currentStep === 1"
+          :currentPhase="currentPhase"
+          :projectData="projectData"
+          :ontologyProgress="ontologyProgress"
+          :buildProgress="buildProgress"
+          :graphData="graphData"
+          :systemLogs="systemLogs"
+          @next-step="handleNextStep"
+        />
       </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+/**
+ * Step1 本体/建图工作台 —— 结构对齐 MiroFish MainView，
+ * 数据层走 ontology API（project_id ≡ ontology_id）。
+ */
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
+import Step1GraphBuild from '../components/Step1GraphBuild.vue'
 import {
   generateOntology,
-  getOntology,
-  buildOntology,
+  getProject,
+  buildGraph,
   getBuildStatus,
   getOntologyGraph,
+  getOntologyGraphLive,
   snapshotOntology,
-  listVersions,
-} from '../api/ontology'
+} from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 
 const route = useRoute()
 const router = useRouter()
+const { t, tm } = useI18n()
 
 const viewMode = ref('split')
-const ontologyId = ref(route.params.ontologyId || route.params.projectId)
+const currentStep = ref(1)
+const stepNames = computed(() => tm('main.stepNames'))
+
+const currentProjectId = ref(route.params.projectId || route.params.ontologyId)
 const loading = ref(false)
-const building = ref(false)
 const graphLoading = ref(false)
 const error = ref('')
 const projectData = ref(null)
 const graphData = ref(null)
 const currentPhase = ref(-1)
+const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
-const versions = ref([])
-const logsEl = ref(null)
 
 let pollTimer = null
+let graphPollTimer = null
 
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
@@ -161,219 +126,336 @@ const statusText = computed(() => {
   if (error.value) return 'Error'
   if (currentPhase.value >= 2) return 'Ready'
   if (currentPhase.value === 1) return 'Building Graph'
-  if (currentPhase.value === 0) return 'Creating Ontology'
+  if (currentPhase.value === 0) return 'Generating Ontology'
   return 'Initializing'
 })
 
-function phaseClass(n) {
-  if (currentPhase.value === n) return 'active'
-  if (currentPhase.value > n) return 'done'
-  return ''
-}
-function badgeClass(n) {
-  if (currentPhase.value > n) return 'ok'
-  if (currentPhase.value === n) return 'run'
-  return 'pending'
-}
-function badgeText(n) {
-  if (currentPhase.value > n) return 'DONE'
-  if (currentPhase.value === n) return 'ACTIVE'
-  return 'PENDING'
+function normalizeProject(raw) {
+  if (!raw) return null
+  const id = raw.id || raw.project_id || raw.ontology_id
+  return {
+    ...raw,
+    id,
+    project_id: id,
+    ontology_id: id,
+    ontology: raw.ontology || raw.schema || null,
+    schema: raw.schema || raw.ontology || null,
+    simulation_requirement: raw.simulation_requirement || raw.name || '',
+  }
 }
 
-const addLog = async (msg) => {
-  const now = new Date()
+const addLog = (msg) => {
   const time =
-    now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) +
+    new Date().toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }) +
     '.' +
-    now.getMilliseconds().toString().padStart(3, '0')
+    new Date().getMilliseconds().toString().padStart(3, '0')
   systemLogs.value.push({ time, msg })
   if (systemLogs.value.length > 100) systemLogs.value.shift()
-  await nextTick()
-  if (logsEl.value) logsEl.value.scrollTop = logsEl.value.scrollHeight
 }
 
 const toggleMaximize = (target) => {
   viewMode.value = viewMode.value === target ? 'split' : target
 }
 
-async function refreshVersions() {
-  if (!ontologyId.value || ontologyId.value === 'new') return
-  try {
-    const res = await listVersions(ontologyId.value)
-    versions.value = res.data || []
-  } catch (_) {
-    versions.value = []
+const handleNextStep = () => {
+  /* Step1 通过 createSimulation 自行跳到 /simulation/:id */
+}
+
+const initProject = async () => {
+  addLog('Project view initialized.')
+  void t
+  void stepNames
+  if (currentProjectId.value === 'new') {
+    await handleNewProject()
+  } else {
+    await loadProject()
   }
 }
 
-async function loadGraph() {
-  if (!ontologyId.value || ontologyId.value === 'new') return
-  graphLoading.value = true
-  try {
-    const res = await getOntologyGraph(ontologyId.value)
-    if (res.success) {
-      graphData.value = res.data
-      addLog(
-        `Graph loaded. Nodes: ${res.data.nodes?.length || 0}, Edges: ${res.data.edges?.length || 0}`,
-      )
-    }
-  } catch (e) {
-    addLog(`Graph not ready: ${e.message}`)
-  } finally {
-    graphLoading.value = false
-  }
-}
-
-const refreshGraph = () => loadGraph()
-
-async function handleNewOntology() {
+const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
     error.value = 'No pending files found.'
-    addLog('Error: No pending files for new ontology.')
+    addLog('Error: No pending files found for new project.')
     return
   }
+
   try {
     loading.value = true
     currentPhase.value = 0
-    addLog('Creating ontology: uploading files...')
+    ontologyProgress.value = { message: 'Uploading and analyzing docs...' }
+    addLog('Starting ontology generation: Uploading files...')
+
     const formData = new FormData()
     pending.files.forEach((f) => formData.append('files', f))
     formData.append('simulation_requirement', pending.simulationRequirement)
     formData.append('name', pending.simulationRequirement.slice(0, 40) || '未命名本体')
     formData.append('template', 'opinion')
+
     const res = await generateOntology(formData)
-    clearPendingUpload()
-    projectData.value = res.data
-    ontologyId.value = res.data.id
-    router.replace({ name: 'OntologyWorkspace', params: { ontologyId: res.data.id } })
-    addLog(`Ontology created: ${res.data.id}`)
-    await startBuildGraph()
+    if (res.success) {
+      clearPendingUpload()
+      const id = res.data.id || res.data.project_id
+      currentProjectId.value = id
+      projectData.value = normalizeProject(res.data)
+      router.replace({ name: 'Process', params: { projectId: id } })
+      ontologyProgress.value = null
+      addLog(`Ontology generated successfully for project ${id}`)
+      await startBuildGraph()
+    } else {
+      error.value = res.error || 'Ontology generation failed'
+      addLog(`Error generating ontology: ${error.value}`)
+    }
   } catch (err) {
     error.value = err.message
-    addLog(`Exception creating ontology: ${err.message}`)
+    addLog(`Exception in handleNewProject: ${err.message}`)
   } finally {
     loading.value = false
   }
 }
 
-async function loadOntology() {
+const loadProject = async () => {
   try {
     loading.value = true
-    addLog(`Loading ontology ${ontologyId.value}...`)
-    const res = await getOntology(ontologyId.value)
-    projectData.value = res.data
-    const st = res.data.status
-    if (st === 'ready') {
-      currentPhase.value = 2
-      await loadGraph()
-      await refreshVersions()
-    } else if (st === 'building') {
-      currentPhase.value = 1
-      startPolling()
+    addLog(`Loading project ${currentProjectId.value}...`)
+    const res = await getProject(currentProjectId.value)
+    if (res.success) {
+      projectData.value = normalizeProject(res.data)
+      updatePhaseByStatus(res.data.status)
+      addLog(`Project loaded. Status: ${res.data.status}`)
+
+      const st = res.data.status
+      if (['created', 'ontology_generated'].includes(st) && !res.data.graph_id) {
+        await startBuildGraph()
+      } else if (['building', 'graph_building'].includes(st)) {
+        currentPhase.value = 1
+        startGraphPolling()
+        // 无 task_id 时仍轮询本体状态
+        startPollingTask(res.data.graph_build_task_id || null)
+      } else if (['ready', 'graph_completed'].includes(st) || res.data.graph_id) {
+        currentPhase.value = 2
+        await loadGraph()
+      }
     } else {
-      currentPhase.value = 0
+      error.value = res.error
+      addLog(`Error loading project: ${res.error}`)
     }
-    addLog(`Ontology loaded. Status: ${st}`)
   } catch (err) {
     error.value = err.message
-    addLog(`Exception loading ontology: ${err.message}`)
+    addLog(`Exception in loadProject: ${err.message}`)
   } finally {
     loading.value = false
   }
 }
 
-async function startBuildGraph() {
-  if (!ontologyId.value || ontologyId.value === 'new') return
+const updatePhaseByStatus = (status) => {
+  switch (status) {
+    case 'created':
+    case 'ontology_generated':
+      currentPhase.value = 0
+      break
+    case 'building':
+    case 'graph_building':
+      currentPhase.value = 1
+      break
+    case 'ready':
+    case 'graph_completed':
+      currentPhase.value = 2
+      break
+    case 'failed':
+      error.value = 'Project failed'
+      break
+  }
+}
+
+const startBuildGraph = async () => {
   try {
-    building.value = true
     currentPhase.value = 1
     buildProgress.value = { progress: 0, message: 'Starting build...' }
     addLog('Initiating graph build...')
-    const res = await buildOntology(ontologyId.value, { use_existing_schema: true, async: true })
-    addLog(`Build task: ${res.data?.task_id || 'sync'}`)
-    if (res.data?.task_id) {
-      startPolling(res.data.task_id)
+
+    const res = await buildGraph({
+      project_id: currentProjectId.value,
+      use_existing_schema: true,
+      async: true,
+    })
+    if (res.success) {
+      addLog(`Graph build task started. Task ID: ${res.data?.task_id || 'sync'}`)
+      startGraphPolling()
+      if (res.data?.task_id) {
+        startPollingTask(res.data.task_id)
+      } else {
+        stopGraphPolling()
+        currentPhase.value = 2
+        await finalizeBuild()
+      }
     } else {
-      currentPhase.value = 2
-      await loadGraph()
-      await doSnapshot()
+      error.value = res.error
+      addLog(`Error starting build: ${res.error}`)
     }
   } catch (err) {
     error.value = err.message
-    addLog(`Build failed: ${err.message}`)
-  } finally {
-    building.value = false
+    addLog(`Exception in startBuildGraph: ${err.message}`)
   }
 }
 
-function startPolling(taskId) {
-  stopPolling()
-  const tid = taskId
-  pollTimer = setInterval(async () => {
-    try {
-      const res = await getBuildStatus(ontologyId.value, tid)
-      const task = res.data || {}
-      buildProgress.value = {
-        progress: task.progress || 0,
-        message: task.message || task.status,
-      }
-      if (task.message) addLog(task.message)
-      if (['completed', 'success', 'ready'].includes(task.status)) {
-        stopPolling()
-        currentPhase.value = 2
-        addLog('Graph build completed.')
-        await loadGraph()
-        await doSnapshot()
-      } else if (['failed', 'error'].includes(task.status)) {
-        stopPolling()
-        error.value = task.error || 'build failed'
-        addLog(`Build failed: ${error.value}`)
-      }
-    } catch (e) {
-      console.error(e)
-    }
-  }, 2500)
+const startGraphPolling = () => {
+  addLog('Started polling for graph data...')
+  fetchGraphData()
+  graphPollTimer = setInterval(fetchGraphData, 10000)
 }
 
-function stopPolling() {
+const fetchGraphData = async () => {
+  try {
+    // 建图中优先 live；尚无 graph_id/快照时 404 属正常，静默忽略
+    let gRes
+    try {
+      gRes = await getOntologyGraphLive(currentProjectId.value)
+    } catch (_) {
+      gRes = null
+    }
+    if (!gRes?.success) {
+      try {
+        gRes = await getOntologyGraph(currentProjectId.value)
+      } catch (_) {
+        return
+      }
+    }
+    if (gRes?.success && gRes.data) {
+      graphData.value = gRes.data
+      const nodeCount = gRes.data.node_count || gRes.data.nodes?.length || 0
+      const edgeCount = gRes.data.edge_count || gRes.data.edges?.length || 0
+      addLog(`Graph data refreshed. Nodes: ${nodeCount}, Edges: ${edgeCount}`)
+    }
+  } catch (err) {
+    console.warn('Graph fetch error:', err)
+  }
+}
+
+const startPollingTask = (taskId) => {
+  stopPolling()
+  pollTimer = setInterval(() => pollTaskStatus(taskId), 2000)
+  pollTaskStatus(taskId)
+}
+
+const pollTaskStatus = async (taskId) => {
+  try {
+    let task = {}
+    if (taskId) {
+      const res = await getBuildStatus(currentProjectId.value, taskId)
+      task = res.data || {}
+    } else {
+      const projRes = await getProject(currentProjectId.value)
+      const st = projRes.data?.status
+      if (['ready', 'graph_completed'].includes(st)) {
+        task = { status: 'completed', progress: 100, message: 'ready' }
+      } else if (['failed', 'error'].includes(st)) {
+        task = { status: 'failed', error: 'build failed' }
+      } else {
+        task = { status: 'running', progress: buildProgress.value?.progress || 50, message: st }
+      }
+    }
+
+    if (task.message && task.message !== buildProgress.value?.message) {
+      addLog(task.message)
+    }
+    buildProgress.value = { progress: task.progress || 0, message: task.message }
+
+    if (['completed', 'success', 'ready'].includes(task.status)) {
+      addLog('Graph build task completed.')
+      stopPolling()
+      stopGraphPolling()
+      currentPhase.value = 2
+      await finalizeBuild()
+    } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
+      stopPolling()
+      stopGraphPolling()
+      error.value = task.error || '建图失败'
+      addLog(`Graph build failed: ${error.value}`)
+      currentPhase.value = 1
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function finalizeBuild() {
+  // 先落快照，再读图；失败则用 live，并短重试避免竞态
+  for (let i = 0; i < 5; i++) {
+    try {
+      await snapshotOntology(currentProjectId.value)
+      addLog('Snapshot exported.')
+      break
+    } catch (e) {
+      if (i === 4) addLog(`Snapshot skipped: ${e.message}`)
+      else await new Promise((r) => setTimeout(r, 800))
+    }
+  }
+  const projRes = await getProject(currentProjectId.value)
+  if (projRes.success) {
+    projectData.value = normalizeProject(projRes.data)
+  }
+  await loadGraph()
+}
+
+const loadGraph = async () => {
+  graphLoading.value = true
+  addLog(`Loading graph data: ${currentProjectId.value}`)
+  try {
+    let res
+    try {
+      res = await getOntologyGraphLive(currentProjectId.value)
+    } catch (_) {
+      res = null
+    }
+    if (!res?.success) {
+      res = await getOntologyGraph(currentProjectId.value)
+    }
+    if (res?.success) {
+      graphData.value = res.data
+      addLog('Graph data loaded successfully.')
+    } else {
+      addLog(`Failed to load graph data: ${res?.error || 'unknown'}`)
+    }
+  } catch (e) {
+    addLog(`Exception loading graph: ${e.message}`)
+  } finally {
+    graphLoading.value = false
+  }
+}
+
+const refreshGraph = () => {
+  addLog('Manual graph refresh triggered.')
+  loadGraph()
+}
+
+const stopPolling = () => {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
 }
 
-async function doSnapshot() {
-  try {
-    addLog('Creating snapshot...')
-    const res = await snapshotOntology(ontologyId.value)
-    addLog(`Snapshot: ${res.data?.id || 'ok'}`)
-    currentPhase.value = 2
-    await refreshVersions()
-    await loadGraph()
-  } catch (e) {
-    addLog(`Snapshot failed: ${e.message}`)
+const stopGraphPolling = () => {
+  if (graphPollTimer) {
+    clearInterval(graphPollTimer)
+    graphPollTimer = null
   }
 }
 
-function goCreateDecision() {
-  router.push({
-    name: 'DecisionCreate',
-    query: { ontology_id: ontologyId.value },
-  })
-}
-
-onMounted(async () => {
-  addLog('Ontology workspace initialized.')
-  if (ontologyId.value === 'new') {
-    await handleNewOntology()
-  } else {
-    await loadOntology()
-  }
+onMounted(() => {
+  initProject()
 })
 
-onUnmounted(stopPolling)
+onUnmounted(() => {
+  stopPolling()
+  stopGraphPolling()
+})
 </script>
 
 <style scoped>
@@ -385,6 +467,7 @@ onUnmounted(stopPolling)
   overflow: hidden;
   font-family: var(--font-sans);
 }
+
 .view-switcher {
   display: flex;
   background: #f5f5f5;
@@ -392,6 +475,7 @@ onUnmounted(stopPolling)
   border-radius: 6px;
   gap: 4px;
 }
+
 .switch-btn {
   border: none;
   background: transparent;
@@ -400,214 +484,104 @@ onUnmounted(stopPolling)
   font-size: 13px;
   cursor: pointer;
   color: #666;
+  font-family: var(--font-sans);
+  transition: all 0.2s;
 }
+
+.switch-btn:hover {
+  color: #000;
+}
+
 .switch-btn.active {
   background: #fff;
   color: #000;
+  font-weight: 500;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
+
 .step-divider {
   width: 1px;
   height: 20px;
-  background: var(--border);
+  background: #eee;
 }
+
 .workflow-step {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  font-size: 12px;
+  line-height: 1.2;
 }
+
 .step-num {
-  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 700;
+  color: #000;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-family: var(--font-mono);
 }
+
 .step-name {
+  font-size: 10px;
   color: #888;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
+
 .status-indicator {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  font-weight: 500;
+  color: #666;
   font-family: var(--font-mono);
 }
+
 .status-indicator .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--brand);
-  animation: pulse 1.2s infinite;
+  animation: pulse 1.5s infinite;
 }
+
 .status-indicator.completed .dot {
   background: #10b981;
   animation: none;
 }
+
 .status-indicator.error .dot {
   background: #ef4444;
   animation: none;
 }
+
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
 }
+
 .content-area {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
+
 .panel-wrapper {
   height: 100%;
   overflow: hidden;
-  transition: width 0.35s ease, opacity 0.3s ease, transform 0.3s ease;
+  transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease,
+    transform 0.3s ease;
+  will-change: width, opacity, transform;
 }
+
 .panel-wrapper.left {
   border-right: 1px solid #eaeaea;
-}
-.workbench {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #fafafa;
-}
-.scroll-container {
-  flex: 1;
-  overflow: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.step-card {
-  background: #fff;
-  border: 1px solid #eaeaea;
-  border-radius: 4px;
-  padding: 16px;
-}
-.step-card.active {
-  border-color: var(--brand);
-}
-.step-card.done {
-  border-color: #a7f3d0;
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.card-index {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--brand);
-}
-.card-title {
-  font-weight: 700;
-  flex: 1;
-}
-.badge {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  color: var(--ink-faint);
-}
-.badge.ok {
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 30%, #fff);
-  background: color-mix(in srgb, var(--success) 8%, #fff);
-}
-.badge.run {
-  color: var(--brand);
-  border-color: color-mix(in srgb, var(--brand) 30%, #fff);
-  background: var(--brand-soft);
-}
-.api-note {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-faint);
-  margin: 0 0 8px;
-}
-.card-desc {
-  font-size: 13px;
-  color: var(--ink-secondary);
-  line-height: 1.55;
-  margin: 0 0 12px;
-}
-.progress-line {
-  font-size: 12px;
-  color: var(--ink-muted);
-  margin-bottom: 10px;
-  font-family: var(--font-mono);
-}
-.cta {
-  width: 100%;
-  border: none;
-  background: var(--ink);
-  color: var(--bg);
-  padding: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-.cta:hover:not(:disabled) {
-  background: var(--brand);
-}
-.cta:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.cta.secondary {
-  background: var(--bg);
-  color: var(--ink);
-  border: 1px solid var(--border-strong);
-}
-.cta.secondary:hover:not(:disabled) {
-  background: var(--ink);
-  color: var(--bg);
-}
-.mono-line {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-muted);
-  margin: 4px 0;
-}
-.version-list {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 0;
-}
-.system-logs {
-  background: #000;
-  color: #ccc;
-  height: 110px;
-  display: flex;
-  flex-direction: column;
-}
-.logs-title {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  padding: 8px 12px;
-  border-bottom: 1px solid #222;
-  color: #888;
-}
-.logs-body {
-  flex: 1;
-  overflow: auto;
-  padding: 8px 12px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-.log-line {
-  margin-bottom: 2px;
-}
-.log-time {
-  color: #666;
-  margin-right: 8px;
 }
 </style>
