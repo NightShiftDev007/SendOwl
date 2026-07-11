@@ -70,14 +70,27 @@
         </label>
       </div>
 
-      <button type="button" class="ghost" @click="addScenario">+ 添加方案</button>
-      <button type="button" class="ghost" @click="loadDemo">填入限行三方案示例</button>
+      <p v-if="modelValue.length > 1 && !hasBaseline" class="baseline-hint">
+        多方案对比建议包含 Baseline·不干预，便于衡量干预效果
+      </p>
+      <div class="actions">
+        <button type="button" class="ghost" @click="addScenario">+ 添加方案</button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="hasBaseline"
+          @click="addBaseline"
+        >
+          + Baseline
+        </button>
+        <button type="button" class="ghost" @click="loadDemo">填入限行三方案示例</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   modelValue: { type: Array, default: () => [] },
@@ -90,6 +103,20 @@ const emit = defineEmits(['update:modelValue', 'update:sampleCount', 'update:max
 const expanded = ref(false)
 
 const colors = ['#3498db', '#e74c3c', '#27ae60', '#7f8c8d', '#9b59b6']
+
+const BASELINE_SCENARIO = {
+  name: 'Baseline·不干预',
+  kind: 'baseline',
+  color: '#7f8c8d',
+  poster_hint: 'citizen',
+  content: '',
+}
+
+function isBaseline(s) {
+  return /baseline/i.test(String(s?.kind || '')) || /baseline/i.test(String(s?.name || ''))
+}
+
+const hasBaseline = computed(() => props.modelValue.some(isBaseline))
 
 function patch(idx, fields) {
   const next = props.modelValue.map((s, i) => (i === idx ? { ...s, ...fields } : s))
@@ -117,6 +144,22 @@ function addScenario() {
   ])
   expanded.value = true
 }
+
+function addBaseline() {
+  if (hasBaseline.value) return
+  emit('update:modelValue', [...props.modelValue, { ...BASELINE_SCENARIO }])
+  expanded.value = true
+}
+
+/** 供父组件在应用多方案前确保含 Baseline */
+function ensureBaseline() {
+  if (props.modelValue.length <= 1 || hasBaseline.value) return props.modelValue
+  const next = [...props.modelValue, { ...BASELINE_SCENARIO }]
+  emit('update:modelValue', next)
+  return next
+}
+
+defineExpose({ ensureBaseline, hasBaseline, isBaseline })
 
 function loadDemo() {
   emit('update:sampleCount', 3)
@@ -218,6 +261,17 @@ function loadDemo() {
   align-items: center;
   margin-bottom: 8px;
 }
+.baseline-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .ghost,
 .ghost-sm {
   border: 1px dashed var(--border);
@@ -225,6 +279,10 @@ function loadDemo() {
   color: var(--ink);
   cursor: pointer;
   font-family: var(--font-mono);
+}
+.ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .ghost {
   display: block;

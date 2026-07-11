@@ -734,6 +734,16 @@ class SimulationManager:
                 status=SimulationStatus.CREATED,
             )
 
+        before = (
+            state.entities_count,
+            state.profiles_count,
+            state.config_generated,
+            state.graph_id,
+            state.project_id,
+            state.status,
+            tuple(state.entity_types or []),
+        )
+
         # ---- profiles / entities ----
         profiles_n = 0
         reddit_path = os.path.join(sim_dir, "reddit_profiles.json")
@@ -814,11 +824,24 @@ class SimulationManager:
                 state.error = None
 
         self._save_simulation_state(state)
-        logger.info(
+        after = (
+            state.entities_count,
+            state.profiles_count,
+            state.config_generated,
+            state.graph_id,
+            state.project_id,
+            state.status,
+            tuple(state.entity_types or []),
+        )
+        msg = (
             f"finalize_prepare: {simulation_id} status={state.status.value} "
             f"entities={state.entities_count} profiles={state.profiles_count} "
             f"config_generated={state.config_generated} graph_id={state.graph_id!r}"
         )
+        if before != after:
+            logger.info(msg)
+        else:
+            logger.debug(msg)
         return state
 
     def sync_prepare_to_registry(self, state: SimulationState) -> None:
@@ -853,7 +876,12 @@ class SimulationManager:
             return
 
         try:
-            registry.update_run(run_id, status="ready", run_dir=run_dir)
+            # 仅在 prepare 成功（state=ready）时把 run 标为 ready；
+            # 已 running/completed/stopped 的 run 只补 run_dir，避免冲掉终态。
+            if state.status == SimulationStatus.READY:
+                registry.update_run(run_id, status="ready", run_dir=run_dir)
+            else:
+                registry.update_run(run_id, run_dir=run_dir)
         except Exception as e:
             logger.warning(f"sync_prepare_to_registry: update_run 失败: {e}")
             return
@@ -863,7 +891,15 @@ class SimulationManager:
 
         try:
             runs = registry.list_runs_for_decision(decision_id) or []
-            if runs and all((r.get("status") or "") == "ready" for r in runs):
+            done_statuses = {
+                "ready",
+                "running",
+                "completed",
+                "stopped",
+                "failed",
+                "done",
+            }
+            if runs and all((r.get("status") or "") in done_statuses for r in runs):
                 registry.update_decision(decision_id, status="prepared")
                 logger.info(
                     f"sync_prepare_to_registry: decision {decision_id} -> prepared"

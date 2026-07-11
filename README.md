@@ -23,7 +23,7 @@ backend/app/
   engine/     # 干预 DSL、Scenario Runner、OASIS 执行
   decision/   # 指标计算、ReportAgent
   api/        # /api/ontology /api/decision /api/run
-frontend/     # Vue 3 + Vite：本体 / 创建决策 / 监控 / 对比
+frontend/     # Vue 3 + Vite：五步向导（本体 → 准备 → 推演 → 报告 → 采访）
 prototype/    # 早期 Demo（仍可用）
 ```
 
@@ -52,13 +52,15 @@ pnpm run dev
 # 前端 http://localhost:3000
 ```
 
-### 3. 产品路径（舆情模板）
+### 3. 产品路径（五步）
 
-1. **首页**：上传种子文档 →「构建本体」进入本体工作台  
-2. **本体工作台**（`/ontology/:id`）：建图 → 快照 → 创建决策  
-3. **创建决策**（`/decision/new`）：强硬 / 柔性 / Baseline，`M=3` 采样  
-4. **运行监控**（`/decision/:id/monitor`）：Scenario 卡 + 动作流时间线  
-5. **对比面板**（`/decision/:id/compare`）：量化对比 + 报告 + Agent 采访  
+1. **首页**（`/`）：上传种子文档 → 构建本体  
+2. **环境准备**（`/process` → `/simulation/:id`）：切片 / 人设 / 平台与事件配置；多方案时在此应用 N×M 并自动补 Baseline  
+3. **推演监控**（`/simulation/:id/start`）：Scenario 矩阵 + 动作流时间线  
+4. **对比报告**（`/report/:id`）：verdict / 立场结构 / 传播曲线 / markdown 报告  
+5. **Agent 采访**（`/interaction/:id`）：对模拟世界中的 Agent 提问  
+
+旧路径 `/decision/new|monitor|compare` 仍保留 redirect，进入上述五步。
 
 ### 4. 离线验收
 

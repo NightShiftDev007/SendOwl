@@ -141,6 +141,8 @@ def generate_profiles_from_slice(
     use_llm: bool = False,
     network: Optional[Dict[str, Any]] = None,
     entity_id_to_agent: Optional[Dict[str, int]] = None,
+    existing_profiles: Optional[List[Dict[str, Any]]] = None,
+    existing_entity_to_agent: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """
     从切片生成 twitter CSV + reddit JSON。
@@ -159,7 +161,15 @@ def generate_profiles_from_slice(
     profiles_data: List[Dict[str, Any]] = []
     entity_to_agent: Dict[str, int] = {}
 
-    if use_llm and Config.LLM_API_KEY:
+    if existing_profiles:
+        profiles_data = [dict(p) for p in existing_profiles]
+        entity_to_agent = dict(existing_entity_to_agent or {})
+        if not entity_to_agent:
+            for p in profiles_data:
+                uuid = p.get("source_entity_uuid")
+                if uuid is not None and p.get("user_id") is not None:
+                    entity_to_agent[str(uuid)] = int(p["user_id"])
+    elif use_llm and Config.LLM_API_KEY:
         try:
             from app.world.oasis_profile_generator import (
                 OasisAgentProfile,

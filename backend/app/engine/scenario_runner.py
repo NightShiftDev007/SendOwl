@@ -221,6 +221,7 @@ class ScenarioRunner:
         self,
         decision_id: str,
         intervention_text: str,
+        use_llm_profiles: Optional[bool] = None,
     ) -> str:
         """切片 + 人口 + 网络，写入 DECISION_DIR/{id}/shared。"""
         dec = registry.get_decision(decision_id)
@@ -257,11 +258,15 @@ class ScenarioRunner:
         ) as f:
             json.dump(world_slice, f, ensure_ascii=False, indent=2)
 
+        if use_llm_profiles is None:
+            use_llm_profiles = bool(Config.LLM_API_KEY)
+
+        # 第一次生成人设（可走 LLM）；第二次仅注入关注关系，复用结果避免 LLM 跑两遍
         pop = generate_profiles_from_slice(
             world_slice,
             output_dir=shared_dir,
             max_agents=30,
-            use_llm=False,
+            use_llm=use_llm_profiles,
         )
         network = write_network(
             world_slice,
@@ -274,6 +279,8 @@ class ScenarioRunner:
             max_agents=30,
             use_llm=False,
             network=network,
+            existing_profiles=pop.get("profiles"),
+            existing_entity_to_agent=pop.get("entity_to_agent"),
         )
 
         from app.engine.contract import default_time_config
@@ -368,70 +375,9 @@ class ScenarioRunner:
             except Exception:
                 pass
 
-        # 同步 state.json 为 ready（SimulationManager 约定）
-        state = self.sim_manager.get_simulation(sim_id)
-        if state:
-            state.status = SimulationStatus.READY
-            state.config_generated = True
-            if decision_id:
-                state.project_id = decision_id
-            if graph_id:
-                state.graph_id = graph_id
-            else:
-                # 兜底：从决策/本体解析
-                try:
-                    from app.ontology import registry as _reg
-
-                    _reg.init_schema()
-                    dec = _reg.get_decision(str(state.project_id or decision_id or "")) or {}
-                    ont_id = dec.get("ontology_id")
-                    if ont_id:
-                        ont = _reg.get_ontology(ont_id) or {}
-                        if ont.get("graph_id"):
-                            state.graph_id = ont["graph_id"]
-                except Exception:
-                    pass
-            # 从 profiles 回填预期 Agent 数，避免 Step2「预期总数」为空
-            try:
-                reddit_path = os.path.join(run_dir, "reddit_profiles.json")
-                if os.path.isfile(reddit_path):
-                    with open(reddit_path, encoding="utf-8") as f:
-                        plist = json.load(f)
-                    if isinstance(plist, list) and plist:
-                        state.profiles_count = len(plist)
-                        state.entities_count = len(plist)
-            except Exception:
-                pass
-            self.sim_manager._save_simulation_state(state)
-        else:
-            # 兜底写 state
-            profiles_n = 0
-            try:
-                reddit_path = os.path.join(run_dir, "reddit_profiles.json")
-                if os.path.isfile(reddit_path):
-                    with open(reddit_path, encoding="utf-8") as f:
-                        plist = json.load(f)
-                    if isinstance(plist, list):
-                        profiles_n = len(plist)
-            except Exception:
-                pass
-            with open(os.path.join(run_dir, "state.json"), "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "simulation_id": sim_id,
-                        "project_id": decision_id or "",
-                        "graph_id": graph_id or "",
-                        "status": "ready",
-                        "config_generated": True,
-                        "entities_count": profiles_n,
-                        "profiles_count": profiles_n,
-                        "seed": seed,
-                        "updated_at": _utc_now(),
-                    },
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
+        # 统一收口：以磁盘为准回写 state.json，并同步 meta.db
+        state = self.sim_manager.finalize_prepare(sim_id)
+        self.sim_manager.sync_prepare_to_registry(state)
         return run_dir
 
     def prepare_decision(self, decision_id: str) -> Dict[str, Any]:

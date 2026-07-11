@@ -2,6 +2,7 @@
   <div class="env-setup-panel">
     <div class="scroll-container">
       <ScenarioEditor
+        ref="scenarioEditorRef"
         v-model="scenarios"
         v-model:sample-count="sampleCount"
         v-model:max-rounds="editorMaxRounds"
@@ -10,6 +11,7 @@
         <button type="button" class="apply-btn" :disabled="applyingScenarios" @click="applyScenariosAndPrepare">
           {{ applyingScenarios ? '正在应用多方案…' : `应用 ${scenarios.length} 方案并重新准备` }}
         </button>
+        <p class="apply-hint">N&gt;1 时若无 Baseline，将自动追加「Baseline·不干预」作为对照</p>
       </div>
       <!-- Step 01: 模拟实例 -->
       <div class="step-card" :class="{ 'active': phase === 0, 'completed': phase > 0 }">
@@ -727,6 +729,7 @@ const scenarios = ref([
 const sampleCount = ref(1)
 const editorMaxRounds = ref(10)
 const applyingScenarios = ref(false)
+const scenarioEditorRef = ref(null)
 /** 分步状态：idle | ok | failed */
 const stepFlags = ref({
   profiles: 'idle',
@@ -1082,12 +1085,33 @@ const applyScenariosAndPrepare = async () => {
       props.projectData?.project_id ||
       props.projectData?.id
     if (!ontologyId) throw new Error('缺少 ontology_id')
-    addLog(`应用 ${scenarios.value.length} 个方案 × ${sampleCount.value} 采样…`)
+
+    let toApply = [...scenarios.value]
+    const hasBaseline = toApply.some(
+      (s) => /baseline/i.test(String(s?.kind || '')) || /baseline/i.test(String(s?.name || '')),
+    )
+    if (toApply.length > 1 && !hasBaseline) {
+      const ensured = scenarioEditorRef.value?.ensureBaseline?.()
+      toApply = Array.isArray(ensured) && ensured.length ? ensured : [
+        ...toApply,
+        {
+          name: 'Baseline·不干预',
+          kind: 'baseline',
+          color: '#7f8c8d',
+          poster_hint: 'citizen',
+          content: '',
+        },
+      ]
+      scenarios.value = toApply
+      addLog('已自动追加 Baseline·不干预 作为对照方案')
+    }
+
+    addLog(`应用 ${toApply.length} 个方案 × ${sampleCount.value} 采样…`)
     const res = await createSimulation({
       ontology_id: ontologyId,
       project_id: ontologyId,
-      title: props.projectData?.name || scenarios.value[0]?.name,
-      scenarios: scenarios.value,
+      title: props.projectData?.name || toApply[0]?.name,
+      scenarios: toApply,
       sample_count: sampleCount.value,
       max_rounds: editorMaxRounds.value || customMaxRounds.value || 10,
     })
@@ -1470,6 +1494,12 @@ onUnmounted(() => {
 .apply-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.apply-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-muted, #666);
+  line-height: 1.4;
 }
 
 /* Step Card */

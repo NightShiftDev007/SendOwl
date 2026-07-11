@@ -333,8 +333,8 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     检查模拟是否已经准备完成
     
     检查条件：
-    1. state.json 存在且 status 为 "ready"
-    2. 必要文件存在：reddit_profiles.json, twitter_profiles.csv, simulation_config.json
+    1. 必要文件存在：reddit_profiles.json, twitter_profiles.csv, simulation_config.json
+    2. finalize_prepare 后 status 为 ready 且 config_generated（或 profiles 已就绪）
     
     注意：运行脚本(run_*.py)保留在 backend/scripts/ 目录，不再复制到模拟目录
     
@@ -377,97 +377,45 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
             "missing_files": missing_files,
             "existing_files": existing_files
         }
-    
-    # 检查state.json中的状态
-    state_file = os.path.join(simulation_dir, "state.json")
-    try:
-        import json
-        with open(state_file, 'r', encoding='utf-8') as f:
-            state_data = json.load(f)
-        
-        status = state_data.get("status", "")
-        config_generated = state_data.get("config_generated", False)
 
-        # 兼容：多方案 materialize / 旧数据未写 config_generated，但配置文件已完整
-        config_file = os.path.join(simulation_dir, "simulation_config.json")
-        if not config_generated and os.path.isfile(config_file):
-            try:
-                with open(config_file, "r", encoding="utf-8") as f:
-                    cfg_data = json.load(f)
-                if _config_file_looks_complete(cfg_data):
-                    config_generated = True
-                    state_data["config_generated"] = True
-                    if status in ("", "created", "preparing"):
-                        state_data["status"] = "ready"
-                        status = "ready"
-                    from datetime import datetime
-                    state_data["updated_at"] = datetime.now().isoformat()
-                    with open(state_file, "w", encoding="utf-8") as f:
-                        json.dump(state_data, f, ensure_ascii=False, indent=2)
-                    logger.info(
-                        f"自动修复 config_generated: {simulation_id} "
-                        f"(检测到完整 simulation_config.json)"
-                    )
-            except Exception as e:
-                logger.warning(f"检测/修复 config_generated 失败: {e}")
-        
-        # 详细日志
-        logger.debug(f"检测模拟准备状态: {simulation_id}, status={status}, config_generated={config_generated}")
-        
-        # 如果 config_generated=True 且文件存在，认为准备完成
-        # 以下状态都说明准备工作已完成：
-        # - ready: 准备完成，可以运行
-        # - preparing: 如果 config_generated=True 说明已完成
-        # - running: 正在运行，说明准备早就完成了
-        # - completed: 运行完成，说明准备早就完成了
-        # - stopped: 已停止，说明准备早就完成了
-        # - failed: 运行失败（但准备是完成的）
+    # 统一收口：以磁盘为准回写摘要，再判定是否已准备
+    try:
+        manager = SimulationManager()
+        state = manager.finalize_prepare(simulation_id)
+        status = state.status.value if hasattr(state.status, "value") else str(state.status)
+        config_generated = bool(state.config_generated)
+
         prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
-        if status in prepared_statuses and config_generated:
-            # 获取文件统计信息
-            profiles_file = os.path.join(simulation_dir, "reddit_profiles.json")
-            config_file = os.path.join(simulation_dir, "simulation_config.json")
-            
-            profiles_count = 0
-            if os.path.exists(profiles_file):
-                with open(profiles_file, 'r', encoding='utf-8') as f:
-                    profiles_data = json.load(f)
-                    profiles_count = len(profiles_data) if isinstance(profiles_data, list) else 0
-            
-            # 如果状态是preparing但文件已完成，自动更新状态为ready
-            if status == "preparing":
-                try:
-                    state_data["status"] = "ready"
-                    from datetime import datetime
-                    state_data["updated_at"] = datetime.now().isoformat()
-                    with open(state_file, 'w', encoding='utf-8') as f:
-                        json.dump(state_data, f, ensure_ascii=False, indent=2)
-                    logger.info(f"自动更新模拟状态: {simulation_id} preparing -> ready")
-                    status = "ready"
-                except Exception as e:
-                    logger.warning(f"自动更新状态失败: {e}")
-            
-            logger.info(f"模拟 {simulation_id} 检测结果: 已准备完成 (status={status}, config_generated={config_generated})")
+        if status in prepared_statuses and (config_generated or state.profiles_count > 0):
+            logger.info(
+                f"模拟 {simulation_id} 检测结果: 已准备完成 "
+                f"(status={status}, config_generated={config_generated})"
+            )
             return True, {
                 "status": status,
-                "entities_count": state_data.get("entities_count", 0),
-                "profiles_count": profiles_count,
-                "entity_types": state_data.get("entity_types", []),
+                "entities_count": state.entities_count,
+                "profiles_count": state.profiles_count,
+                "entity_types": state.entity_types,
                 "config_generated": config_generated,
-                "created_at": state_data.get("created_at"),
-                "updated_at": state_data.get("updated_at"),
-                "existing_files": existing_files
+                "created_at": state.created_at,
+                "updated_at": state.updated_at,
+                "existing_files": existing_files,
             }
-        else:
-            logger.warning(f"模拟 {simulation_id} 检测结果: 未准备完成 (status={status}, config_generated={config_generated})")
-            return False, {
-                "reason": f"状态不在已准备列表中或config_generated为false: status={status}, config_generated={config_generated}",
-                "status": status,
-                "config_generated": config_generated
-            }
-            
+
+        logger.warning(
+            f"模拟 {simulation_id} 检测结果: 未准备完成 "
+            f"(status={status}, config_generated={config_generated})"
+        )
+        return False, {
+            "reason": (
+                f"状态不在已准备列表中或配置未生成: "
+                f"status={status}, config_generated={config_generated}"
+            ),
+            "status": status,
+            "config_generated": config_generated,
+        }
     except Exception as e:
-        return False, {"reason": f"读取状态文件失败: {str(e)}"}
+        return False, {"reason": f"读取/收口状态失败: {str(e)}"}
 
 
 @simulation_bp.route('/prepare', methods=['POST'])
@@ -735,6 +683,12 @@ def prepare_simulation():
                     parallel_profile_count=parallel_profile_count,
                     stage=prepare_stage,
                 )
+
+                # prepare 摘要同步到 meta.db（runs / decisions）
+                try:
+                    manager.sync_prepare_to_registry(result_state)
+                except Exception as sync_err:
+                    logger.warning(f"sync_prepare_to_registry 失败: {sync_err}")
                 
                 # 任务完成
                 task_manager.complete_task(
