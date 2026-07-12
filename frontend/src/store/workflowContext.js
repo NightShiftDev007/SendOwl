@@ -1,7 +1,9 @@
 /**
- * 五步流程上下文：跨页记住 project / simulation / report，供顶栏 Step 切换。
+ * 五步流程上下文：跨页记住 decisionId 与派生资源，供顶栏 Step 切换。
+ * 路由主 ID 始终是 decisionId（dec_*）；ontology/simulation/report 仅作派生缓存。
  */
 import { reactive } from 'vue'
+import { taskRoute } from '../utils/taskRoute'
 
 const STORAGE_KEY = 'adc_workflow_ctx'
 
@@ -13,8 +15,28 @@ function readStorage() {
   }
 }
 
+function migrateLegacy(raw) {
+  // 旧字段：projectId/simulationId/reportId 常装 dec_* 或混用
+  const decisionId =
+    raw.decisionId ||
+    (String(raw.simulationId || '').startsWith('dec_') ? raw.simulationId : '') ||
+    (String(raw.reportId || '').startsWith('dec_') ? raw.reportId : '') ||
+    ''
+  return {
+    decisionId,
+    ontologyId: raw.ontologyId || (String(raw.projectId || '').startsWith('ont_') ? raw.projectId : '') || '',
+    simulationId: raw.simulationId && String(raw.simulationId).startsWith('sim_') ? raw.simulationId : '',
+    reportId: raw.reportId && String(raw.reportId).startsWith('report_') ? raw.reportId : '',
+    currentStep: raw.currentStep || 1,
+    maxReached: raw.maxReached || 1,
+    updatedAt: raw.updatedAt || 0,
+    // 兼容读：若旧 simulationId 是 dec_，已提升到 decisionId
+  }
+}
+
 const state = reactive({
-  projectId: '',
+  decisionId: '',
+  ontologyId: '',
   simulationId: '',
   reportId: '',
   currentStep: 1,
@@ -22,13 +44,14 @@ const state = reactive({
   updatedAt: 0,
 })
 
-Object.assign(state, readStorage())
+Object.assign(state, migrateLegacy(readStorage()))
 
 function persist() {
   sessionStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      projectId: state.projectId || '',
+      decisionId: state.decisionId || '',
+      ontologyId: state.ontologyId || '',
       simulationId: state.simulationId || '',
       reportId: state.reportId || '',
       currentStep: state.currentStep || 1,
@@ -50,64 +73,52 @@ export function patchWorkflowContext(partial) {
 
 export function touchWorkflowStep(step, ids = {}) {
   const stepNum = Number(step) || 1
-  const prevProject = state.projectId
-  const prevSim = state.simulationId
+  const nextDecision =
+    ids.decisionId ||
+    (String(ids.simulationId || '').startsWith('dec_') ? ids.simulationId : null) ||
+    (String(ids.reportId || '').startsWith('dec_') ? ids.reportId : null)
 
-  if (ids.projectId && prevProject && ids.projectId !== prevProject) {
-    state.simulationId = ids.simulationId || ''
-    state.reportId = ids.reportId || ''
+  if (nextDecision && state.decisionId && nextDecision !== state.decisionId) {
+    // 切换到另一个任务：清空派生缓存
+    state.ontologyId = ids.ontologyId || ids.projectId || ''
+    state.simulationId =
+      ids.simulationId && String(ids.simulationId).startsWith('sim_')
+        ? ids.simulationId
+        : ''
+    state.reportId =
+      ids.reportId && String(ids.reportId).startsWith('report_') ? ids.reportId : ''
     state.maxReached = stepNum
-  } else if (
-    ids.simulationId &&
-    prevSim &&
-    ids.simulationId !== prevSim &&
-    !ids.reportId
-  ) {
-    state.reportId = ''
-    state.maxReached = Math.max(stepNum, 3)
   } else {
     state.maxReached = Math.max(Number(state.maxReached || 1), stepNum)
   }
 
-  if (ids.projectId) state.projectId = ids.projectId
-  if (ids.simulationId) state.simulationId = ids.simulationId
-  if (ids.reportId) state.reportId = ids.reportId
+  if (nextDecision) state.decisionId = nextDecision
+  if (ids.ontologyId) state.ontologyId = ids.ontologyId
+  else if (ids.projectId && String(ids.projectId).startsWith('ont_')) {
+    state.ontologyId = ids.projectId
+  }
+  if (ids.simulationId && String(ids.simulationId).startsWith('sim_')) {
+    state.simulationId = ids.simulationId
+  }
+  if (ids.reportId && String(ids.reportId).startsWith('report_')) {
+    state.reportId = ids.reportId
+  }
+
   state.currentStep = stepNum
   state.updatedAt = Date.now()
   persist()
   return state
 }
 
-/** 已到达过且具备跳转所需 ID */
+/** 已到达过且具备跳转所需 ID（五步均只需 decisionId） */
 export function canReachStep(step, ctx = state) {
   const s = Number(step)
   const max = Number(ctx.maxReached || 1)
   if (s > max) return false
-  if (s === 1) return Boolean(ctx.projectId)
-  if (s === 2 || s === 3) return Boolean(ctx.simulationId)
-  if (s === 4 || s === 5) return Boolean(ctx.reportId)
-  return false
+  return Boolean(ctx.decisionId) && String(ctx.decisionId) !== 'new'
 }
 
 export function routeForStep(step, ctx = state) {
-  const s = Number(step)
-  if (s === 1 && ctx.projectId) {
-    return { name: 'Process', params: { projectId: ctx.projectId } }
-  }
-  if (s === 2 && ctx.simulationId) {
-    return { name: 'Simulation', params: { simulationId: ctx.simulationId } }
-  }
-  if (s === 3 && ctx.simulationId) {
-    return {
-      name: 'SimulationRun',
-      params: { simulationId: ctx.simulationId },
-    }
-  }
-  if (s === 4 && ctx.reportId) {
-    return { name: 'Report', params: { reportId: ctx.reportId } }
-  }
-  if (s === 5 && ctx.reportId) {
-    return { name: 'Interaction', params: { reportId: ctx.reportId } }
-  }
-  return null
+  if (!ctx.decisionId || String(ctx.decisionId) === 'new') return null
+  return taskRoute(step, ctx.decisionId)
 }

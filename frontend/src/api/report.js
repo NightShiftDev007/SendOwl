@@ -83,9 +83,7 @@ export const getAgentLog = async (reportId, fromLine = 0) => {
   let rid = reportId
   if (!String(reportId || '').startsWith('report_')) {
     try {
-      const { simId } = await resolveSimContext(reportId)
-      const bySim = await service.get(`/api/report/by-simulation/${simId}`)
-      rid = bySim.data?.report_id || bySim.data?.id || reportId
+      rid = (await resolveReportId(reportId)) || reportId
     } catch (_) {
       /* keep */
     }
@@ -99,9 +97,7 @@ export const getConsoleLog = async (reportId, fromLine = 0) => {
   let rid = reportId
   if (!String(reportId || '').startsWith('report_')) {
     try {
-      const { simId } = await resolveSimContext(reportId)
-      const bySim = await service.get(`/api/report/by-simulation/${simId}`)
-      rid = bySim.data?.report_id || bySim.data?.id || reportId
+      rid = (await resolveReportId(reportId)) || reportId
     } catch (_) {
       /* keep */
     }
@@ -109,6 +105,21 @@ export const getConsoleLog = async (reportId, fromLine = 0) => {
   return service.get(`/api/report/${rid}/console-log`, {
     params: { from_line: fromLine },
   })
+}
+
+/** 把 dec_* / sim_* / 任意 id 尽量解析为真实 report_*；失败返回 null */
+export async function resolveReportId(reportOrDecId) {
+  const raw = String(reportOrDecId || '')
+  if (!raw) return null
+  if (raw.startsWith('report_')) return raw
+  try {
+    const { simId } = await resolveSimContext(raw)
+    if (!simId) return null
+    const bySim = await service.get(`/api/report/by-simulation/${simId}`)
+    return bySim.data?.report_id || bySim.data?.id || null
+  } catch (_) {
+    return null
+  }
 }
 
 export const getReport = async (reportId) => {

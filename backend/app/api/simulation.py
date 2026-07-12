@@ -459,10 +459,11 @@ def read_config_realtime(simulation_id: str) -> dict:
 
     if config and _config_file_looks_complete(config):
         config_generated = True
-        if generation_stage is None:
-            generation_stage = "completed"
-        if is_generating:
-            is_generating = False
+        # 正在 preparing 时保留 is_generating（强制重生成会残留旧完整 config）
+        if not is_generating:
+            if generation_stage is None:
+                generation_stage = "completed"
+        # 勿在 preparing 中把 is_generating 清掉，否则 SSE done 会过早关闭
 
     response_data = {
         "simulation_id": simulation_id,
@@ -496,8 +497,12 @@ def read_simulation_actions(
     platform=None,
     agent_id=None,
     round_num=None,
+    newest: bool = False,
 ) -> dict:
-    """读取动作历史快照（HTTP 与 SSE 共用）。"""
+    """读取动作历史快照（HTTP 与 SSE 共用）。
+
+    newest=True：取各平台最新 limit 条（供 SSE 增量直播），结果仍按时间正序返回。
+    """
     enriched = []
     try:
         from app.api.run import (
@@ -507,21 +512,30 @@ def read_simulation_actions(
         )
 
         sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        fetch_limit = limit + offset + 50
         for db in _db_candidates(sim_dir):
-            rows = _actions_from_oasis_db(db, limit=limit + offset + 50)
+            rows = _actions_from_oasis_db(
+                db, limit=fetch_limit, newest_first=bool(newest)
+            )
             if not rows:
                 continue
             db_name = str(getattr(db, "name", "") or "")
             platform_guess = "reddit" if "reddit" in db_name else "twitter"
             if platform and platform != platform_guess:
                 continue
-            for i, row in enumerate(rows):
+            # newest_first 时 DB 已是新→旧；转回正序便于时间线追加
+            ordered = list(reversed(rows)) if newest else rows
+            for i, row in enumerate(ordered):
                 if agent_id is not None and int(row.get("agent_id") or -1) != agent_id:
                     continue
                 if round_num is not None and int(row.get("round") or -1) != round_num:
                     continue
-                norm = _normalize_action(row, i)
+                norm = _normalize_action(row, row.get("_rowid", row.get("_idx", i)))
                 norm["platform"] = row.get("platform") or platform_guess
+                # 稳定跨轮询 ID：platform + sqlite rowid
+                rowid = norm.get("_rowid")
+                if rowid is not None:
+                    norm["id"] = f"{norm['platform']}:{int(rowid)}"
                 args = norm.get("action_args") if isinstance(norm.get("action_args"), dict) else {}
                 if norm.get("content") and not args.get("content"):
                     args = {**args, "content": norm["content"]}
@@ -531,7 +545,17 @@ def read_simulation_actions(
         logger.warning(f"从 OASIS DB 富化动作失败，回退 jsonl: {e}")
 
     if enriched:
-        page = enriched[offset : offset + limit]
+        if newest:
+            # 多平台合并：按 round + 稳定 rowid 正序，再取尾部窗口
+            enriched.sort(
+                key=lambda a: (
+                    int(a.get("round") or a.get("round_num") or 0),
+                    int(a.get("_rowid") or a.get("_idx") or 0),
+                )
+            )
+            page = enriched[-limit:] if limit else enriched
+        else:
+            page = enriched[offset : offset + limit]
         return {
             "count": len(page),
             "actions": page,
@@ -546,9 +570,13 @@ def read_simulation_actions(
         agent_id=agent_id,
         round_num=round_num,
     )
+    items = [a.to_dict() for a in actions]
+    if newest and items:
+        # jsonl 路径通常新在前；统一成正序尾窗
+        items = list(reversed(items))[-limit:]
     return {
-        "count": len(actions),
-        "actions": [a.to_dict() for a in actions],
+        "count": len(items),
+        "actions": items,
         "source": "jsonl",
     }
 

@@ -289,19 +289,32 @@ def _normalize_action(row: Dict[str, Any], idx: int) -> Dict[str, Any]:
             content = f"转发了帖子 #{pid}" if pid is not None else "转发了一条帖子"
         elif action_type == "FOLLOW":
             content = "关注了用户"
-    return {
+    # 保留稳定主键：优先 rowid，其次已有 id；不要用枚举下标覆盖 _rowid
+    rowid = row.get("_rowid")
+    if rowid is None and row.get("_idx") is not None and row.get("_source") == "oasis_db":
+        rowid = row.get("_idx")
+    stable_idx = rowid if rowid is not None else idx
+    out = {
         **row,
         "action_type": action_type,
         "agent_id": agent_id,
         "agent_name": agent_name,
         "content": content,
         "round": row.get("round", row.get("round_num")),
-        "_idx": idx,
+        "_idx": stable_idx,
     }
+    if rowid is not None:
+        out["_rowid"] = int(rowid)
+    return out
 
 
-def _actions_from_oasis_db(db_path: Path, limit: int = 500) -> List[Dict[str, Any]]:
-    """从 OASIS SQLite 还原带正文的动作（优于空壳 LLM_ACTION jsonl）。"""
+def _actions_from_oasis_db(
+    db_path: Path, limit: int = 500, newest_first: bool = False
+) -> List[Dict[str, Any]]:
+    """从 OASIS SQLite 还原带正文的动作（优于空壳 LLM_ACTION jsonl）。
+
+    newest_first=True 时按最新优先截断，供 SSE 直播增量使用。
+    """
     if not db_path.exists():
         return []
     try:
@@ -331,10 +344,12 @@ def _actions_from_oasis_db(db_path: Path, limit: int = 500) -> List[Dict[str, An
             ):
                 posts[int(r["post_id"])] = dict(r)
 
+        order_sql = "DESC" if newest_first else "ASC"
         actions: List[Dict[str, Any]] = []
         for i, r in enumerate(
             conn.execute(
-                "SELECT user_id, created_at, action, info FROM trace ORDER BY created_at, rowid"
+                f"SELECT rowid AS _rowid, user_id, created_at, action, info FROM trace "
+                f"ORDER BY created_at {order_sql}, rowid {order_sql}"
             )
         ):
             raw_action = (r["action"] or "").lower()
@@ -350,6 +365,7 @@ def _actions_from_oasis_db(db_path: Path, limit: int = 500) -> List[Dict[str, An
             agent_id = user.get("agent_id", r["user_id"])
             agent_name = user.get("name") or f"Agent_{agent_id}"
             round_num = int(r["created_at"] or 0)
+            rowid = int(r["_rowid"])
             content = ""
             post_id = info.get("post_id") or info.get("new_post_id")
             parent_id = (
@@ -424,7 +440,10 @@ def _actions_from_oasis_db(db_path: Path, limit: int = 500) -> List[Dict[str, An
                     "parent_post_id": parent_id,
                     "timestamp": None,
                     "success": True,
-                    "_idx": i,
+                    # rowid 跨轮询稳定；枚举下标 i 仅作兜底
+                    "_rowid": rowid,
+                    "_idx": rowid,
+                    "_enum": i,
                     "_source": "oasis_db",
                 }
             )

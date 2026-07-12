@@ -33,9 +33,7 @@ import {
 
 const props = defineProps({
   currentStep: { type: Number, required: true },
-  projectId: { type: String, default: '' },
-  simulationId: { type: String, default: '' },
-  reportId: { type: String, default: '' },
+  decisionId: { type: String, default: '' },
 })
 
 const router = useRouter()
@@ -48,9 +46,10 @@ const stepNames = computed(() => {
 })
 
 const ctx = computed(() => ({
-  projectId: props.projectId || stored.projectId || '',
-  simulationId: props.simulationId || stored.simulationId || '',
-  reportId: props.reportId || stored.reportId || '',
+  decisionId: props.decisionId || stored.decisionId || '',
+  ontologyId: stored.ontologyId || '',
+  simulationId: stored.simulationId || '',
+  reportId: stored.reportId || '',
   maxReached: Math.max(Number(stored.maxReached || 1), props.currentStep),
 }))
 
@@ -63,12 +62,12 @@ const reachable = computed(() => ({
 }))
 
 watch(
-  () => [props.currentStep, props.projectId, props.simulationId, props.reportId],
+  () => [props.currentStep, props.decisionId],
   () => {
     const ids = {}
-    if (props.projectId) ids.projectId = props.projectId
-    if (props.simulationId) ids.simulationId = props.simulationId
-    if (props.reportId) ids.reportId = props.reportId
+    if (props.decisionId && props.decisionId !== 'new') {
+      ids.decisionId = props.decisionId
+    }
     touchWorkflowStep(props.currentStep, ids)
   },
   { immediate: true },

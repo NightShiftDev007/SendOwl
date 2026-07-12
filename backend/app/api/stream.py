@@ -165,13 +165,59 @@ def task_events(task_id: str):
     tm = TaskManager()
     task = tm.get_task(task_id)
     if not task:
-        # 仍允许订阅：可能刚创建竞态；首包发 not_found 后由前端走快照降级
+        # 刚创建竞态：短暂等待任务出现；仍没有则发可重试错误（不标 failed / 不发 done）
         def missing():
-            yield _sse_format(
-                "task_error",
-                {"task_id": task_id, "error": "task_not_found", "status": "failed"},
-            )
-            yield _sse_format("done", {"task_id": task_id, "status": "failed"})
+            for _ in range(10):
+                found = tm.get_task(task_id)
+                if found:
+                    break
+                time.sleep(0.5)
+            else:
+                yield _sse_format(
+                    "task_error",
+                    {
+                        "task_id": task_id,
+                        "error": "task_not_found",
+                        "status": "pending",
+                        "retryable": True,
+                    },
+                )
+                return
+
+            # 任务已出现：推首包后进入正常订阅循环
+            q = tm.subscribe(task_id)
+            last_heartbeat = time.time()
+            try:
+                current = tm.get_task(task_id)
+                if current:
+                    snap = current.to_dict()
+                    yield _sse_format("progress", snap)
+                    if current.status in TERMINAL_STATUSES:
+                        yield _sse_format("done", snap)
+                        return
+                while True:
+                    try:
+                        snap = q.get(timeout=POLL_WAIT_SEC)
+                        yield _sse_format("progress", snap)
+                        status = str(snap.get("status") or "")
+                        if status in ("completed", "failed"):
+                            yield _sse_format("done", snap)
+                            return
+                        last_heartbeat = time.time()
+                    except queue.Empty:
+                        current = tm.get_task(task_id)
+                        if current and current.status in TERMINAL_STATUSES:
+                            snap = current.to_dict()
+                            yield _sse_format("progress", snap)
+                            yield _sse_format("done", snap)
+                            return
+                        if time.time() - last_heartbeat >= HEARTBEAT_SEC:
+                            yield ": ping\n\n"
+                            last_heartbeat = time.time()
+            except GeneratorExit:
+                pass
+            finally:
+                tm.unsubscribe(task_id, q)
 
         return _sse_response(missing())
 
@@ -324,12 +370,17 @@ def prepare_preview_events(sim_id: str):
             return False
         profiles = snap.get("profiles") or {}
         config = snap.get("config") or {}
-        if profiles.get("is_generating") or config.get("is_generating"):
+        # profiles 侧 is_generating 不会被完整旧 config 覆盖
+        if profiles.get("is_generating"):
             return False
         stage = str(config.get("generation_stage") or "")
+        if "generating" in stage:
+            return False
         cfg = config.get("config") if isinstance(config.get("config"), dict) else None
         has_cfg = bool(cfg and cfg.get("time_config") and cfg.get("agent_configs"))
-        return has_cfg or stage == "completed" or bool(config.get("config_generated"))
+        return has_cfg and (
+            stage == "completed" or bool(config.get("config_generated"))
+        )
 
     return _sse_response(
         _watch_stream(
@@ -347,19 +398,29 @@ def simulation_actions_events(sim_id: str):
     from app.api.simulation import read_simulation_actions
     from app.engine.simulation_runner import RunnerStatus, SimulationRunner
 
-    limit = request.args.get("limit", 120, type=int)
+    limit = request.args.get("limit", 200, type=int)
     last_count = {"n": 0}
     seen_ids: set = set()
 
     def _action_id(a: dict) -> str:
-        return str(
-            a.get("id")
-            or a.get("_uniqueId")
-            or f"{a.get('platform')}:{a.get('agent_id')}:{a.get('round')}:{a.get('action_type')}:{a.get('timestamp') or a.get('created_at') or ''}"
+        if a.get("id") is not None:
+            return str(a["id"])
+        if a.get("_uniqueId"):
+            return str(a["_uniqueId"])
+        # 稳定主键：platform + sqlite rowid
+        rowid = a.get("_rowid")
+        if rowid is not None:
+            return f"{a.get('platform')}:{int(rowid)}"
+        content = str(a.get("content") or "")[:48]
+        return (
+            f"{a.get('platform')}:{a.get('agent_id')}:{a.get('round')}:"
+            f"{a.get('action_type')}:{a.get('_idx')}:"
+            f"{a.get('timestamp') or a.get('created_at') or ''}:"
+            f"{content}"
         )
 
     def fetch():
-        data = read_simulation_actions(sim_id, limit=limit, offset=0)
+        data = read_simulation_actions(sim_id, limit=limit, offset=0, newest=True)
         actions = data.get("actions") or []
         new_actions = []
         for a in actions:
@@ -371,8 +432,7 @@ def simulation_actions_events(sim_id: str):
             seen_ids.add(aid)
             new_actions.append(a)
         last_count["n"] = len(seen_ids)
-        # 无新增时返回稳定指纹（避免空增量反复推送）
-        if not new_actions and last_count["n"] > 0:
+        if not new_actions:
             return {
                 "simulation_id": sim_id,
                 "actions": [],
@@ -391,6 +451,7 @@ def simulation_actions_events(sim_id: str):
         try:
             state = SimulationRunner.get_run_state(sim_id)
             if not state:
+                # 无 state 时保持 watch（多进程/尚未落盘）；由前端卸载关闭
                 return False
             return state.runner_status in (
                 RunnerStatus.COMPLETED,
@@ -412,25 +473,90 @@ def simulation_actions_events(sim_id: str):
 
 @stream_bp.get("/report/<report_id>/logs/events")
 def report_logs_events(report_id: str):
-    """Step4：agent + console 日志增量 SSE。"""
+    """Step4：agent + console 日志增量 SSE。
+
+    兼容传入 dec_* / sim_*：尽量解析为真实 report_*；解析不到则立即 done
+   （对比报告模式无 agent-log）。
+    """
     from app.decision.report_agent import ReportManager, ReportStatus
 
-    agent_from = request.args.get("agent_from", 0, type=int) or 0
-    console_from = request.args.get("console_from", 0, type=int) or 0
-    cursors = {"agent": agent_from, "console": console_from}
+    resolved = report_id
+    if not str(report_id).startswith("report_"):
+        try:
+            # dec_ → 首个 sim → by-simulation
+            sim_id = None
+            if str(report_id).startswith("dec_"):
+                from app.ontology import registry as ont_registry
+
+                ont_registry.init_schema()
+                runs = ont_registry.list_runs_for_decision(report_id) or []
+                for r in runs:
+                    sid = (r or {}).get("sim_id")
+                    if sid:
+                        sim_id = sid
+                        break
+            elif str(report_id).startswith("sim_"):
+                sim_id = report_id
+
+            if sim_id:
+                report_obj = ReportManager.get_report_by_simulation(sim_id)
+                if report_obj:
+                    resolved = report_obj.report_id
+        except Exception as e:
+            logger.warning(f"report logs resolve id failed: {e}")
+
+    # 无真实报告且输入不是 report_*：对比模式 → 立即结束
+    # 若已是 report_* 但元数据尚未落盘：进入 watch，等待创建
+    existing = None
+    try:
+        existing = ReportManager.get_report(resolved)
+    except Exception:
+        existing = None
+    if not existing and not str(resolved).startswith("report_"):
+        def missing():
+            yield _sse_format(
+                "done",
+                {
+                    "report_id": report_id,
+                    "resolved_report_id": resolved,
+                    "status": "completed",
+                    "mode": "compare_or_missing",
+                    "agent": {"logs": [], "next_line": 0, "from_line": 0},
+                    "console": {"logs": [], "next_line": 0, "from_line": 0},
+                },
+            )
+
+        return _sse_response(missing())
+
+    agent_from = request.args.get("agent_from", 0, type=int)
+    console_from = request.args.get("console_from", 0, type=int)
+    if agent_from is None:
+        agent_from = 0
+    if console_from is None:
+        console_from = 0
+    cursors = {"agent": int(agent_from), "console": int(console_from)}
+    missing_ticks = {"n": 0}
+    # ~90s：报告元数据尚未写入时继续等
+    MAX_MISSING_TICKS = 60
 
     def fetch():
-        agent = ReportManager.get_agent_log(report_id, from_line=cursors["agent"])
-        console = ReportManager.get_console_log(report_id, from_line=cursors["console"])
+        agent = ReportManager.get_agent_log(resolved, from_line=cursors["agent"])
+        console = ReportManager.get_console_log(resolved, from_line=cursors["console"])
         agent_logs = agent.get("logs") or []
         console_logs = console.get("logs") or []
-        agent_next = int(agent.get("from_line") or cursors["agent"]) + len(agent_logs)
-        console_next = int(console.get("from_line") or cursors["console"]) + len(console_logs)
+        # 用 total_lines 推进，避免 JSON 坏行导致 cursor 回退重复
+        agent_total = int(agent.get("total_lines") or cursors["agent"])
+        console_total = int(console.get("total_lines") or cursors["console"])
+        agent_next = max(agent_total, cursors["agent"] + len(agent_logs))
+        console_next = max(console_total, cursors["console"] + len(console_logs))
         if not agent_logs and not console_logs:
-            # 稳定空快照，指纹不变则不推送
             return {
-                "report_id": report_id,
-                "agent": {"logs": [], "next_line": cursors["agent"], "from_line": cursors["agent"]},
+                "report_id": resolved,
+                "agent": {
+                    "logs": [],
+                    "next_line": cursors["agent"],
+                    "from_line": cursors["agent"],
+                },
                 "console": {
                     "logs": [],
                     "next_line": cursors["console"],
@@ -439,7 +565,7 @@ def report_logs_events(report_id: str):
                 "_stable": True,
             }
         payload = {
-            "report_id": report_id,
+            "report_id": resolved,
             "agent": {
                 "logs": agent_logs,
                 "next_line": agent_next,
@@ -457,9 +583,11 @@ def report_logs_events(report_id: str):
 
     def done(_snap: Any) -> bool:
         try:
-            report = ReportManager.get_report(report_id)
+            report = ReportManager.get_report(resolved)
             if not report:
-                return False
+                missing_ticks["n"] += 1
+                return missing_ticks["n"] >= MAX_MISSING_TICKS
+            missing_ticks["n"] = 0
             return report.status in (ReportStatus.COMPLETED, ReportStatus.FAILED)
         except Exception:
             return False

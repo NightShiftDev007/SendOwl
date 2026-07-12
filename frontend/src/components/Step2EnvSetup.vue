@@ -1001,6 +1001,11 @@ const startPrepareSimulation = async () => {
     emit('update-status', 'error')
     return
   }
+
+  // 防止上一轮 preview/prepare SSE 残留，导致新一轮只能卡在降级轮询
+  stopPolling()
+  stopProfilesPolling()
+  stopConfigPolling()
   
   // 标记第一步完成，开始第二步
   phase.value = 1
@@ -1126,6 +1131,10 @@ const applyScenariosAndPrepare = async () => {
       throw new Error(res.error || '更新方案失败')
     }
     addLog(`方案已应用到任务 ${decisionId}`)
+    // 重跑前停掉上一轮 SSE/轮询，避免旧流把新一轮卡在降级态
+    stopPolling()
+    stopProfilesPolling()
+    stopConfigPolling()
     // 重置本地 prepare 态，避免沿用上一轮 UI
     phase.value = 0
     taskId.value = null
@@ -1154,6 +1163,14 @@ const startPolling = () => {
   let settled = false
   const applyPrepare = async (data) => {
     if (!data || settled) return
+    // 可重试竞态：勿当成终态失败清掉降级轮询
+    if (
+      data.retryable ||
+      data.error === 'task_not_found' ||
+      (data.status === 'pending' && data.error === 'task_not_found')
+    ) {
+      return
+    }
     prepareProgress.value = data.progress || 0
     progressMessage.value = data.message || ''
 
@@ -1254,6 +1271,7 @@ const startPreviewSse = () => {
       if (configData) applyConfigSnapshot(configData)
     },
     onDone: (data) => {
+      previewSse = null
       const profilesData = data?.profiles
       const configData = data?.config
       if (profilesData) applyProfilesSnapshot(profilesData)
@@ -1467,6 +1485,12 @@ const applyConfigSnapshot = (data) => {
   }
 
   if (retryingStage.value) {
+    if (data.config) simulationConfig.value = data.config
+    return
+  }
+
+  // 仍在生成中：只刷新预览，不标完成、不停 SSE
+  if (data.is_generating || String(data.generation_stage || '').includes('generating')) {
     if (data.config) simulationConfig.value = data.config
     return
   }

@@ -491,6 +491,12 @@ let detailTimer = null
 let decisionSse = null
 let actionsSse = null
 
+const isRunTerminal = (data) => {
+  if (!data) return false
+  const st = String(data.runner_status || data.status || '').toLowerCase()
+  return ['completed', 'stopped', 'failed', 'done', 'success'].includes(st)
+}
+
 const startStatusPolling = () => {
   stopStatusSse()
   if (statusTimer) {
@@ -514,8 +520,13 @@ const startStatusPolling = () => {
         fetchRunStatusDetail()
       }
     },
-    onDone: () => {
-      fetchRunStatus()
+    onDone: async () => {
+      await fetchRunStatus()
+      decisionSse = null
+      // 若本地尚未终态，降级轮询继续跟进度
+      if (!isRunTerminal(runStatus.value) && phase.value === 1 && !statusTimer) {
+        statusTimer = setInterval(fetchRunStatus, 3000)
+      }
     },
     onError: (err) => {
       console.warn('[SandOwl] decision SSE error, fallback poll', err)
@@ -548,6 +559,7 @@ const mergeActions = (serverActions = []) => {
 
     const actionId =
       action.id ||
+      (action._rowid != null ? `${action.platform}:${action._rowid}` : null) ||
       `${action.timestamp || action.round}-${action.platform}-${action.agent_id}-${action.action_type}-${String(content).slice(0, 24)}`
 
     if (!actionIds.value.has(actionId)) {
@@ -593,6 +605,11 @@ const startActionsSse = () => {
     onDone: (data) => {
       const list = data?.actions || []
       if (list.length) mergeActions(list)
+      actionsSse = null
+      // 推演未完成时继续轮询动作，避免空闲 done 后时间线停更
+      if (!isRunTerminal(runStatus.value) && phase.value === 1 && !detailTimer) {
+        detailTimer = setInterval(fetchRunStatusDetail, 3000)
+      }
     },
     onError: (err) => {
       console.warn('[SandOwl] actions SSE error, fallback poll', err)

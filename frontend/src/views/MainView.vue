@@ -381,6 +381,14 @@ const startPollingTask = (taskId) => {
   let settled = false
   const applyTask = async (task) => {
     if (!task || settled) return
+    // 可重试竞态：勿当成终态失败
+    if (
+      task.retryable ||
+      task.error === 'task_not_found' ||
+      (task.status === 'pending' && task.error === 'task_not_found')
+    ) {
+      return
+    }
     if (task.message && task.message !== buildProgress.value?.message) {
       addLog(task.message)
     }

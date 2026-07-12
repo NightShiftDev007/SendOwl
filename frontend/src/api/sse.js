@@ -69,7 +69,13 @@ export function subscribeStream(url, handlers = {}, eventNames = ['progress']) {
     es.addEventListener('task_error', (ev) => {
       try {
         const data = JSON.parse(ev.data)
+        const retryable =
+          data?.retryable === true ||
+          String(data?.error || '') === 'task_not_found' ||
+          String(data?.status || '') === 'pending'
         onError?.(data)
+        // 可重试错误：不 onDone、不主动 close（生成器结束后 EventSource CLOSED → 走降级）
+        if (retryable) return
         if (String(data?.status || '') === 'failed') {
           onDone?.(data)
           close()
@@ -84,7 +90,12 @@ export function subscribeStream(url, handlers = {}, eventNames = ['progress']) {
       if (!(ev instanceof MessageEvent) || !ev.data) return
       try {
         const data = JSON.parse(ev.data)
+        const retryable =
+          data?.retryable === true ||
+          String(data?.error || '') === 'task_not_found' ||
+          String(data?.status || '') === 'pending'
         onError?.(data)
+        if (retryable) return
         if (String(data?.status || '') === 'failed') {
           onDone?.(data)
           close()
@@ -171,7 +182,12 @@ export function subscribePreparePreview(simOrDecId, handlers = {}, platform = 'r
       const url = buildUrl(
         `/api/simulation/${encodeURIComponent(simId)}/prepare/preview/events${q}`,
       )
-      inner = subscribeStream(url, handlers, ['preview'])
+      const stream = subscribeStream(url, handlers, ['preview'])
+      if (closed) {
+        stream.close()
+        return
+      }
+      inner = stream
     } catch (e) {
       if (!closed) handlers.onError?.(e)
     }
@@ -186,7 +202,7 @@ export function subscribePreparePreview(simOrDecId, handlers = {}, platform = 'r
 }
 
 /** Step3 动作增量 */
-export function subscribeSimulationActions(simId, handlers = {}, limit = 120) {
+export function subscribeSimulationActions(simId, handlers = {}, limit = 200) {
   if (!simId) throw new Error('缺少 simulation_id')
   const url = buildUrl(
     `/api/simulation/${encodeURIComponent(simId)}/actions/events?limit=${encodeURIComponent(limit)}`,
@@ -194,15 +210,68 @@ export function subscribeSimulationActions(simId, handlers = {}, limit = 120) {
   return subscribeStream(url, handlers, ['actions'])
 }
 
-/** Step4 报告日志增量 */
+/** Step4 报告日志增量；自动把 dec_* 解析为 report_* */
 export function subscribeReportLogs(reportId, handlers = {}, opts = {}) {
   if (!reportId) throw new Error('缺少 report_id')
-  const agentFrom = opts.agentFrom ?? opts.agent_from ?? 0
-  const consoleFrom = opts.consoleFrom ?? opts.console_from ?? 0
-  const url = buildUrl(
-    `/api/report/${encodeURIComponent(reportId)}/logs/events?agent_from=${encodeURIComponent(agentFrom)}&console_from=${encodeURIComponent(consoleFrom)}`,
-  )
-  return subscribeStream(url, handlers, ['logs'])
+
+  let closed = false
+  let inner = null
+
+  const close = () => {
+    closed = true
+    if (inner) {
+      try {
+        inner.close()
+      } catch (_) {
+        /* ignore */
+      }
+      inner = null
+    }
+  }
+
+  ;(async () => {
+    try {
+      const { resolveReportId } = await import('./report')
+      let rid = String(reportId).startsWith('report_') ? reportId : null
+      if (!rid) {
+        // 报告刚生成时可能尚未落盘：短重试解析
+        for (let i = 0; i < 8; i++) {
+          if (closed) return
+          rid = await resolveReportId(reportId)
+          if (rid && String(rid).startsWith('report_')) break
+          await new Promise((r) => setTimeout(r, 1500))
+        }
+      }
+      if (closed) return
+
+      // 仍解析不到：走 onError 降级轮询，勿合成 completed（避免错过后续日志）
+      if (!rid || !String(rid).startsWith('report_')) {
+        handlers.onError?.(new Error('report_not_ready'))
+        return
+      }
+
+      const agentFrom = opts.agentFrom ?? opts.agent_from ?? 0
+      const consoleFrom = opts.consoleFrom ?? opts.console_from ?? 0
+      const url = buildUrl(
+        `/api/report/${encodeURIComponent(rid)}/logs/events?agent_from=${encodeURIComponent(agentFrom)}&console_from=${encodeURIComponent(consoleFrom)}`,
+      )
+      const stream = subscribeStream(url, handlers, ['logs'])
+      if (closed) {
+        stream.close()
+        return
+      }
+      inner = stream
+    } catch (e) {
+      if (!closed) handlers.onError?.(e)
+    }
+  })()
+
+  return {
+    close,
+    get es() {
+      return inner?.es ?? null
+    },
+  }
 }
 
 export default {

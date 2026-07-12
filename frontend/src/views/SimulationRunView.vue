@@ -292,7 +292,15 @@ const startGraphRefresh = () => {
     onEvent: () => maybeRefreshGraph(),
     onDone: () => {
       maybeRefreshGraph(true)
-      stopGraphRefresh()
+      decisionGraphSse = null
+      // 推演若仍在跑，降级定时刷新；真正结束后再停
+      if (isSimulating.value) {
+        if (!graphRefreshTimer) {
+          graphRefreshTimer = setInterval(() => maybeRefreshGraph(true), 30000)
+        }
+      } else {
+        stopGraphRefresh()
+      }
     },
     onError: (err) => {
       console.warn('[SandOwl] decision graph SSE error, fallback timer', err)
