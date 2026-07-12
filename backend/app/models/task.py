@@ -3,11 +3,12 @@
 用于跟踪长时间运行的任务（如图谱构建）
 """
 
+import queue
 import uuid
 import threading
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 
 from app.utils.locale import t
@@ -19,6 +20,9 @@ class TaskStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+TERMINAL_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED}
 
 
 @dataclass
@@ -54,7 +58,7 @@ class Task:
 
 
 class TaskManager:
-    """线程安全的任务状态管理（单例）"""
+    """线程安全的任务状态管理（单例）+ 轻量 pub/sub（供 SSE）"""
 
     _instance = None
     _lock = threading.Lock()
@@ -66,6 +70,9 @@ class TaskManager:
                     cls._instance = super().__new__(cls)
                     cls._instance._tasks: Dict[str, Task] = {}
                     cls._instance._task_lock = threading.Lock()
+                    # task_id -> list[queue.Queue]
+                    cls._instance._subscribers: Dict[str, List[queue.Queue]] = {}
+                    cls._instance._sub_lock = threading.Lock()
         return cls._instance
 
     def create_task(self, task_type: str, metadata: Optional[Dict] = None) -> str:
@@ -85,6 +92,7 @@ class TaskManager:
         with self._task_lock:
             self._tasks[task_id] = task
 
+        self._publish(task_id, task.to_dict())
         return task_id
 
     def get_task(self, task_id: str) -> Optional[Task]:
@@ -101,6 +109,7 @@ class TaskManager:
         error: Optional[str] = None,
         progress_detail: Optional[Dict] = None,
     ):
+        snapshot = None
         with self._task_lock:
             task = self._tasks.get(task_id)
             if task:
@@ -117,6 +126,9 @@ class TaskManager:
                     task.error = error
                 if progress_detail is not None:
                     task.progress_detail = progress_detail
+                snapshot = task.to_dict()
+        if snapshot is not None:
+            self._publish(task_id, snapshot)
 
     def complete_task(self, task_id: str, result: Dict):
         self.update_task(
@@ -159,3 +171,35 @@ class TaskManager:
             ]
             for tid in old_ids:
                 del self._tasks[tid]
+
+    # ---- pub/sub for SSE ----
+
+    def subscribe(self, task_id: str) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=64)
+        with self._sub_lock:
+            self._subscribers.setdefault(task_id, []).append(q)
+        return q
+
+    def unsubscribe(self, task_id: str, q: queue.Queue) -> None:
+        with self._sub_lock:
+            subs = self._subscribers.get(task_id) or []
+            if q in subs:
+                subs.remove(q)
+            if not subs and task_id in self._subscribers:
+                del self._subscribers[task_id]
+
+    def _publish(self, task_id: str, snapshot: Dict[str, Any]) -> None:
+        with self._sub_lock:
+            subs = list(self._subscribers.get(task_id) or [])
+        for q in subs:
+            try:
+                q.put_nowait(snapshot)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(snapshot)
+                except queue.Full:
+                    pass

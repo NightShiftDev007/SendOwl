@@ -360,8 +360,46 @@ class SimulationManager:
                     graph_id=graph_id or state.graph_id,
                     parallel_count=parallel_profile_count,
                     realtime_output_path=realtime_output_path,
-                    output_platform=realtime_platform
+                    output_platform=realtime_platform,
+                    simulation_requirement=simulation_requirement,
                 )
+
+                # Cast Sheet 裁剪后，后续配置阶段只使用实际生成了人设的实体
+                kept_uuids = {
+                    p.source_entity_uuid for p in profiles if p.source_entity_uuid
+                }
+                if kept_uuids and len(kept_uuids) < len(filtered.entities):
+                    filtered.entities = [
+                        e for e in filtered.entities if e.uuid in kept_uuids
+                    ]
+                    filtered.filtered_count = len(filtered.entities)
+                    filtered.entity_types = {
+                        e.get_entity_type() or "Unknown" for e in filtered.entities
+                    }
+                    state.entities_count = filtered.filtered_count
+                    state.entity_types = list(filtered.entity_types)
+                    logger.info(
+                        f"Cast Sheet 裁剪后实体数: {filtered.filtered_count} "
+                        f"(excluded={len(getattr(generator, 'last_excluded', []) or [])})"
+                    )
+
+                # 落盘分角/裁剪元数据，供前端或排查
+                try:
+                    cast_meta = {
+                        "cast_theme": (getattr(generator, "last_cast_sheet", None) or {}).get(
+                            "cast_theme"
+                        ),
+                        "excluded": getattr(generator, "last_excluded", []) or [],
+                        "profiles_count": len(profiles),
+                    }
+                    with open(
+                        os.path.join(sim_dir, "cast_sheet_meta.json"),
+                        "w",
+                        encoding="utf-8",
+                    ) as f:
+                        json.dump(cast_meta, f, ensure_ascii=False, indent=2)
+                except Exception as meta_err:
+                    logger.warning(f"写入 cast_sheet_meta.json 失败: {meta_err}")
                 
                 state.profiles_count = len(profiles)
                 

@@ -58,6 +58,8 @@
       <div ref="curveEl" class="chart tall"></div>
     </div>
 
+    <GeoPropagationMap v-if="scenarios.length" :scenarios="scenarios" />
+
     <div class="md markdown-body" v-if="markdown" v-html="renderedMd"></div>
     <p v-else class="muted pad">暂无对比报告正文</p>
   </div>
@@ -67,6 +69,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { renderMarkdown } from '../utils/markdown'
+import GeoPropagationMap from './GeoPropagationMap.vue'
 
 const props = defineProps({
   compare: { type: Object, default: null },

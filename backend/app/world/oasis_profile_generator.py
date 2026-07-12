@@ -21,7 +21,13 @@ from zep_cloud.client import Zep
 from app.config import Config
 from app.utils.logger import get_logger
 from app.utils.locale import get_language_instruction, get_locale, set_locale, t
+from app.utils.llm_client import LLMClient, with_rate_limit_retry
 from app.ontology.zep_entity_reader import EntityNode, ZepEntityReader
+from app.world.china_location import (
+    format_location_label,
+    location_instruction_for_llm,
+    resolve_location,
+)
 
 logger = get_logger('mirofish.oasis_profile')
 
@@ -49,6 +55,12 @@ class OasisAgentProfile:
     gender: Optional[str] = None
     mbti: Optional[str] = None
     country: Optional[str] = None
+    province: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    province_adcode: Optional[str] = None
+    city_adcode: Optional[str] = None
+    district_adcode: Optional[str] = None
     profession: Optional[str] = None
     interested_topics: List[str] = field(default_factory=list)
     
@@ -79,6 +91,18 @@ class OasisAgentProfile:
             profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
+        if self.province:
+            profile["province"] = self.province
+        if self.city:
+            profile["city"] = self.city
+        if self.district:
+            profile["district"] = self.district
+        if self.province_adcode:
+            profile["province_adcode"] = self.province_adcode
+        if self.city_adcode:
+            profile["city_adcode"] = self.city_adcode
+        if self.district_adcode:
+            profile["district_adcode"] = self.district_adcode
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:
@@ -109,6 +133,18 @@ class OasisAgentProfile:
             profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
+        if self.province:
+            profile["province"] = self.province
+        if self.city:
+            profile["city"] = self.city
+        if self.district:
+            profile["district"] = self.district
+        if self.province_adcode:
+            profile["province_adcode"] = self.province_adcode
+        if self.city_adcode:
+            profile["city_adcode"] = self.city_adcode
+        if self.district_adcode:
+            profile["district_adcode"] = self.district_adcode
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:
@@ -132,6 +168,12 @@ class OasisAgentProfile:
             "gender": self.gender,
             "mbti": self.mbti,
             "country": self.country,
+            "province": self.province,
+            "city": self.city,
+            "district": self.district,
+            "province_adcode": self.province_adcode,
+            "city_adcode": self.city_adcode,
+            "district_adcode": self.district_adcode,
             "profession": self.profession,
             "interested_topics": self.interested_topics,
             "source_entity_uuid": self.source_entity_uuid,
@@ -208,57 +250,105 @@ class OasisProfileGenerator:
                 self.zep_client = Zep(api_key=self.zep_api_key)
             except Exception as e:
                 logger.warning(f"Zep客户端初始化失败: {e}")
+
+        self.last_cast_sheet: Optional[Dict[str, Any]] = None
+        self.last_excluded: List[Dict[str, Any]] = []
     
     def generate_profile_from_entity(
-        self, 
-        entity: EntityNode, 
+        self,
+        entity: EntityNode,
         user_id: int,
-        use_llm: bool = True
+        use_llm: bool = True,
+        cast_anchor: Optional[Dict[str, Any]] = None,
+        occupied_summary: Optional[str] = None,
+        extra_constraint: Optional[str] = None,
     ) -> OasisAgentProfile:
         """
         从Zep实体生成OASIS Agent Profile
-        
+
         Args:
             entity: Zep实体节点
             user_id: 用户ID（用于OASIS）
             use_llm: 是否使用LLM生成详细人设
-            
+            cast_anchor: Cast Sheet 分角锚点（role_slot/stance/voice 等）
+            occupied_summary: 已占位人设摘要（批间防撞）
+            extra_constraint: 终审点名重生成时的额外约束
+
         Returns:
             OasisAgentProfile
         """
         entity_type = entity.get_entity_type() or "Entity"
-        
+
         # 基础信息
         name = entity.name
         user_name = self._generate_username(name)
-        
+
         # 构建上下文信息
         context = self._build_entity_context(entity)
-        
+
+        # 先解析地域：只把地名交给 LLM，由模型自行生成地域人格（不写死气质文案）
+        seed_loc = resolve_location(
+            text=" ".join(
+                [
+                    name,
+                    entity_type,
+                    entity.summary or "",
+                    json.dumps(entity.attributes or {}, ensure_ascii=False),
+                ]
+            ),
+            entity_type=entity_type,
+            seed=f"{entity.uuid}:{name}",
+        )
+
         if use_llm:
-            # 使用LLM生成详细人设
             profile_data = self._generate_profile_with_llm(
                 entity_name=name,
                 entity_type=entity_type,
                 entity_summary=entity.summary,
                 entity_attributes=entity.attributes,
-                context=context
+                context=context,
+                location_hint=seed_loc,
+                cast_anchor=cast_anchor,
+                occupied_summary=occupied_summary,
+                extra_constraint=extra_constraint,
             )
         else:
-            # 使用规则生成基础人设
             profile_data = self._generate_profile_rule_based(
                 entity_name=name,
                 entity_type=entity_type,
                 entity_summary=entity.summary,
-                entity_attributes=entity.attributes
+                entity_attributes=entity.attributes,
+                location_hint=seed_loc,
             )
+
+        loc = resolve_location(
+            province=profile_data.get("province") or seed_loc.get("province"),
+            city=profile_data.get("city") or profile_data.get("location") or seed_loc.get("city"),
+            district=profile_data.get("district") or seed_loc.get("district"),
+            province_adcode_v=seed_loc.get("province_adcode"),
+            city_adcode_v=seed_loc.get("city_adcode"),
+            district_adcode_v=seed_loc.get("district_adcode"),
+            text=" ".join(
+                [
+                    name,
+                    entity_type,
+                    entity.summary or "",
+                    json.dumps(entity.attributes or {}, ensure_ascii=False),
+                    str(profile_data.get("bio") or ""),
+                    str(profile_data.get("persona") or ""),
+                ]
+            ),
+            entity_type=entity_type,
+            seed=f"{entity.uuid}:{name}",
+        )
+        persona = profile_data.get("persona", entity.summary or f"A {entity_type} named {name}.")
         
         return OasisAgentProfile(
             user_id=user_id,
             user_name=user_name,
             name=name,
             bio=profile_data.get("bio", f"{entity_type}: {name}"),
-            persona=profile_data.get("persona", entity.summary or f"A {entity_type} named {name}."),
+            persona=persona,
             karma=profile_data.get("karma", random.randint(500, 5000)),
             friend_count=profile_data.get("friend_count", random.randint(50, 500)),
             follower_count=profile_data.get("follower_count", random.randint(100, 1000)),
@@ -266,7 +356,13 @@ class OasisProfileGenerator:
             age=profile_data.get("age"),
             gender=profile_data.get("gender"),
             mbti=profile_data.get("mbti"),
-            country=profile_data.get("country"),
+            country=loc["country"],
+            province=loc["province"],
+            city=loc["city"],
+            district=loc.get("district") or None,
+            province_adcode=loc.get("province_adcode") or None,
+            city_adcode=loc.get("city_adcode") or None,
+            district_adcode=loc.get("district_adcode") or None,
             profession=profile_data.get("profession"),
             interested_topics=profile_data.get("interested_topics", []),
             source_entity_uuid=entity.uuid,
@@ -500,7 +596,11 @@ class OasisProfileGenerator:
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        location_hint: Optional[Dict[str, Any]] = None,
+        cast_anchor: Optional[Dict[str, Any]] = None,
+        occupied_summary: Optional[str] = None,
+        extra_constraint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         使用LLM生成非常详细的人设
@@ -514,12 +614,44 @@ class OasisProfileGenerator:
         
         if is_individual:
             prompt = self._build_individual_persona_prompt(
-                entity_name, entity_type, entity_summary, entity_attributes, context
+                entity_name,
+                entity_type,
+                entity_summary,
+                entity_attributes,
+                context,
+                location_hint=location_hint,
             )
         else:
             prompt = self._build_group_persona_prompt(
-                entity_name, entity_type, entity_summary, entity_attributes, context
+                entity_name,
+                entity_type,
+                entity_summary,
+                entity_attributes,
+                context,
+                location_hint=location_hint,
             )
+
+        # 注入 Cast Sheet 锚点 / 已占位摘要 / 终审额外约束
+        extras: List[str] = []
+        if cast_anchor:
+            extras.append(
+                "### 分角契约（必须遵守，不得与同组撞车）\n"
+                f"- role_slot: {cast_anchor.get('role_slot', '')}\n"
+                f"- stance_axis: {cast_anchor.get('stance_axis', '')}\n"
+                f"- voice: {cast_anchor.get('voice', '')}\n"
+                f"- region_anchor: {cast_anchor.get('region_anchor', '')}\n"
+                f"- must_not: {json.dumps(cast_anchor.get('must_not') or [], ensure_ascii=False)}\n"
+                f"- similar_group: {cast_anchor.get('similar_group') or ''}"
+            )
+        if occupied_summary:
+            extras.append(
+                "### 已占位人设摘要（请刻意差异化，勿雷同）\n"
+                f"{occupied_summary}"
+            )
+        if extra_constraint:
+            extras.append(f"### 终审额外约束（强制遵守）\n{extra_constraint}")
+        if extras:
+            prompt = prompt + "\n\n" + "\n\n".join(extras)
 
         # 尝试多次生成，直到成功或达到最大重试次数
         max_attempts = 3
@@ -527,52 +659,65 @@ class OasisProfileGenerator:
         
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": self._get_system_prompt(is_individual)},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
-                    # 不设置max_tokens，让LLM自由发挥
-                )
+                def _create():
+                    return self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[
+                            {"role": "system", "content": self._get_system_prompt(is_individual)},
+                            {"role": "user", "content": prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
+                        # 不设置max_tokens，让LLM自由发挥
+                    )
+
+                response = with_rate_limit_retry(_create)
                 
                 content = response.choices[0].message.content
-                
+
                 # 检查是否被截断（finish_reason不是'stop'）
                 finish_reason = response.choices[0].finish_reason
                 if finish_reason == 'length':
                     logger.warning(f"LLM输出被截断 (attempt {attempt+1}), 尝试修复...")
                     content = self._fix_truncated_json(content)
-                
-                # 尝试解析JSON
+
                 try:
                     result = json.loads(content)
-                    
-                    # 验证必需字段
-                    if "bio" not in result or not result["bio"]:
-                        result["bio"] = entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}"
-                    if "persona" not in result or not result["persona"]:
-                        result["persona"] = entity_summary or f"{entity_name}是一个{entity_type}。"
-                    
+
+                    # 必需字段缺失视为失败，进入重试（禁止用空壳凑数）
+                    bio = (result.get("bio") or "").strip() if isinstance(result.get("bio"), str) else result.get("bio")
+                    persona = (result.get("persona") or "").strip() if isinstance(result.get("persona"), str) else result.get("persona")
+                    if not bio or not persona:
+                        raise ValueError("LLM 返回缺少 bio/persona")
+                    # 拒绝明显空壳（EntityType: Name）
+                    stub_bio = f"{entity_type}: {entity_name}"
+                    if bio == stub_bio and len(str(persona)) < 80:
+                        raise ValueError("LLM 返回疑似空壳人设")
+
                     return result
-                    
+
                 except json.JSONDecodeError as je:
                     logger.warning(f"JSON解析失败 (attempt {attempt+1}): {str(je)[:80]}")
-                    
-                    # 尝试修复JSON
+
+                    # 尝试修复JSON（仅接受真正修好的完整结果）
                     result = self._try_fix_json(content, entity_name, entity_type, entity_summary)
                     if result.get("_fixed"):
                         del result["_fixed"]
-                        return result
-                    
-                    last_error = je
-                    
+                        bio = (result.get("bio") or "").strip()
+                        persona = (result.get("persona") or "").strip()
+                        if bio and persona:
+                            return result
+                        last_error = ValueError("JSON 修复后仍缺少 bio/persona")
+                    else:
+                        last_error = je
+
+                except ValueError as ve:
+                    logger.warning(f"人设校验失败 (attempt {attempt+1}): {ve}")
+                    last_error = ve
+
             except Exception as e:
                 logger.warning(f"LLM调用失败 (attempt {attempt+1}): {str(e)[:80]}")
                 last_error = e
-                import time
                 time.sleep(1 * (attempt + 1))  # 指数退避
         
         logger.error(f"LLM生成人设失败（{max_attempts}次尝试）: {last_error}")
@@ -646,32 +791,18 @@ class OasisProfileGenerator:
                 except:
                     pass
         
-        # 6. 尝试从内容中提取部分信息
-        bio_match = re.search(r'"bio"\s*:\s*"([^"]*)"', content)
-        persona_match = re.search(r'"persona"\s*:\s*"([^"]*)', content)  # 可能被截断
-        
-        bio = bio_match.group(1) if bio_match else (entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}")
-        persona = persona_match.group(1) if persona_match else (entity_summary or f"{entity_name}是一个{entity_type}。")
-        
-        # 如果提取到了有意义的内容，标记为已修复
-        if bio_match or persona_match:
-            logger.info(f"从损坏的JSON中提取了部分信息")
-            return {
-                "bio": bio,
-                "persona": persona,
-                "_fixed": True
-            }
-        
-        # 7. 完全失败，返回基础结构
-        logger.warning(f"JSON修复失败，返回基础结构")
-        return {
-            "bio": entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}",
-            "persona": entity_summary or f"{entity_name}是一个{entity_type}。"
-        }
+        # 修复失败：不返回空壳，交给上层重试/抛错
+        logger.warning(f"JSON修复失败: {entity_name} ({entity_type})")
+        return {}
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
+        base_prompt = (
+            "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。"
+            "地域（省市区）是人格的一部分：你必须根据给定地名自行推断并写出地域人格，"
+            "塑造语感、利益敏感点与政策第一反应；禁止只当地址标签，禁止套用外部模板文案。"
+            "必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
+        )
         return f"{base_prompt}\n\n{get_language_instruction()}"
     
     def _build_individual_persona_prompt(
@@ -680,12 +811,19 @@ class OasisProfileGenerator:
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        location_hint: Optional[Dict[str, Any]] = None,
     ) -> str:
         """构建个人实体的详细人设提示词"""
         
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:3000] if context else "无额外上下文"
+        loc = location_hint or {}
+        place = format_location_label(loc)
+        loc_line = (
+            f"预解析地域: {place}"
+            f"（请写入 JSON 的 province/city/district；地域人格请你基于此地自行原创写入 persona，不要等待外部气质文案）"
+        )
         
         return f"""为实体生成详细的社交媒体用户人设,最大程度还原已有现实情况。
 
@@ -693,15 +831,17 @@ class OasisProfileGenerator:
 实体类型: {entity_type}
 实体摘要: {entity_summary}
 实体属性: {attrs_str}
+{loc_line}
 
 上下文信息:
 {context_str}
 
 请生成JSON，包含以下字段:
 
-1. bio: 社交媒体简介，200字
+1. bio: 社交媒体简介，200字（可点出本地身份）
 2. persona: 详细人设描述（2000字的纯文本），需包含:
    - 基本信息（年龄、职业、教育背景、所在地）
+   - 地域人格（你自行根据「{place}」推断：本地生活如何塑造其语感、利益、通勤/生计与对政策的第一反应；这是人格核心，不是地址备注）
    - 人物背景（重要经历、与事件的关联、社会关系）
    - 性格特征（MBTI类型、核心性格、情绪表达方式）
    - 社交媒体行为（发帖频率、内容偏好、互动风格、语言特点）
@@ -711,9 +851,10 @@ class OasisProfileGenerator:
 3. age: 年龄数字（必须是整数）
 4. gender: 性别，必须是英文: "male" 或 "female"
 5. mbti: MBTI类型（如INTJ、ENFP等）
-6. country: 国家（使用中文，如"中国"）
+6. country: 国家（必须为「中国」）
 7. profession: 职业
 8. interested_topics: 感兴趣话题数组
+{location_instruction_for_llm()}
 
 重要:
 - 所有字段值必须是字符串或数字，不要使用换行符
@@ -729,12 +870,19 @@ class OasisProfileGenerator:
         entity_type: str,
         entity_summary: str,
         entity_attributes: Dict[str, Any],
-        context: str
+        context: str,
+        location_hint: Optional[Dict[str, Any]] = None,
     ) -> str:
         """构建群体/机构实体的详细人设提示词"""
         
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:3000] if context else "无额外上下文"
+        loc = location_hint or {}
+        place = format_location_label(loc)
+        loc_line = (
+            f"预解析地域: {place}"
+            f"（请写入 JSON 的 province/city/district；辖区人格请你基于此地自行原创写入 persona）"
+        )
         
         return f"""为机构/群体实体生成详细的社交媒体账号设定,最大程度还原已有现实情况。
 
@@ -742,6 +890,7 @@ class OasisProfileGenerator:
 实体类型: {entity_type}
 实体摘要: {entity_summary}
 实体属性: {attrs_str}
+{loc_line}
 
 上下文信息:
 {context_str}
@@ -750,7 +899,8 @@ class OasisProfileGenerator:
 
 1. bio: 官方账号简介，200字，专业得体
 2. persona: 详细账号设定描述（2000字的纯文本），需包含:
-   - 机构基本信息（正式名称、机构性质、成立背景、主要职能）
+   - 机构基本信息（正式名称、机构性质、成立背景、主要职能、辖区/属地）
+   - 地域人格（你自行根据「{place}」推断：辖区舆论场如何塑造其发言风格与利益立场）
    - 账号定位（账号类型、目标受众、核心功能）
    - 发言风格（语言特点、常用表达、禁忌话题）
    - 发布内容特点（内容类型、发布频率、活跃时间段）
@@ -760,9 +910,10 @@ class OasisProfileGenerator:
 3. age: 固定填30（机构账号的虚拟年龄）
 4. gender: 固定填"other"（机构账号使用other表示非个人）
 5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
-6. country: 国家（使用中文，如"中国"）
+6. country: 国家（必须为「中国」）
 7. profession: 机构职能描述
 8. interested_topics: 关注领域数组
+{location_instruction_for_llm()}
 
 重要:
 - 所有字段值必须是字符串或数字，不允许null值
@@ -776,21 +927,58 @@ class OasisProfileGenerator:
         entity_name: str,
         entity_type: str,
         entity_summary: str,
-        entity_attributes: Dict[str, Any]
+        entity_attributes: Dict[str, Any],
+        location_hint: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """使用规则生成基础人设"""
+        """使用规则生成基础人设（无 LLM 时仅标注属地，不写死地域气质）"""
         
         # 根据实体类型生成不同的人设
         entity_type_lower = entity_type.lower()
+        loc = location_hint or resolve_location(
+            text=" ".join(
+                [
+                    entity_name,
+                    entity_type,
+                    entity_summary or "",
+                    json.dumps(entity_attributes or {}, ensure_ascii=False),
+                ]
+            ),
+            entity_type=entity_type,
+            seed=entity_name,
+        )
+        place = format_location_label(loc)
         
+        if entity_type_lower in ["student", "alumni"]:
+            base_persona = f"{entity_name} is a {entity_type.lower()} who is actively engaged in academic and social discussions. They enjoy sharing perspectives and connecting with peers."
+        elif entity_type_lower in ["publicfigure", "expert", "faculty"]:
+            base_persona = f"{entity_name} is a recognized {entity_type.lower()} who shares insights and opinions on important matters. They are known for their expertise and influence in public discourse."
+        elif entity_type_lower in ["mediaoutlet", "socialmediaplatform"]:
+            base_persona = f"{entity_name} is a media entity that reports news and facilitates public discourse. The account shares timely updates and engages with the audience on current events."
+        elif entity_type_lower in ["university", "governmentagency", "ngo", "organization"]:
+            base_persona = f"{entity_name} is an institutional entity that communicates official positions, announcements, and engages with stakeholders on relevant matters."
+        else:
+            base_persona = entity_summary or f"{entity_name} is a {entity_type.lower()} participating in social discussions."
+
+        persona = f"{base_persona} Based in {place}."
+
+        common_loc = {
+            "country": loc["country"],
+            "province": loc["province"],
+            "city": loc["city"],
+            "district": loc.get("district") or "",
+            "province_adcode": loc.get("province_adcode") or "",
+            "city_adcode": loc.get("city_adcode") or "",
+            "district_adcode": loc.get("district_adcode") or "",
+        }
+
         if entity_type_lower in ["student", "alumni"]:
             return {
                 "bio": f"{entity_type} with interests in academics and social issues.",
-                "persona": f"{entity_name} is a {entity_type.lower()} who is actively engaged in academic and social discussions. They enjoy sharing perspectives and connecting with peers.",
+                "persona": persona,
                 "age": random.randint(18, 30),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
+                **common_loc,
                 "profession": "Student",
                 "interested_topics": ["Education", "Social Issues", "Technology"],
             }
@@ -798,11 +986,11 @@ class OasisProfileGenerator:
         elif entity_type_lower in ["publicfigure", "expert", "faculty"]:
             return {
                 "bio": f"Expert and thought leader in their field.",
-                "persona": f"{entity_name} is a recognized {entity_type.lower()} who shares insights and opinions on important matters. They are known for their expertise and influence in public discourse.",
+                "persona": persona,
                 "age": random.randint(35, 60),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(["ENTJ", "INTJ", "ENTP", "INTP"]),
-                "country": random.choice(self.COUNTRIES),
+                **common_loc,
                 "profession": entity_attributes.get("occupation", "Expert"),
                 "interested_topics": ["Politics", "Economics", "Culture & Society"],
             }
@@ -810,11 +998,11 @@ class OasisProfileGenerator:
         elif entity_type_lower in ["mediaoutlet", "socialmediaplatform"]:
             return {
                 "bio": f"Official account for {entity_name}. News and updates.",
-                "persona": f"{entity_name} is a media entity that reports news and facilitates public discourse. The account shares timely updates and engages with the audience on current events.",
-                "age": 30,  # 机构虚拟年龄
-                "gender": "other",  # 机构使用other
-                "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
+                "persona": persona,
+                "age": 30,
+                "gender": "other",
+                "mbti": "ISTJ",
+                **common_loc,
                 "profession": "Media",
                 "interested_topics": ["General News", "Current Events", "Public Affairs"],
             }
@@ -822,24 +1010,23 @@ class OasisProfileGenerator:
         elif entity_type_lower in ["university", "governmentagency", "ngo", "organization"]:
             return {
                 "bio": f"Official account of {entity_name}.",
-                "persona": f"{entity_name} is an institutional entity that communicates official positions, announcements, and engages with stakeholders on relevant matters.",
-                "age": 30,  # 机构虚拟年龄
-                "gender": "other",  # 机构使用other
-                "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
+                "persona": persona,
+                "age": 30,
+                "gender": "other",
+                "mbti": "ISTJ",
+                **common_loc,
                 "profession": entity_type,
                 "interested_topics": ["Public Policy", "Community", "Official Announcements"],
             }
         
         else:
-            # 默认人设
             return {
                 "bio": entity_summary[:150] if entity_summary else f"{entity_type}: {entity_name}",
-                "persona": entity_summary or f"{entity_name} is a {entity_type.lower()} participating in social discussions.",
+                "persona": persona,
                 "age": random.randint(25, 50),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
+                **common_loc,
                 "profession": entity_type,
                 "interested_topics": ["General", "Social Issues"],
             }
@@ -847,7 +1034,239 @@ class OasisProfileGenerator:
     def set_graph_id(self, graph_id: str):
         """设置图谱ID用于Zep检索"""
         self.graph_id = graph_id
-    
+
+    def _planner_client(self) -> LLMClient:
+        """前置/后置规划用独立模型（默认 qwen3.7-plus）。"""
+        return LLMClient(model=Config.LLM_CAST_PLANNER_MODEL)
+
+    def _entity_brief_for_cast(self, entity: EntityNode) -> Dict[str, Any]:
+        etype = entity.get_entity_type() or "Entity"
+        summary = (entity.summary or "")[:200]
+        return {
+            "entity_uuid": entity.uuid,
+            "name": entity.name,
+            "entity_type": etype,
+            "summary": summary,
+        }
+
+    def plan_cast_sheet(
+        self,
+        entities: List[EntityNode],
+        simulation_requirement: str = "",
+        max_attempts: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        前置 LLM：输出 Cast Sheet（分角表）。
+        - 近似实体保留多人，强制差异槽位（similar_group）
+        - 可用 excluded 裁剪不适合做 Agent 的实体（不得扩编，保留数≥1）
+        """
+        briefs = [self._entity_brief_for_cast(e) for e in entities]
+        entity_uuids = {e.uuid for e in entities}
+        client = self._planner_client()
+
+        system_prompt = (
+            "你是舆论模拟的分角导演。请为候选实体输出 Cast Sheet（JSON）。"
+            "要求：1) 每个输入实体都必须出现在 agents 数组；"
+            "2) 近似/重复实体保留多人，用同一 similar_group 标注，组内 role_slot/stance_axis/voice 必须互不相同；"
+            "3) 不适合做社交媒体 Agent 的实体（纯地点、抽象概念、政策文件等）可设 excluded=true 并给 exclude_reason；"
+            "4) 不得扩编（不得新增实体）；保留至少 1 个非 excluded；"
+            "5) 只返回 JSON 对象，不要 markdown。"
+            f"\n{get_language_instruction()}"
+        )
+        user_prompt = (
+            f"模拟需求：{simulation_requirement or '（未提供，按实体信息推断）'}\n\n"
+            f"候选实体 JSON：\n{json.dumps(briefs, ensure_ascii=False)}\n\n"
+            "返回 JSON 格式：\n"
+            "{\n"
+            '  "cast_theme": "...",\n'
+            '  "agents": [\n'
+            "    {\n"
+            '      "entity_uuid": "...",\n'
+            '      "name": "...",\n'
+            '      "role_slot": "...",\n'
+            '      "stance_axis": "...",\n'
+            '      "voice": "...",\n'
+            '      "region_anchor": "...",\n'
+            '      "must_not": ["..."],\n'
+            '      "similar_group": null,\n'
+            '      "excluded": false,\n'
+            '      "exclude_reason": ""\n'
+            "    }\n"
+            "  ],\n"
+            '  "conflict_pairs": [["nameA", "nameB"]]\n'
+            "}"
+        )
+
+        last_error: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                raw = client.chat_json(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.3,
+                    max_tokens=8192,
+                )
+                sheet = self._validate_cast_sheet(raw, entity_uuids, entities)
+                return sheet
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Cast Sheet 规划失败 (attempt {attempt+1}): {e}")
+                time.sleep(1 * (attempt + 1))
+
+        raise RuntimeError(f"Cast Sheet 规划失败（已重试 {max_attempts} 次）: {last_error}") from last_error
+
+    def _validate_cast_sheet(
+        self,
+        raw: Dict[str, Any],
+        entity_uuids: set,
+        entities: List[EntityNode],
+    ) -> Dict[str, Any]:
+        agents = raw.get("agents")
+        if not isinstance(agents, list) or not agents:
+            raise ValueError("Cast Sheet 缺少 agents")
+
+        by_uuid: Dict[str, Dict[str, Any]] = {}
+        for row in agents:
+            if not isinstance(row, dict):
+                continue
+            uid = row.get("entity_uuid")
+            if not uid or uid not in entity_uuids:
+                continue  # 丢弃未知 uuid
+            by_uuid[uid] = row
+
+        missing = entity_uuids - set(by_uuid.keys())
+        if missing:
+            raise ValueError(f"Cast Sheet 未覆盖实体: {list(missing)[:5]}")
+
+        # similar_group 槽位互斥
+        group_slots: Dict[str, List[tuple]] = {}
+        for uid, row in by_uuid.items():
+            if row.get("excluded"):
+                continue
+            g = row.get("similar_group")
+            if not g:
+                continue
+            key = str(g)
+            slot = (
+                str(row.get("role_slot") or "").strip().lower(),
+                str(row.get("stance_axis") or "").strip().lower(),
+            )
+            group_slots.setdefault(key, []).append(slot)
+
+        for g, slots in group_slots.items():
+            if len(slots) != len(set(slots)):
+                raise ValueError(f"similar_group={g} 内存在重复 role_slot/stance_axis")
+
+        kept = [r for r in by_uuid.values() if not r.get("excluded")]
+        if len(kept) < 1:
+            raise ValueError("Cast Sheet 裁剪后无人保留（至少保留 1 人）")
+        if len(kept) > len(entities):
+            raise ValueError("Cast Sheet 不得扩编")
+
+        name_by_uuid = {e.uuid: e.name for e in entities}
+        for uid, row in by_uuid.items():
+            row.setdefault("name", name_by_uuid.get(uid, ""))
+            row.setdefault("must_not", [])
+            row.setdefault("excluded", False)
+            row.setdefault("exclude_reason", "")
+
+        return {
+            "cast_theme": raw.get("cast_theme") or "",
+            "agents": list(by_uuid.values()),
+            "agents_by_uuid": by_uuid,
+            "conflict_pairs": raw.get("conflict_pairs") or [],
+            "excluded": [
+                {
+                    "entity_uuid": r["entity_uuid"],
+                    "name": r.get("name", ""),
+                    "exclude_reason": r.get("exclude_reason") or "",
+                }
+                for r in by_uuid.values()
+                if r.get("excluded")
+            ],
+        }
+
+    def _profile_one_line_summary(self, profile: OasisAgentProfile, cast: Optional[Dict[str, Any]] = None) -> str:
+        slot = (cast or {}).get("role_slot") or profile.profession or ""
+        stance = (cast or {}).get("stance_axis") or ""
+        bio = (profile.bio or "")[:80]
+        return f"{profile.name}|{slot}|{stance}|{bio}"
+
+    def review_cast(
+        self,
+        profiles: List[OasisAgentProfile],
+        cast_sheet: Dict[str, Any],
+        excluded: List[Dict[str, Any]],
+        max_attempts: int = 2,
+    ) -> Dict[str, Any]:
+        """后置终审：只点名不重写。"""
+        agents_by_uuid = cast_sheet.get("agents_by_uuid") or {}
+        roster = []
+        for p in profiles:
+            cast = agents_by_uuid.get(p.source_entity_uuid or "", {})
+            roster.append({
+                "entity_uuid": p.source_entity_uuid,
+                "name": p.name,
+                "role_slot": cast.get("role_slot", ""),
+                "stance_axis": cast.get("stance_axis", ""),
+                "voice": cast.get("voice", ""),
+                "bio": (p.bio or "")[:120],
+                "persona_head": (p.persona or "")[:200],
+            })
+
+        client = self._planner_client()
+        system_prompt = (
+            "你是人设终审官。通读全员摘要与被裁名单，只点名问题，不要重写人设。"
+            "若有雷同/违反分角契约，列入 regenerate；若核心当事人被误裁，列入 restore_excluded。"
+            "返回 JSON：{\"verdict\":\"pass|revise\",\"regenerate\":[{\"entity_uuid\",\"reason\",\"extra_constraint\"}],"
+            "\"restore_excluded\":[{\"entity_uuid\",\"reason\"}]}"
+            f"\n{get_language_instruction()}"
+        )
+        user_prompt = (
+            f"cast_theme: {cast_sheet.get('cast_theme', '')}\n"
+            f"全员摘要 JSON：\n{json.dumps(roster, ensure_ascii=False)}\n\n"
+            f"被裁名单 JSON：\n{json.dumps(excluded, ensure_ascii=False)}\n"
+        )
+
+        last_error: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                raw = client.chat_json(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=4096,
+                )
+                verdict = raw.get("verdict") or "pass"
+                regenerate = raw.get("regenerate") if isinstance(raw.get("regenerate"), list) else []
+                restore = raw.get("restore_excluded") if isinstance(raw.get("restore_excluded"), list) else []
+                # 过滤未知 uuid
+                known = {p.source_entity_uuid for p in profiles} | {
+                    e.get("entity_uuid") for e in excluded
+                }
+                regenerate = [r for r in regenerate if isinstance(r, dict) and r.get("entity_uuid") in known]
+                restore = [r for r in restore if isinstance(r, dict) and r.get("entity_uuid") in known]
+                if verdict not in ("pass", "revise"):
+                    verdict = "revise" if (regenerate or restore) else "pass"
+                if not regenerate and not restore:
+                    verdict = "pass"
+                return {
+                    "verdict": verdict,
+                    "regenerate": regenerate,
+                    "restore_excluded": restore,
+                }
+            except Exception as e:
+                last_error = e
+                logger.warning(f"人设终审失败 (attempt {attempt+1}): {e}")
+                time.sleep(1 * (attempt + 1))
+
+        logger.warning(f"人设终审放弃，带意见放行: {last_error}")
+        return {"verdict": "pass", "regenerate": [], "restore_excluded": [], "review_error": str(last_error)}
+
     def generate_profiles_from_entities(
         self,
         entities: List[EntityNode],
@@ -856,170 +1275,280 @@ class OasisProfileGenerator:
         graph_id: Optional[str] = None,
         parallel_count: int = 5,
         realtime_output_path: Optional[str] = None,
-        output_platform: str = "reddit"
+        output_platform: str = "reddit",
+        simulation_requirement: str = "",
     ) -> List[OasisAgentProfile]:
         """
-        批量从实体生成Agent Profile（支持并行生成）
-        
-        Args:
-            entities: 实体列表
-            use_llm: 是否使用LLM生成详细人设
-            progress_callback: 进度回调函数 (current, total, message)
-            graph_id: 图谱ID，用于Zep检索获取更丰富上下文
-            parallel_count: 并行生成数量，默认5
-            realtime_output_path: 实时写入的文件路径（如果提供，每生成一个就写入一次）
-            output_platform: 输出平台格式 ("reddit" 或 "twitter")
-            
-        Returns:
-            Agent Profile列表
+        批量从实体生成Agent Profile：
+        Cast Sheet 前置 → 按 parallel_count 分批并行（批间摘要）→ 终审点名重生成
         """
         import concurrent.futures
         from threading import Lock
-        
-        # 设置graph_id用于Zep检索
+
         if graph_id:
             self.graph_id = graph_id
-        
-        total = len(entities)
-        profiles = [None] * total  # 预分配列表保持顺序
-        completed_count = [0]  # 使用列表以便在闭包中修改
+
+        if not entities:
+            return []
+
+        # ---------- 前置：Cast Sheet ----------
+        cast_sheet: Dict[str, Any] = {
+            "cast_theme": "",
+            "agents": [],
+            "agents_by_uuid": {},
+            "excluded": [],
+        }
+        if use_llm:
+            if progress_callback:
+                progress_callback(0, max(len(entities), 1), t("progress.planningCastSheet"))
+            cast_sheet = self.plan_cast_sheet(entities, simulation_requirement=simulation_requirement)
+            logger.info(
+                f"Cast Sheet 完成: theme={cast_sheet.get('cast_theme')!r}, "
+                f"kept={len(entities) - len(cast_sheet.get('excluded') or [])}, "
+                f"excluded={len(cast_sheet.get('excluded') or [])}"
+            )
+
+        agents_by_uuid: Dict[str, Dict[str, Any]] = cast_sheet.get("agents_by_uuid") or {}
+        excluded_list: List[Dict[str, Any]] = list(cast_sheet.get("excluded") or [])
+        excluded_uuids = {e["entity_uuid"] for e in excluded_list}
+
+        # 保留实体（顺序稳定）
+        work_entities = [e for e in entities if e.uuid not in excluded_uuids]
+        if not work_entities:
+            raise RuntimeError("Cast Sheet 裁剪后无人可生成人设")
+
+        # uuid -> 稳定 user_id（按原始 entities 下标，保证与模拟 agent_id 可对齐）
+        uuid_to_idx = {e.uuid: i for i, e in enumerate(entities)}
+
+        total = len(work_entities)
+        profiles_by_uuid: Dict[str, OasisAgentProfile] = {}
         lock = Lock()
-        
-        # 实时写入文件的辅助函数
-        def save_profiles_realtime():
-            """实时保存已生成的 profiles 到文件"""
-            if not realtime_output_path:
-                return
-            
-            with lock:
-                # 过滤出已生成的 profiles
-                existing_profiles = [p for p in profiles if p is not None]
-                if not existing_profiles:
-                    return
-                
-                try:
-                    if output_platform == "reddit":
-                        # Reddit JSON 格式
-                        profiles_data = [p.to_reddit_format() for p in existing_profiles]
-                        with open(realtime_output_path, 'w', encoding='utf-8') as f:
-                            json.dump(profiles_data, f, ensure_ascii=False, indent=2)
-                    else:
-                        # Twitter CSV 格式
-                        import csv
-                        profiles_data = [p.to_twitter_format() for p in existing_profiles]
-                        if profiles_data:
-                            fieldnames = list(profiles_data[0].keys())
-                            with open(realtime_output_path, 'w', encoding='utf-8', newline='') as f:
-                                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                                writer.writeheader()
-                                writer.writerows(profiles_data)
-                except Exception as e:
-                    logger.warning(f"实时保存 profiles 失败: {e}")
-        
-        # Capture locale before spawning thread pool workers
         current_locale = get_locale()
 
-        def generate_single_profile(idx: int, entity: EntityNode) -> tuple:
-            """生成单个profile的工作函数"""
+        def save_profiles_realtime():
+            if not realtime_output_path:
+                return
+            with lock:
+                existing = list(profiles_by_uuid.values())
+                if not existing:
+                    return
+                try:
+                    if output_platform == "reddit":
+                        with open(realtime_output_path, "w", encoding="utf-8") as f:
+                            json.dump(
+                                [p.to_reddit_format() for p in existing],
+                                f,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                    else:
+                        import csv
+                        data = [p.to_twitter_format() for p in existing]
+                        if data:
+                            with open(realtime_output_path, "w", encoding="utf-8", newline="") as f:
+                                writer = csv.DictWriter(f, fieldnames=list(data[0].keys()))
+                                writer.writeheader()
+                                writer.writerows(data)
+                except Exception as e:
+                    logger.warning(f"实时保存 profiles 失败: {e}")
+
+        def occupied_text(exclude_uuids: Optional[set] = None) -> str:
+            exclude_uuids = exclude_uuids or set()
+            lines = []
+            for uid, p in profiles_by_uuid.items():
+                if uid in exclude_uuids:
+                    continue
+                lines.append(self._profile_one_line_summary(p, agents_by_uuid.get(uid)))
+            return "\n".join(lines[-40:])  # 控制长度
+
+        def generate_one(
+            entity: EntityNode,
+            occupied: str,
+            extra_constraint: Optional[str] = None,
+        ) -> OasisAgentProfile:
             set_locale(current_locale)
-            entity_type = entity.get_entity_type() or "Entity"
-            
-            try:
-                profile = self.generate_profile_from_entity(
-                    entity=entity,
-                    user_id=idx,
-                    use_llm=use_llm
+            cast = agents_by_uuid.get(entity.uuid)
+            profile = self.generate_profile_from_entity(
+                entity=entity,
+                user_id=uuid_to_idx.get(entity.uuid, 0),
+                use_llm=use_llm,
+                cast_anchor=cast,
+                occupied_summary=occupied or None,
+                extra_constraint=extra_constraint,
+            )
+            self._print_generated_profile(
+                entity.name, entity.get_entity_type() or "Entity", profile
+            )
+            return profile
+
+        def run_batch(
+            batch_entities: List[EntityNode],
+            constraints: Optional[Dict[str, str]] = None,
+        ) -> None:
+            constraints = constraints or {}
+            occupied = occupied_text()
+            errors: List[str] = []
+
+            def worker(ent: EntityNode):
+                return ent.uuid, generate_one(ent, occupied, constraints.get(ent.uuid))
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
+                futures = {executor.submit(worker, ent): ent for ent in batch_entities}
+                for future in concurrent.futures.as_completed(futures):
+                    ent = futures[future]
+                    try:
+                        uid, profile = future.result()
+                        with lock:
+                            profiles_by_uuid[uid] = profile
+                        save_profiles_realtime()
+                        if progress_callback:
+                            progress_callback(
+                                len(profiles_by_uuid),
+                                total,
+                                f"已完成 {len(profiles_by_uuid)}/{total}: {ent.name}",
+                            )
+                    except Exception as e:
+                        errors.append(f"{ent.name}: {e}")
+                        for pending in futures:
+                            pending.cancel()
+                        break
+            if errors:
+                raise RuntimeError(
+                    f"人设生成失败（已禁用空壳兜底，可手动重试）: {'; '.join(errors)}"
                 )
-                
-                # 实时输出生成的人设到控制台和日志
-                self._print_generated_profile(entity.name, entity_type, profile)
-                
-                return idx, profile, None
-                
-            except Exception as e:
-                logger.error(f"生成实体 {entity.name} 的人设失败: {str(e)}")
-                # 创建一个基础profile
-                fallback_profile = OasisAgentProfile(
-                    user_id=idx,
-                    user_name=self._generate_username(entity.name),
-                    name=entity.name,
-                    bio=f"{entity_type}: {entity.name}",
-                    persona=entity.summary or f"A participant in social discussions.",
-                    source_entity_uuid=entity.uuid,
-                    source_entity_type=entity_type,
-                )
-                return idx, fallback_profile, str(e)
-        
-        logger.info(f"开始并行生成 {total} 个Agent人设（并行数: {parallel_count}）...")
+
+        logger.info(
+            f"开始分批生成 {total} 个Agent人设（并行数: {parallel_count}，批间摘要开启）..."
+        )
         print(f"\n{'='*60}")
         print(f"开始生成Agent人设 - 共 {total} 个实体，并行数: {parallel_count}")
         print(f"{'='*60}\n")
-        
-        # 使用线程池并行执行
-        with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
-            # 提交所有任务
-            future_to_entity = {
-                executor.submit(generate_single_profile, idx, entity): (idx, entity)
-                for idx, entity in enumerate(entities)
+
+        # ---------- 严格分批 + 批间栅栏 ----------
+        for i in range(0, total, parallel_count):
+            batch = work_entities[i : i + parallel_count]
+            run_batch(batch)
+
+        # ---------- 终审（最多 N 轮） ----------
+        max_review = Config.LLM_PROFILE_REVIEW_ROUNDS
+        entity_by_uuid = {e.uuid: e for e in entities}
+
+        for review_round in range(max_review):
+            if progress_callback:
+                progress_callback(
+                    total,
+                    total,
+                    t("progress.reviewingProfiles", round=review_round + 1, max=max_review),
+                )
+            review = self.review_cast(
+                profiles=list(profiles_by_uuid.values()),
+                cast_sheet=cast_sheet,
+                excluded=excluded_list,
+            )
+            if review.get("verdict") == "pass":
+                logger.info(f"人设终审通过（round {review_round + 1}）")
+                break
+
+            regenerate_rows = review.get("regenerate") or []
+            restore_rows = review.get("restore_excluded") or []
+            logger.info(
+                f"人设终审 revise round={review_round + 1}: "
+                f"regenerate={len(regenerate_rows)} restore={len(restore_rows)}"
+            )
+
+            # 恢复误裁
+            for row in restore_rows:
+                uid = row.get("entity_uuid")
+                ent = entity_by_uuid.get(uid)
+                if not ent or uid in profiles_by_uuid:
+                    continue
+                excluded_list = [e for e in excluded_list if e.get("entity_uuid") != uid]
+                excluded_uuids.discard(uid)
+                if uid not in agents_by_uuid:
+                    agents_by_uuid[uid] = {
+                        "entity_uuid": uid,
+                        "name": ent.name,
+                        "role_slot": "restored_party",
+                        "stance_axis": "to_be_differentiated",
+                        "voice": "authentic",
+                        "must_not": [],
+                        "excluded": False,
+                    }
+                profiles_by_uuid[uid] = generate_one(
+                    ent,
+                    occupied_text(),
+                    extra_constraint=row.get("reason")
+                    or "终审要求恢复：请生成差异化核心当事人人设",
+                )
+                save_profiles_realtime()
+
+            constraints = {
+                r["entity_uuid"]: (r.get("extra_constraint") or r.get("reason") or "")
+                for r in regenerate_rows
+                if r.get("entity_uuid")
             }
-            
-            # 收集结果
-            for future in concurrent.futures.as_completed(future_to_entity):
-                idx, entity = future_to_entity[future]
-                entity_type = entity.get_entity_type() or "Entity"
-                
-                try:
-                    result_idx, profile, error = future.result()
-                    profiles[result_idx] = profile
-                    
-                    with lock:
-                        completed_count[0] += 1
-                        current = completed_count[0]
-                    
-                    # 实时写入文件
-                    save_profiles_realtime()
-                    
-                    if progress_callback:
-                        progress_callback(
-                            current, 
-                            total, 
-                            f"已完成 {current}/{total}: {entity.name}（{entity_type}）"
-                        )
-                    
-                    if error:
-                        logger.warning(f"[{current}/{total}] {entity.name} 使用备用人设: {error}")
-                    else:
-                        logger.info(f"[{current}/{total}] 成功生成人设: {entity.name} ({entity_type})")
-                        
-                except Exception as e:
-                    logger.error(f"处理实体 {entity.name} 时发生异常: {str(e)}")
-                    with lock:
-                        completed_count[0] += 1
-                    profiles[idx] = OasisAgentProfile(
-                        user_id=idx,
-                        user_name=self._generate_username(entity.name),
-                        name=entity.name,
-                        bio=f"{entity_type}: {entity.name}",
-                        persona=entity.summary or "A participant in social discussions.",
-                        source_entity_uuid=entity.uuid,
-                        source_entity_type=entity_type,
-                    )
-                    # 实时写入文件（即使是备用人设）
-                    save_profiles_realtime()
-        
+            regen_entities = [
+                entity_by_uuid[uid]
+                for uid in constraints
+                if uid in entity_by_uuid
+            ]
+            if regen_entities:
+                for ent in regen_entities:
+                    profiles_by_uuid.pop(ent.uuid, None)
+                for i in range(0, len(regen_entities), parallel_count):
+                    run_batch(regen_entities[i : i + parallel_count], constraints)
+
+            if review_round == max_review - 1:
+                logger.warning(
+                    f"人设终审达上限 {max_review} 轮，带意见放行: "
+                    f"regenerate={len(regenerate_rows)} restore={len(restore_rows)}"
+                )
+
+        # 按原始 entities 顺序输出（跳过仍 excluded 的）
+        final_excluded = {e["entity_uuid"] for e in excluded_list}
+        ordered: List[OasisAgentProfile] = []
+        for e in entities:
+            if e.uuid in final_excluded and e.uuid not in profiles_by_uuid:
+                continue
+            p = profiles_by_uuid.get(e.uuid)
+            if p is not None:
+                ordered.append(p)
+
+        if not ordered:
+            raise RuntimeError("人设生成失败：无有效 Profile")
+
+        # 重新编号 user_id 为连续 0..n-1（下游 agent_id 依赖顺序）
+        for i, p in enumerate(ordered):
+            p.user_id = i
+
+        if excluded_list and progress_callback:
+            names = ", ".join(
+                f"{e.get('name')}({e.get('exclude_reason') or 'excluded'})"
+                for e in excluded_list
+                if e.get("entity_uuid") not in profiles_by_uuid
+            )
+            if names:
+                progress_callback(
+                    len(ordered),
+                    len(ordered),
+                    t("progress.castExcluded", names=names[:200]),
+                )
+
+        self.last_cast_sheet = cast_sheet
+        self.last_excluded = [
+            e for e in excluded_list if e.get("entity_uuid") not in profiles_by_uuid
+        ]
+
         print(f"\n{'='*60}")
-        print(f"人设生成完成！共生成 {len([p for p in profiles if p])} 个Agent")
+        print(f"人设生成完成！共生成 {len(ordered)} 个Agent（裁剪 {len(self.last_excluded)}）")
         print(f"{'='*60}\n")
-        
-        return profiles
-    
+
+        return ordered
+
     def _print_generated_profile(self, entity_name: str, entity_type: str, profile: OasisAgentProfile):
         """实时输出生成的人设到控制台（完整内容，不截断）"""
         separator = "-" * 70
-        
-        # 构建完整输出内容（不截断）
         topics_str = ', '.join(profile.interested_topics) if profile.interested_topics else '无'
-        
         output_lines = [
             f"\n{separator}",
             t('progress.profileGenerated', name=entity_name, type=entity_type),
@@ -1034,15 +1563,12 @@ class OasisProfileGenerator:
             f"",
             f"【基本属性】",
             f"年龄: {profile.age} | 性别: {profile.gender} | MBTI: {profile.mbti}",
-            f"职业: {profile.profession} | 国家: {profile.country}",
+            f"职业: {profile.profession} | 国家: {profile.country} | {profile.province}/{profile.city}/{profile.district or '-'} ({profile.city_adcode or ''}/{profile.district_adcode or ''})",
             f"兴趣话题: {topics_str}",
             separator
         ]
-        
-        output = "\n".join(output_lines)
-        
-        # 只输出到控制台（避免重复，logger不再输出完整内容）
-        print(output)
+        print("\n".join(output_lines))
+
     
     def save_profiles(
         self,
@@ -1177,6 +1703,12 @@ class OasisProfileGenerator:
                 "gender": self._normalize_gender(profile.gender),
                 "mbti": profile.mbti if profile.mbti else "ISTJ",
                 "country": profile.country if profile.country else "中国",
+                "province": profile.province or "",
+                "city": profile.city or "",
+                "district": profile.district or "",
+                "province_adcode": profile.province_adcode or "",
+                "city_adcode": profile.city_adcode or "",
+                "district_adcode": profile.district_adcode or "",
             }
             
             # 可选字段

@@ -43,7 +43,7 @@ OPINION_SCHEMA: Dict[str, Any] = {
             "attributes": [
                 {"name": "org_type", "type": "text", "description": "Organization category"},
             ],
-            "examples": ["江城市交管局", "速达外卖", "外卖骑手协会"],
+            "examples": ["丰台交通支队", "速达外卖", "丰台外卖骑手协会"],
         },
         {
             "name": "CommuterCitizen",
@@ -59,7 +59,7 @@ OPINION_SCHEMA: Dict[str, Any] = {
             "attributes": [
                 {"name": "followers", "type": "text", "description": "Follower count"},
             ],
-            "examples": ["阿凯", "江城街访"],
+            "examples": ["阿凯", "丰台街访"],
         },
         {
             "name": "Journalist",
@@ -188,7 +188,7 @@ OPINION_SCHEMA: Dict[str, Any] = {
             "attributes": [],
         },
     ],
-    "analysis_summary": "江城市电动自行车限行舆论场景：政府官员、骑手、通勤市民、商户、自媒体、记者、家长、专家等可发声主体。",
+    "analysis_summary": "北京市丰台区电动自行车限行试点舆论场景：政府官员、骑手（含房山跨区）、通勤市民、商户、自媒体、记者、家长、专家等可发声主体。",
 }
 
 _TEMPLATES: Dict[str, Dict[str, Any]] = {

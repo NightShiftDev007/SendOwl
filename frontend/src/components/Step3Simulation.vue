@@ -293,19 +293,6 @@
       </div>
     </div>
 
-    <!-- Bottom Info / Logs -->
-    <div class="system-logs">
-      <div class="log-header">
-        <span class="log-title">SIMULATION MONITOR</span>
-        <span class="log-id">{{ simulationId || 'NO_SIMULATION' }}</span>
-      </div>
-      <div class="log-content" ref="logContent">
-        <div class="log-line" v-for="(log, idx) in systemLogs" :key="idx">
-          <span class="log-time">{{ log.time }}</span>
-          <span class="log-msg">{{ log.msg }}</span>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -320,7 +307,9 @@ import {
   getRunStatusDetail
 } from '../api/simulation'
 import { generateReport } from '../api/report'
+import { subscribeDecision, subscribeSimulationActions } from '../api/sse'
 import RunMatrixPanel from './RunMatrixPanel.vue'
+import { touchWorkflowStep } from '../store/workflowContext'
 
 const { t } = useI18n()
 
@@ -394,6 +383,7 @@ const redditElapsedTime = computed(() => {
 
 // Methods
 const addLog = (msg) => {
+  console.log(`[SandOwl] ${msg}`)
   emit('add-log', msg)
 }
 
@@ -498,13 +488,131 @@ const handleStopSimulation = async () => {
 // 轮询状态
 let statusTimer = null
 let detailTimer = null
+let decisionSse = null
+let actionsSse = null
 
 const startStatusPolling = () => {
-  statusTimer = setInterval(fetchRunStatus, 2000)
+  stopStatusSse()
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
+
+  const id = props.simulationId
+  if (!id) return
+
+  // 优先 SSE；失败再降级轮询
+  decisionSse = subscribeDecision(id, {
+    onOpen: () => {
+      fetchRunStatus()
+    },
+    onEvent: () => {
+      // SSE 推送触发一次富化状态拉取（含平台轮次），避免双轨字段不一致
+      fetchRunStatus()
+      // selectedSimId 尚未确定时兜底拉一次 detail
+      if (!selectedSimId.value && !actionsSse && !detailTimer) {
+        fetchRunStatusDetail()
+      }
+    },
+    onDone: () => {
+      fetchRunStatus()
+    },
+    onError: (err) => {
+      console.warn('[SandOwl] decision SSE error, fallback poll', err)
+      if (!statusTimer) {
+        statusTimer = setInterval(fetchRunStatus, 3000)
+      }
+    },
+  })
+}
+
+const stopActionsSse = () => {
+  if (actionsSse) {
+    try {
+      actionsSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    actionsSse = null
+  }
+}
+
+const mergeActions = (serverActions = []) => {
+  let newActionsAdded = 0
+  serverActions.forEach((action) => {
+    const t = String(action.action_type || '').toUpperCase()
+    const args = action.action_args || {}
+    const content =
+      action.content || args.content || args.quote_content || args.post_content || ''
+    if (t === 'LLM_ACTION' && !String(content).trim()) return
+
+    const actionId =
+      action.id ||
+      `${action.timestamp || action.round}-${action.platform}-${action.agent_id}-${action.action_type}-${String(content).slice(0, 24)}`
+
+    if (!actionIds.value.has(actionId)) {
+      actionIds.value.add(actionId)
+      allActions.value.push({
+        ...action,
+        action_args: {
+          ...args,
+          ...(content && !args.content ? { content } : {}),
+        },
+        _uniqueId: actionId,
+      })
+      newActionsAdded++
+    }
+  })
+  return newActionsAdded
 }
 
 const startDetailPolling = () => {
-  detailTimer = setInterval(fetchRunStatusDetail, 3000)
+  // 优先按 selectedSimId 订阅 actions SSE
+  startActionsSse()
+}
+
+const startActionsSse = () => {
+  stopActionsSse()
+  if (detailTimer) {
+    clearInterval(detailTimer)
+    detailTimer = null
+  }
+
+  const sid = selectedSimId.value
+  if (!sid || String(sid).startsWith('dec_')) {
+    // 尚无具体 sim：先拉一次聚合 detail，等 selectedSimId 确定后再开 SSE
+    fetchRunStatusDetail()
+    return
+  }
+
+  actionsSse = subscribeSimulationActions(sid, {
+    onEvent: (data) => {
+      const list = data?.actions || []
+      if (list.length) mergeActions(list)
+    },
+    onDone: (data) => {
+      const list = data?.actions || []
+      if (list.length) mergeActions(list)
+    },
+    onError: (err) => {
+      console.warn('[SandOwl] actions SSE error, fallback poll', err)
+      stopActionsSse()
+      if (!detailTimer) {
+        detailTimer = setInterval(fetchRunStatusDetail, 3000)
+      }
+    },
+  })
+}
+
+const stopStatusSse = () => {
+  if (decisionSse) {
+    try {
+      decisionSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    decisionSse = null
+  }
 }
 
 const stopPolling = () => {
@@ -516,6 +624,8 @@ const stopPolling = () => {
     clearInterval(detailTimer)
     detailTimer = null
   }
+  stopStatusSse()
+  stopActionsSse()
 }
 
 // 追踪各平台的上一次轮次，用于检测变化并输出日志
@@ -529,7 +639,61 @@ const onSelectRun = (row) => {
   allActions.value = []
   actionIds.value = new Set()
   addLog(`切换到 Run ${row.run_id} / ${row.sim_id || ''}`)
-  fetchRunStatusDetail()
+  startActionsSse()
+}
+
+const applyRunStatus = (data) => {
+  if (!data) return
+
+  const prevSim = selectedSimId.value
+  if (data.matrix) {
+    runMatrix.value = data.matrix
+    runProgress.value = data.progress || { done: 0, total: 0 }
+    if (!selectedSimId.value && data.sim_id) {
+      selectedSimId.value = data.sim_id
+    }
+    if (!selectedRunId.value) {
+      const first = (data.matrix[0]?.runs || [])[0]
+      if (first) {
+        selectedRunId.value = first.run_id
+        selectedSimId.value = first.sim_id || selectedSimId.value
+      }
+    }
+  }
+
+  runStatus.value = data
+
+  // selectedSimId 首次确定时启动 actions SSE
+  if (selectedSimId.value && selectedSimId.value !== prevSim && !actionsSse && !detailTimer) {
+    startActionsSse()
+  }
+
+  if (data.twitter_current_round > prevTwitterRound.value) {
+    addLog(`[Plaza] R${data.twitter_current_round}/${data.total_rounds} | T:${data.twitter_simulated_hours || 0}h | A:${data.twitter_actions_count}`)
+    prevTwitterRound.value = data.twitter_current_round
+  }
+
+  if (data.reddit_current_round > prevRedditRound.value) {
+    addLog(`[Community] R${data.reddit_current_round}/${data.total_rounds} | T:${data.reddit_simulated_hours || 0}h | A:${data.reddit_actions_count}`)
+    prevRedditRound.value = data.reddit_current_round
+  }
+
+  const isCompleted =
+    data.runner_status === 'completed' ||
+    data.runner_status === 'stopped' ||
+    ['completed', 'done', 'success'].includes(String(data.status || '').toLowerCase())
+
+  const platformsCompleted = checkPlatformsCompleted(data)
+
+  if (isCompleted || platformsCompleted) {
+    if (platformsCompleted && !isCompleted) {
+      addLog(t('log.allPlatformsCompleted'))
+    }
+    addLog(t('log.simCompleted'))
+    phase.value = 2
+    stopPolling()
+    emit('update-status', 'completed')
+  }
 }
 
 const fetchRunStatus = async () => {
@@ -539,52 +703,7 @@ const fetchRunStatus = async () => {
     const res = await getRunStatus(props.simulationId)
     
     if (res.success && res.data) {
-      const data = res.data
-
-      if (data.matrix) {
-        runMatrix.value = data.matrix
-        runProgress.value = data.progress || { done: 0, total: 0 }
-        if (!selectedSimId.value && data.sim_id) {
-          selectedSimId.value = data.sim_id
-        }
-        if (!selectedRunId.value) {
-          const first = (data.matrix[0]?.runs || [])[0]
-          if (first) {
-            selectedRunId.value = first.run_id
-            selectedSimId.value = first.sim_id || selectedSimId.value
-          }
-        }
-      }
-      
-      runStatus.value = data
-      
-      // 分别检测各平台的轮次变化并输出日志
-      if (data.twitter_current_round > prevTwitterRound.value) {
-        addLog(`[Plaza] R${data.twitter_current_round}/${data.total_rounds} | T:${data.twitter_simulated_hours || 0}h | A:${data.twitter_actions_count}`)
-        prevTwitterRound.value = data.twitter_current_round
-      }
-      
-      if (data.reddit_current_round > prevRedditRound.value) {
-        addLog(`[Community] R${data.reddit_current_round}/${data.total_rounds} | T:${data.reddit_simulated_hours || 0}h | A:${data.reddit_actions_count}`)
-        prevRedditRound.value = data.reddit_current_round
-      }
-      
-      // 检测模拟是否已完成（通过 runner_status 或平台完成状态判断）
-      const isCompleted = data.runner_status === 'completed' || data.runner_status === 'stopped'
-      
-      // 额外检查：如果后端还没来得及更新 runner_status，但平台已经报告完成
-      // 通过检测 twitter_completed 和 reddit_completed 状态判断
-      const platformsCompleted = checkPlatformsCompleted(data)
-      
-      if (isCompleted || platformsCompleted) {
-        if (platformsCompleted && !isCompleted) {
-          addLog(t('log.allPlatformsCompleted'))
-        }
-        addLog(t('log.simCompleted'))
-        phase.value = 2
-        stopPolling()
-        emit('update-status', 'completed')
-      }
+      applyRunStatus(res.data)
     }
   } catch (err) {
     console.warn('获取运行状态失败:', err)
@@ -617,45 +736,14 @@ const checkPlatformsCompleted = (data) => {
 
 const fetchRunStatusDetail = async () => {
   if (!props.simulationId) return
-  
+
   try {
     const res = await getRunStatusDetail(props.simulationId, {
       simId: selectedSimId.value || undefined,
     })
-    
-    if (res.success && res.data) {
-      // 使用 all_actions 获取完整的动作列表
-      const serverActions = res.data.all_actions || []
-      
-      // 增量添加新动作（去重）
-      let newActionsAdded = 0
-      serverActions.forEach(action => {
-        const t = String(action.action_type || '').toUpperCase()
-        const args = action.action_args || {}
-        const content =
-          action.content || args.content || args.quote_content || args.post_content || ''
-        // 空壳 LLM_ACTION 不进时间线
-        if (t === 'LLM_ACTION' && !String(content).trim()) return
 
-        // 生成唯一ID
-        const actionId = action.id || `${action.timestamp || action.round}-${action.platform}-${action.agent_id}-${action.action_type}-${String(content).slice(0, 24)}`
-        
-        if (!actionIds.value.has(actionId)) {
-          actionIds.value.add(actionId)
-          allActions.value.push({
-            ...action,
-            action_args: {
-              ...args,
-              ...(content && !args.content ? { content } : {}),
-            },
-            _uniqueId: actionId
-          })
-          newActionsAdded++
-        }
-      })
-      
-      // 不自动滚动，让用户自由查看时间轴
-      // 新动作会在底部追加
+    if (res.success && res.data) {
+      mergeActions(res.data.all_actions || [])
     }
   } catch (err) {
     console.warn('获取详细状态失败:', err)
@@ -736,8 +824,19 @@ const handleNextStep = async () => {
     
     if (res.success && res.data) {
       const reportId = res.data.report_id
+      const reportTaskId = res.data.task_id
+      if (reportId && reportTaskId && String(reportTaskId).startsWith('task_')) {
+        try {
+          sessionStorage.setItem(`adc_report_task_${reportId}`, reportTaskId)
+        } catch (_) {
+          /* ignore */
+        }
+      }
       addLog(t('log.reportGenTaskStarted', { reportId }))
-      
+      touchWorkflowStep(4, {
+        reportId,
+        simulationId: props.simulationId || '',
+      })
       // 跳转到报告页面
       router.push({ name: 'Report', params: { reportId } })
     } else {
@@ -749,16 +848,6 @@ const handleNextStep = async () => {
     isGeneratingReport.value = false
   }
 }
-
-// Scroll log to bottom
-const logContent = ref(null)
-watch(() => props.systemLogs?.length, () => {
-  nextTick(() => {
-    if (logContent.value) {
-      logContent.value.scrollTop = logContent.value.scrollHeight
-    }
-  })
-})
 
 function onTimelineScroll() {
   const el = scrollContainer.value
@@ -1337,47 +1426,6 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* Logs */
-.system-logs {
-  background: #000;
-  color: #DDD;
-  padding: 10px 14px;
-  font-family: var(--font-mono);
-  border-top: 1px solid #222;
-  flex: 0 0 auto;
-}
-
-.log-header {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 1px solid #333;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
-  font-size: 10px;
-  color: #666;
-}
-
-.log-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  height: 72px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.log-content::-webkit-scrollbar { width: 4px; }
-.log-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
-.log-line {
-  font-size: 11px;
-  display: flex;
-  gap: 12px;
-  line-height: 1.5;
-}
-
-.log-time { color: #555; min-width: 75px; }
-.log-msg { color: #BBB; word-break: break-all; }
 .mono { font-family: var(--font-mono); }
 
 /* Loading spinner for button */

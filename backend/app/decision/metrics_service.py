@@ -263,6 +263,29 @@ def build_compare_payload(decision_id: str) -> Dict[str, Any]:
         sid = agg.get("scenario_id")
         agg["narrative"] = narratives.get(sid, "")
 
+    # 城际飞线：按方案聚合 run 动作边
+    from app.config import Config
+    from app.decision.geo_propagation import build_geo_for_scenario_runs
+
+    shared_dir = dec.get("shared_world_dir") or os.path.join(
+        Config.DECISION_DIR, decision_id, "shared"
+    )
+    try:
+        for sc, agg in zip(scenarios, aggregated):
+            run_dirs = []
+            for r in registry.list_runs_for_scenario(sc["id"]):
+                rd = r.get("run_dir")
+                if rd and os.path.isdir(rd):
+                    run_dirs.append(rd)
+            agg["geo_propagation"] = build_geo_for_scenario_runs(run_dirs, shared_dir)
+    except Exception as e:
+        logger.warning(f"geo_propagation failed: {e}")
+        for agg in aggregated:
+            agg.setdefault(
+                "geo_propagation",
+                {"cities": [], "lines": [], "mapping_note": ""},
+            )
+
     return {
         "decision_id": decision_id,
         "title": dec.get("title"),

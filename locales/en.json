@@ -47,6 +47,7 @@
     "systemReadyDesc": "Engine on standby. Upload documents to build a persistent ontology and enter the decision loop.",
     "statOntologies": "Ontologies",
     "statDecisions": "Decisions",
+    "statTasks": "Tasks",
     "statEngine": "Engine",
     "createDecision": "Multi-scenario",
     "metricLowCost": "Low Cost",
@@ -85,7 +86,11 @@
       "Run Simulation",
       "Report Generation",
       "Deep Interaction"
-    ]
+    ],
+    "stepNavLabel": "Workflow steps",
+    "stepNavCurrent": "Current step",
+    "stepNavGo": "Go to {name}",
+    "stepNavLocked": "Step not reached yet (missing IDs)"
   },
   "step1": {
     "ontologyGeneration": "Ontology Generation",
@@ -373,7 +378,25 @@
     "notStarted": "Not started",
     "roundsProgress": "{current}/{total} rounds",
     "untitledSimulation": "Untitled simulation",
-    "unknownFile": "Unknown file"
+    "unknownFile": "Unknown file",
+    "delete": "Move to Trash",
+    "deleting": "Working…",
+    "deleteConfirm": "Move this task to the recycle bin? You can restore it later. Permanent deletion is done in the recycle bin.",
+    "deleteSuccess": "Moved to trash",
+    "deleteFailed": "Failed to move to trash: {error}"
+  },
+  "trash": {
+    "title": "Recycle Bin",
+    "empty": "Recycle bin is empty",
+    "kindDecision": "Decision",
+    "kindOntology": "Ontology",
+    "trashedAt": "Trashed",
+    "restore": "Restore",
+    "purge": "Delete Forever",
+    "purgeConfirm": "Permanently delete “{title}”? Only this item will be removed. This cannot be undone.",
+    "purgeOntologyHint": "Related decision items will remain in the recycle bin and must be deleted separately.",
+    "restoreFailed": "Restore failed: {error}",
+    "purgeFailed": "Permanent delete failed: {error}"
   },
   "api": {
     "projectNotFound": "Project not found: {id}",
@@ -496,8 +519,13 @@
     "configComplete": "Config generation complete",
     "generatingTimeConfig": "Generating time config...",
     "generatingEventConfig": "Generating event config and hot topics...",
+    "generatingTimeAndEventConfig": "Generating time and event config in parallel...",
     "generatingAgentConfig": "Generating agent config ({start}-{end}/{total})...",
     "generatingPlatformConfig": "Generating platform config...",
+    "planningCastSheet": "Planning cast sheet...",
+    "reviewingProfiles": "Reviewing profiles (round {round}/{max})...",
+    "reviewingSimConfig": "Reviewing simulation config...",
+    "castExcluded": "Excluded entities: {names}",
     "zepSearchQuery": "All information, activities, events, relationships and background about {name}",
     "timeConfigLabel": "Time Config",
     "eventConfigLabel": "Event Config",

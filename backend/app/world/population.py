@@ -94,10 +94,18 @@ def slice_nodes_to_entities(nodes: List[Dict[str, Any]]) -> List[EntityNode]:
 
 
 def _rule_based_profile(entity: EntityNode, user_id: int) -> Dict[str, Any]:
+    from app.world.china_location import format_location_label, resolve_location
+
     et = entity.get_entity_type() or "Person"
     bio = (entity.summary or f"{et}: {entity.name}")[:200]
+    loc = resolve_location(
+        text=f"{entity.name} {et} {entity.summary or ''} {entity.attributes or ''}",
+        entity_type=et,
+        seed=entity.uuid or user_id,
+    )
+    place = format_location_label(loc)
     persona = (
-        f"你是{entity.name}，身份类型为{et}。"
+        f"你是{entity.name}，身份类型为{et}，活动于{place}。"
         f"{entity.summary or '你关注本地公共政策与城市生活话题。'}"
         f"你会在社交媒体上表达与自身利益相关的观点。"
     )
@@ -113,7 +121,13 @@ def _rule_based_profile(entity: EntityNode, user_id: int) -> Dict[str, Any]:
         "age": random.randint(22, 55),
         "gender": "other",
         "mbti": random.choice(["ISTJ", "ENFP", "INTJ", "ESFJ", "ISTP"]),
-        "country": "China",
+        "country": loc["country"],
+        "province": loc["province"],
+        "city": loc["city"],
+        "district": loc.get("district") or "",
+        "province_adcode": loc.get("province_adcode") or "",
+        "city_adcode": loc.get("city_adcode") or "",
+        "district_adcode": loc.get("district_adcode") or "",
         "profession": et,
         "karma": random.randint(500, 3000),
         "friend_count": random.randint(50, 400),
@@ -170,40 +184,41 @@ def generate_profiles_from_slice(
                 if uuid is not None and p.get("user_id") is not None:
                     entity_to_agent[str(uuid)] = int(p["user_id"])
     elif use_llm and Config.LLM_API_KEY:
-        try:
-            from app.world.oasis_profile_generator import (
-                OasisAgentProfile,
-                OasisProfileGenerator,
-            )
+        from app.world.oasis_profile_generator import OasisProfileGenerator
 
-            # 不传 graph_id，跳过 Zep 二次检索
-            gen = OasisProfileGenerator(graph_id=None)
-            oasis_profiles = gen.generate_profiles_from_entities(
-                entities,
-                use_llm=True,
-                graph_id=None,
-                parallel_count=3,
-                output_platform="twitter",
-            )
-            for p in oasis_profiles:
-                profiles_data.append(p.to_dict())
-                if p.source_entity_uuid:
-                    entity_to_agent[p.source_entity_uuid] = p.user_id
-            # 用官方格式保存
-            twitter_path = os.path.join(output_dir, "twitter_profiles.csv")
-            reddit_path = os.path.join(output_dir, "reddit_profiles.json")
-            gen.save_profiles(oasis_profiles, twitter_path, platform="twitter")
-            gen.save_profiles(oasis_profiles, reddit_path, platform="reddit")
-        except Exception as e:
-            logger.warning(f"LLM 人设生成失败，回退规则: {e}")
-            profiles_data = []
-            entity_to_agent = {}
+        # 不传 graph_id，跳过 Zep 二次检索；失败直接抛错，禁止回退规则空壳
+        gen = OasisProfileGenerator(graph_id=None)
+        oasis_profiles = gen.generate_profiles_from_entities(
+            entities,
+            use_llm=True,
+            graph_id=None,
+            parallel_count=3,
+            output_platform="twitter",
+        )
+        for p in oasis_profiles:
+            profiles_data.append(p.to_dict())
+            if p.source_entity_uuid:
+                entity_to_agent[p.source_entity_uuid] = p.user_id
+        twitter_path = os.path.join(output_dir, "twitter_profiles.csv")
+        reddit_path = os.path.join(output_dir, "reddit_profiles.json")
+        gen.save_profiles(oasis_profiles, twitter_path, platform="twitter")
+        gen.save_profiles(oasis_profiles, reddit_path, platform="reddit")
+    elif use_llm and not Config.LLM_API_KEY:
+        raise RuntimeError("已请求 LLM 人设生成，但未配置 LLM_API_KEY")
 
     if not profiles_data:
+        if use_llm:
+            raise RuntimeError("LLM 人设生成未产出任何结果（已禁用规则兜底）")
         for i, ent in enumerate(entities):
             row = _rule_based_profile(ent, i)
             profiles_data.append(row)
             entity_to_agent[ent.uuid] = i
+
+    # 统一补全真实省市
+    from app.world.china_location import enrich_profile_location
+
+    for p in profiles_data:
+        enrich_profile_location(p)
 
     # 关注关系注入 persona
     follows = (network or {}).get("follows") or []
@@ -279,7 +294,13 @@ def _write_reddit_json(profiles: List[Dict[str, Any]], path: str) -> None:
                 "age": p.get("age", 30),
                 "gender": p.get("gender") or "other",
                 "mbti": p.get("mbti") or "ISTJ",
-                "country": p.get("country") or "China",
+                "country": p.get("country") or "中国",
+                "province": p.get("province") or "",
+                "city": p.get("city") or "",
+                "district": p.get("district") or "",
+                "province_adcode": p.get("province_adcode") or "",
+                "city_adcode": p.get("city_adcode") or "",
+                "district_adcode": p.get("district_adcode") or "",
                 "profession": p.get("profession"),
                 "source_entity_uuid": p.get("source_entity_uuid"),
                 "source_entity_type": p.get("source_entity_type"),

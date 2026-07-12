@@ -202,7 +202,7 @@ def patch_config_for_scenario(
     cfg["event_config"]["initial_posts"] = posts
     cfg["event_config"]["hot_topics"] = [
         "电动自行车限行",
-        "江城大道",
+        "丽泽路",
         "外卖骑手",
         scenario["name"],
     ]

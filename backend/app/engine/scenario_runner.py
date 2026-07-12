@@ -101,9 +101,8 @@ class ScenarioRunner:
 
         if not version_id:
             latest = registry.get_latest_version(ontology_id)
-            if not latest:
-                raise ValueError("本体没有快照版本，请先导出 snapshot")
-            version_id = latest["id"]
+            # 允许尚无快照（任务可在建图前创建）；prepare 阶段再绑定最新版本
+            version_id = latest["id"] if latest else ""
 
         sample_count = max(1, int(sample_count or 1))
         max_rounds = max(1, int(max_rounds or 10))
@@ -124,7 +123,17 @@ class ScenarioRunner:
                 }
             ]
 
-        graph_id = self._ontology_graph_id(ontology_id)
+        graph_id = None
+        try:
+            graph_id = self._ontology_graph_id(ontology_id)
+        except ValueError:
+            # 建图前即可建任务：先落 Decision，prepare 时再补建 sim
+            graph_id = None
+
+        # 一本体一活跃决策：旧活跃任务进回收站（不级联软删本体，避免新建失败）
+        for old in registry.list_decisions(include_trashed=False):
+            if old.get("ontology_id") == ontology_id:
+                registry.trash_decision(old["id"], cascade_ontology=False)
 
         dec = registry.create_decision_record(
             ontology_id=ontology_id,
@@ -135,6 +144,60 @@ class ScenarioRunner:
         )
         decision_id = dec["id"]
 
+        created_scenarios = self._build_scenarios_and_runs(
+            decision_id=decision_id,
+            ontology_id=ontology_id,
+            title=title,
+            scenarios=scenarios,
+            sample_count=sample_count,
+            graph_id=graph_id,
+        )
+
+        detail = {
+            "decision": registry.get_decision(decision_id),
+            "scenarios": created_scenarios,
+            "runs": registry.list_runs_for_decision(decision_id),
+        }
+        # 便捷字段：N=1 时前端可直接拿首个 sim_id 进 Step2
+        runs = detail["runs"]
+        if runs:
+            detail["sim_id"] = runs[0].get("sim_id")
+            detail["simulation_id"] = runs[0].get("sim_id")
+        return detail
+
+    def _clear_decision_scenarios_and_runs(self, decision_id: str) -> None:
+        """清除决策下旧方案/runs 及 sim 磁盘，保留 decision 行本身。"""
+        from app.models.store import connection
+
+        runs = registry.list_runs_for_decision(decision_id)
+        scenarios = registry.list_scenarios(decision_id)
+        for r in runs:
+            registry._rm_path(r.get("run_dir"))
+            sim_id = r.get("sim_id")
+            if sim_id:
+                registry._rm_path(os.path.join(Config.RUN_DIR, sim_id))
+                registry._rm_path(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id))
+        with connection() as conn:
+            for r in runs:
+                conn.execute("DELETE FROM runs WHERE id = ?", (r["id"],))
+            for s in scenarios:
+                conn.execute("DELETE FROM scenarios WHERE id = ?", (s["id"],))
+        # 共享世界需随方案重建
+        dec = registry.get_decision(decision_id) or {}
+        shared = dec.get("shared_world_dir")
+        if shared:
+            registry._rm_path(shared)
+            registry.update_decision(decision_id, shared_world_dir="")
+
+    def _build_scenarios_and_runs(
+        self,
+        decision_id: str,
+        ontology_id: str,
+        title: str,
+        scenarios: List[Dict[str, Any]],
+        sample_count: int,
+        graph_id: Optional[str],
+    ) -> List[Dict[str, Any]]:
         colors = ["#e74c3c", "#27ae60", "#7f8c8d", "#3498db", "#9b59b6"]
         created_scenarios = []
         for i, sc in enumerate(scenarios or []):
@@ -151,7 +214,6 @@ class ScenarioRunner:
                     "preferred_poster_keywords": sc.get("preferred_poster_keywords")
                     or ["交管", "官方", "周明远", "公安", "交通警察"],
                 }
-                # DecisionCreateView 风格：content + poster_hint
                 if sc.get("content") and not intervention["initial_posts"]:
                     intervention["initial_posts"] = [
                         {
@@ -169,53 +231,160 @@ class ScenarioRunner:
             created_scenarios.append(rec)
 
             for s in range(sample_count):
-                state = self.sim_manager.create_simulation(
-                    project_id=decision_id,
-                    graph_id=graph_id,
-                    enable_twitter=True,
-                    enable_reddit=True,
-                )
-                sim_id = state.simulation_id
-                run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
-                # 预写 simulation_requirement：优先本体完整需求，避免用截断 name 当需求
-                ont_req = ""
-                try:
-                    ont = registry.get_ontology(ontology_id) or {}
-                    ont_req = (ont.get("simulation_requirement") or "").strip()
-                except Exception:
-                    pass
-                req = (
-                    ont_req
-                    or Intervention.from_dict(intervention).intervention_text()
-                    or title
-                )
-                cfg_path = os.path.join(run_dir, "simulation_config.json")
-                with open(cfg_path, "w", encoding="utf-8") as f:
-                    json.dump(
-                        {"simulation_requirement": req, "seed": 42 + s},
-                        f,
-                        ensure_ascii=False,
-                        indent=2,
+                sim_id = None
+                run_dir = ""
+                if graph_id:
+                    state = self.sim_manager.create_simulation(
+                        project_id=decision_id,
+                        graph_id=graph_id,
+                        enable_twitter=True,
+                        enable_reddit=True,
                     )
+                    sim_id = state.simulation_id
+                    run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+                    ont_req = ""
+                    try:
+                        ont = registry.get_ontology(ontology_id) or {}
+                        ont_req = (ont.get("simulation_requirement") or "").strip()
+                    except Exception:
+                        pass
+                    req = (
+                        ont_req
+                        or Intervention.from_dict(intervention).intervention_text()
+                        or title
+                    )
+                    cfg_path = os.path.join(run_dir, "simulation_config.json")
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"simulation_requirement": req, "seed": 42 + s},
+                            f,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
                 registry.add_run(
                     rec["id"],
                     seed=42 + s,
                     status="pending",
-                    sim_id=sim_id,
+                    sim_id=sim_id or "",
                     run_dir=run_dir,
                 )
+        return created_scenarios
 
-        detail = {
-            "decision": registry.get_decision(decision_id),
-            "scenarios": created_scenarios,
-            "runs": registry.list_runs_for_decision(decision_id),
-        }
-        # 便捷字段：N=1 时前端可直接拿首个 sim_id 进 Step2
-        runs = detail["runs"]
-        if runs:
-            detail["sim_id"] = runs[0].get("sim_id")
-            detail["simulation_id"] = runs[0].get("sim_id")
-        return detail
+    def replace_scenarios(
+        self,
+        decision_id: str,
+        scenarios: List[Dict[str, Any]],
+        sample_count: int = 1,
+        max_rounds: int = 10,
+        title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """原地替换方案与 runs（不新建 Decision、不进回收站）。"""
+        dec = registry.get_decision(decision_id)
+        if not dec:
+            raise ValueError(f"决策不存在: {decision_id}")
+
+        ontology_id = dec.get("ontology_id") or ""
+        sample_count = max(1, int(sample_count or 1))
+        max_rounds = max(1, int(max_rounds or 10))
+        title = (title or "").strip() or dec.get("title") or decision_id
+
+        if not scenarios:
+            scenarios = [
+                {
+                    "name": title or "默认方案",
+                    "kind": "default",
+                    "color": "#3498db",
+                    "intervention": {
+                        "name": title or "默认方案",
+                        "kind": "default",
+                        "initial_posts": [],
+                        "narrative_direction": title or "",
+                    },
+                }
+            ]
+
+        # 绑定最新快照
+        if not (dec.get("version_id") or "").strip():
+            latest = registry.get_latest_version(ontology_id)
+            if latest:
+                registry.update_decision(decision_id, version_id=latest["id"])
+
+        graph_id = None
+        try:
+            graph_id = self._ontology_graph_id(ontology_id)
+        except ValueError:
+            graph_id = None
+
+        self._clear_decision_scenarios_and_runs(decision_id)
+        registry.update_decision(
+            decision_id,
+            sample_count=sample_count,
+            max_rounds=max_rounds,
+            title=title,
+            status="created",
+        )
+        self._build_scenarios_and_runs(
+            decision_id=decision_id,
+            ontology_id=ontology_id,
+            title=title,
+            scenarios=scenarios,
+            sample_count=sample_count,
+            graph_id=graph_id,
+        )
+        return self.get_decision_detail(decision_id)
+
+    def ensure_sims(self, decision_id: str) -> Dict[str, Any]:
+        """为尚无 sim_id 的 runs 补建空壳（不跑 LLM）。
+
+        用于「点启动引擎即建任务」后、建图完成再进入 Step2 的衔接。
+        """
+        dec = registry.get_decision(decision_id)
+        if not dec:
+            raise ValueError(f"决策不存在: {decision_id}")
+
+        ontology_id = dec.get("ontology_id") or ""
+        # 绑定最新快照（建图前创建的任务 version_id 可能为空）
+        if not (dec.get("version_id") or "").strip():
+            latest = registry.get_latest_version(ontology_id)
+            if latest:
+                registry.update_decision(decision_id, version_id=latest["id"])
+
+        graph_id = self._ontology_graph_id(ontology_id)
+        runs = registry.list_runs_for_decision(decision_id)
+        for run in runs:
+            if run.get("sim_id"):
+                continue
+            state = self.sim_manager.create_simulation(
+                project_id=decision_id,
+                graph_id=graph_id,
+                enable_twitter=True,
+                enable_reddit=True,
+            )
+            sim_id = state.simulation_id
+            run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+            ont_req = ""
+            try:
+                ont = registry.get_ontology(ontology_id) or {}
+                ont_req = (ont.get("simulation_requirement") or "").strip()
+            except Exception:
+                pass
+            req = ont_req or (dec.get("title") or decision_id)
+            os.makedirs(run_dir, exist_ok=True)
+            cfg_path = os.path.join(run_dir, "simulation_config.json")
+            if not os.path.isfile(cfg_path):
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "simulation_requirement": req,
+                            "seed": int(run.get("seed") or 42),
+                        },
+                        f,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+            registry.update_run(run["id"], sim_id=sim_id, run_dir=run_dir)
+
+        return self.get_decision_detail(decision_id)
 
     def _build_shared_world(
         self,
@@ -424,7 +593,17 @@ class ScenarioRunner:
             run = runs[0]
             sim_id = run.get("sim_id")
             if not sim_id:
-                raise ValueError("Run 缺少 sim_id，请重新创建决策")
+                # 建图前创建的任务：此时补建 sim
+                graph_id = self._ontology_graph_id(dec["ontology_id"])
+                state = self.sim_manager.create_simulation(
+                    project_id=decision_id,
+                    graph_id=graph_id,
+                    enable_twitter=True,
+                    enable_reddit=True,
+                )
+                sim_id = state.simulation_id
+                run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+                registry.update_run(run["id"], sim_id=sim_id, run_dir=run_dir)
             document_text = _combined_document_text(dec["ontology_id"]) or ""
             sc0 = scenarios[0] if scenarios else {}
             req = (
@@ -649,6 +828,12 @@ class ScenarioRunner:
             raise ValueError(f"决策不存在: {decision_id}")
 
         registry.update_decision(decision_id, status="running")
+        try:
+            from app.api.stream import publish_decision_status
+
+            publish_decision_status(decision_id)
+        except Exception:
+            pass
 
         if background:
             t = threading.Thread(
@@ -719,6 +904,12 @@ class ScenarioRunner:
                         started_at=run.get("started_at") or _utc_now(),
                         error=None,
                     )
+                    try:
+                        from app.api.stream import publish_decision_status
+
+                        publish_decision_status(decision_id)
+                    except Exception:
+                        pass
                     try:
                         # 确保 state ready
                         state = self.sim_manager.get_simulation(sim_id)
@@ -811,11 +1002,25 @@ class ScenarioRunner:
                 decision_id,
                 status="running" if leftover else "completed",
             )
-            return self.get_status(decision_id)
+            status = self.get_status(decision_id)
+            try:
+                from app.api.stream import publish_decision_status
+
+                publish_decision_status(decision_id, status)
+            except Exception:
+                pass
+            return status
         except Exception as e:
             logger.error(traceback.format_exc())
             registry.update_decision(decision_id, status="failed")
-            return {"decision_id": decision_id, "status": "failed", "error": str(e)}
+            failed = {"decision_id": decision_id, "status": "failed", "error": str(e)}
+            try:
+                from app.api.stream import publish_decision_status
+
+                publish_decision_status(decision_id, failed)
+            except Exception:
+                pass
+            return failed
 
     def get_status(self, decision_id: str) -> Dict[str, Any]:
         dec = registry.get_decision(decision_id)

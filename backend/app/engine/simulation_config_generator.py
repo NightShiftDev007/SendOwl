@@ -12,6 +12,8 @@
 
 import json
 import math
+import time
+import concurrent.futures
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -21,6 +23,7 @@ from openai import OpenAI
 from app.config import Config
 from app.utils.logger import get_logger
 from app.utils.locale import get_language_instruction, t
+from app.utils.llm_client import LLMClient, with_rate_limit_retry, is_rate_limit_error
 from app.ontology.zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.simulation_config')
@@ -271,9 +274,9 @@ class SimulationConfigGenerator:
         """
         logger.info(f"开始智能生成模拟配置: simulation_id={simulation_id}, 实体数={len(entities)}")
         
-        # 计算总步骤数
-        num_batches = math.ceil(len(entities) / self.AGENTS_PER_BATCH)
-        total_steps = 3 + num_batches  # 时间配置 + 事件配置 + N批Agent + 平台配置
+        # 计算总步骤数：1=时间+事件并行, N=Agent批, 1=配置终审
+        num_batches = math.ceil(len(entities) / self.AGENTS_PER_BATCH) if entities else 0
+        total_steps = 2 + max(num_batches, 1)  # 1 + batches + final review
         current_step = 0
         
         def report_progress(step: int, message: str):
@@ -292,38 +295,86 @@ class SimulationConfigGenerator:
         
         reasoning_parts = []
         
-        # ========== 步骤1: 生成时间配置 ==========
-        report_progress(1, t('progress.generatingTimeConfig'))
+        # ========== 步骤1: 时间配置 + 事件配置（含平台动力学）并行 ==========
+        report_progress(1, t('progress.generatingTimeAndEventConfig'))
         num_entities = len(entities)
-        time_config_result = self._generate_time_config(context, num_entities)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            fut_time = executor.submit(self._generate_time_config, context, num_entities)
+            fut_event = executor.submit(
+                self._generate_event_config, context, simulation_requirement, entities
+            )
+            time_config_result = fut_time.result()
+            event_config_result = fut_event.result()
+
         time_config = self._parse_time_config(time_config_result, num_entities)
-        reasoning_parts.append(f"{t('progress.timeConfigLabel')}: {time_config_result.get('reasoning', t('common.success'))}")
-        
-        # ========== 步骤2: 生成事件配置 ==========
-        report_progress(2, t('progress.generatingEventConfig'))
-        event_config_result = self._generate_event_config(context, simulation_requirement, entities)
         event_config = self._parse_event_config(event_config_result)
+        reasoning_parts.append(f"{t('progress.timeConfigLabel')}: {time_config_result.get('reasoning', t('common.success'))}")
         reasoning_parts.append(f"{t('progress.eventConfigLabel')}: {event_config_result.get('reasoning', t('common.success'))}")
+
+        # 平台配置：从事件结果的 platform_dynamics 解析，失败回落常量
+        twitter_config = None
+        reddit_config = None
+        platform_dynamics = event_config_result.get("platform_dynamics") or {}
+        if enable_twitter:
+            twitter_config = self._parse_platform_config(
+                "twitter", platform_dynamics.get("twitter")
+            )
+        if enable_reddit:
+            reddit_config = self._parse_platform_config(
+                "reddit", platform_dynamics.get("reddit")
+            )
         
-        # ========== 步骤3-N: 分批生成Agent配置 ==========
-        all_agent_configs = []
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * self.AGENTS_PER_BATCH
-            end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
-            batch_entities = entities[start_idx:end_idx]
-            
-            report_progress(
-                3 + batch_idx,
-                t('progress.generatingAgentConfig', start=start_idx + 1, end=end_idx, total=len(entities))
-            )
-            
-            batch_configs = self._generate_agent_configs_batch(
-                context=context,
-                entities=batch_entities,
-                start_idx=start_idx,
-                simulation_requirement=simulation_requirement
-            )
-            all_agent_configs.extend(batch_configs)
+        # ========== 步骤2..N: 分批并行生成Agent配置 ==========
+        all_agent_configs: List[AgentActivityConfig] = []
+        if entities:
+            batch_jobs = []
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * self.AGENTS_PER_BATCH
+                end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
+                batch_jobs.append((batch_idx, start_idx, end_idx, entities[start_idx:end_idx]))
+
+            workers = max(1, min(Config.LLM_CONFIG_BATCH_WORKERS, len(batch_jobs)))
+            completed_batches = [0]
+            lock = __import__("threading").Lock()
+            batch_results: Dict[int, List[AgentActivityConfig]] = {}
+
+            def run_agent_batch(job):
+                batch_idx, start_idx, end_idx, batch_entities = job
+                return batch_idx, self._generate_agent_configs_batch(
+                    context=context,
+                    entities=batch_entities,
+                    start_idx=start_idx,
+                    simulation_requirement=simulation_requirement,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(run_agent_batch, job): job for job in batch_jobs}
+                for future in concurrent.futures.as_completed(futures):
+                    job = futures[future]
+                    batch_idx, start_idx, end_idx, _ = job
+                    try:
+                        bidx, configs = future.result()
+                        batch_results[bidx] = configs
+                        with lock:
+                            completed_batches[0] += 1
+                            done = completed_batches[0]
+                        report_progress(
+                            1 + done,
+                            t(
+                                'progress.generatingAgentConfig',
+                                start=start_idx + 1,
+                                end=end_idx,
+                                total=len(entities),
+                            ) + f" ({done}/{num_batches})",
+                        )
+                    except Exception as e:
+                        for pending in futures:
+                            pending.cancel()
+                        raise RuntimeError(f"Agent 配置批生成失败 (batch {batch_idx}): {e}") from e
+
+            for bidx in range(num_batches):
+                all_agent_configs.extend(batch_results[bidx])
         
         reasoning_parts.append(t('progress.agentConfigResult', count=len(all_agent_configs)))
         
@@ -332,31 +383,6 @@ class SimulationConfigGenerator:
         event_config = self._assign_initial_post_agents(event_config, all_agent_configs)
         assigned_count = len([p for p in event_config.initial_posts if p.get("poster_agent_id") is not None])
         reasoning_parts.append(t('progress.postAssignResult', count=assigned_count))
-        
-        # ========== 最后一步: 生成平台配置 ==========
-        report_progress(total_steps, t('progress.generatingPlatformConfig'))
-        twitter_config = None
-        reddit_config = None
-        
-        if enable_twitter:
-            twitter_config = PlatformConfig(
-                platform="twitter",
-                recency_weight=0.4,
-                popularity_weight=0.3,
-                relevance_weight=0.3,
-                viral_threshold=10,
-                echo_chamber_strength=0.5
-            )
-        
-        if enable_reddit:
-            reddit_config = PlatformConfig(
-                platform="reddit",
-                recency_weight=0.3,
-                popularity_weight=0.4,
-                relevance_weight=0.3,
-                viral_threshold=15,
-                echo_chamber_strength=0.6
-            )
         
         # 构建最终参数
         params = SimulationParameters(
@@ -373,6 +399,10 @@ class SimulationConfigGenerator:
             llm_base_url=self.base_url,
             generation_reasoning=" | ".join(reasoning_parts)
         )
+
+        # ========== 末步: 配置终审 ==========
+        report_progress(total_steps, t('progress.reviewingSimConfig'))
+        params = self._review_and_fix_config(params)
         
         logger.info(f"模拟配置生成完成: {len(params.agent_configs)} 个Agent配置")
         
@@ -442,22 +472,46 @@ class SimulationConfigGenerator:
         time_result = self._generate_time_config(context, num_entities)
         time_config = self._parse_time_config(time_result, num_entities)
 
-        all_agent_configs = []
+        batch_jobs = []
         for batch_idx in range(num_batches):
             start_idx = batch_idx * self.AGENTS_PER_BATCH
             end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
-            report(
-                2 + batch_idx,
-                t('progress.generatingAgentConfig', start=start_idx + 1, end=end_idx, total=len(entities)),
+            batch_jobs.append((batch_idx, start_idx, end_idx, entities[start_idx:end_idx]))
+
+        workers = max(1, min(Config.LLM_CONFIG_BATCH_WORKERS, len(batch_jobs)))
+        batch_results: Dict[int, List[AgentActivityConfig]] = {}
+        completed = [0]
+
+        def run_job(job):
+            batch_idx, start_idx, end_idx, batch_entities = job
+            return batch_idx, self._generate_agent_configs_batch(
+                context=context,
+                entities=batch_entities,
+                start_idx=start_idx,
+                simulation_requirement=simulation_requirement,
             )
-            all_agent_configs.extend(
-                self._generate_agent_configs_batch(
-                    context=context,
-                    entities=entities[start_idx:end_idx],
-                    start_idx=start_idx,
-                    simulation_requirement=simulation_requirement,
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(run_job, job): job for job in batch_jobs}
+            for future in concurrent.futures.as_completed(futures):
+                job = futures[future]
+                batch_idx, start_idx, end_idx, _ = job
+                bidx, configs = future.result()
+                batch_results[bidx] = configs
+                completed[0] += 1
+                report(
+                    1 + completed[0],
+                    t(
+                        'progress.generatingAgentConfig',
+                        start=start_idx + 1,
+                        end=end_idx,
+                        total=len(entities),
+                    ),
                 )
-            )
+
+        all_agent_configs: List[AgentActivityConfig] = []
+        for bidx in range(num_batches):
+            all_agent_configs.extend(batch_results[bidx])
 
         cfg = dict(existing_config)
         cfg["time_config"] = asdict(time_config)
@@ -535,7 +589,7 @@ class SimulationConfigGenerator:
         return "\n".join(lines)
     
     def _call_llm_with_retry(self, prompt: str, system_prompt: str) -> Dict[str, Any]:
-        """带重试的LLM调用，包含JSON修复逻辑"""
+        """带重试的LLM调用，包含JSON修复逻辑与限流退避"""
         import re
         
         max_attempts = 3
@@ -543,16 +597,18 @@ class SimulationConfigGenerator:
         
         for attempt in range(max_attempts):
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
-                    # 不设置max_tokens，让LLM自由发挥
-                )
+                def _create():
+                    return self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.7 - (attempt * 0.1)
+                    )
+
+                response = with_rate_limit_retry(_create)
                 
                 content = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
@@ -578,8 +634,10 @@ class SimulationConfigGenerator:
             except Exception as e:
                 logger.warning(f"LLM调用失败 (attempt {attempt+1}): {str(e)[:80]}")
                 last_error = e
-                import time
-                time.sleep(2 * (attempt + 1))
+                delay = 2 * (attempt + 1)
+                if is_rate_limit_error(e):
+                    delay = 1.5 * (2 ** attempt)
+                time.sleep(delay)
         
         raise last_error or Exception("LLM调用失败")
     
@@ -802,8 +860,28 @@ class SimulationConfigGenerator:
         {{"content": "帖子内容", "poster_type": "实体类型（必须从可用类型中选择）"}},
         ...
     ],
+    "platform_dynamics": {{
+        "twitter": {{
+            "recency_weight": 0.4,
+            "popularity_weight": 0.3,
+            "relevance_weight": 0.3,
+            "viral_threshold": 10,
+            "echo_chamber_strength": 0.5
+        }},
+        "reddit": {{
+            "recency_weight": 0.3,
+            "popularity_weight": 0.4,
+            "relevance_weight": 0.3,
+            "viral_threshold": 15,
+            "echo_chamber_strength": 0.6
+        }}
+    }},
     "reasoning": "<简要说明>"
-}}"""
+}}
+
+platform_dynamics 说明（按场景判断，勿照抄示例）：
+- 三权重应和约为 1；突发冲突提高 popularity/viral_threshold 可偏低；慢性政策讨论提高 relevance、echo_chamber 可偏高
+- viral_threshold 建议 3-50；echo_chamber_strength 建议 0.1-0.9"""
 
         system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
@@ -824,6 +902,191 @@ class SimulationConfigGenerator:
             )
         return result
     
+    def _default_platform_config(self, platform: str) -> PlatformConfig:
+        if platform == "twitter":
+            return PlatformConfig(
+                platform="twitter",
+                recency_weight=0.4,
+                popularity_weight=0.3,
+                relevance_weight=0.3,
+                viral_threshold=10,
+                echo_chamber_strength=0.5,
+            )
+        return PlatformConfig(
+            platform="reddit",
+            recency_weight=0.3,
+            popularity_weight=0.4,
+            relevance_weight=0.3,
+            viral_threshold=15,
+            echo_chamber_strength=0.6,
+        )
+
+    def _parse_platform_config(
+        self, platform: str, raw: Optional[Dict[str, Any]]
+    ) -> PlatformConfig:
+        """解析平台动力学参数；失败回落常量。"""
+        fallback = self._default_platform_config(platform)
+        if not isinstance(raw, dict):
+            return fallback
+        try:
+            rw = float(raw.get("recency_weight", fallback.recency_weight))
+            pw = float(raw.get("popularity_weight", fallback.popularity_weight))
+            vw = float(raw.get("relevance_weight", fallback.relevance_weight))
+            total = rw + pw + vw
+            if total <= 0:
+                rw, pw, vw = fallback.recency_weight, fallback.popularity_weight, fallback.relevance_weight
+            else:
+                rw, pw, vw = rw / total, pw / total, vw / total
+            viral = int(raw.get("viral_threshold", fallback.viral_threshold))
+            viral = max(3, min(50, viral))
+            echo = float(raw.get("echo_chamber_strength", fallback.echo_chamber_strength))
+            echo = max(0.1, min(0.9, echo))
+            return PlatformConfig(
+                platform=platform,
+                recency_weight=rw,
+                popularity_weight=pw,
+                relevance_weight=vw,
+                viral_threshold=viral,
+                echo_chamber_strength=echo,
+            )
+        except Exception as e:
+            logger.warning(f"平台配置解析失败，回落默认值 ({platform}): {e}")
+            return fallback
+
+    def _review_and_fix_config(self, params: SimulationParameters) -> SimulationParameters:
+        """后置终审：审一致性并应用白名单字段修正（最多 1 轮）。"""
+        try:
+            client = LLMClient(model=Config.LLM_CAST_PLANNER_MODEL)
+            agent_summary = [
+                {
+                    "agent_id": a.agent_id,
+                    "name": a.entity_name,
+                    "type": a.entity_type,
+                    "activity_level": a.activity_level,
+                    "stance": a.stance,
+                    "influence_weight": a.influence_weight,
+                }
+                for a in params.agent_configs[:40]
+            ]
+            payload = {
+                "simulation_requirement": params.simulation_requirement,
+                "time_config": asdict(params.time_config) if params.time_config else {},
+                "event_config": asdict(params.event_config) if params.event_config else {},
+                "agent_configs_sample": agent_summary,
+                "twitter_config": asdict(params.twitter_config) if params.twitter_config else None,
+                "reddit_config": asdict(params.reddit_config) if params.reddit_config else None,
+            }
+            system_prompt = (
+                "你是模拟配置终审官。审查时间窗口、初始帖发布者、活跃度分布、平台参数是否自洽。"
+                "只返回 JSON：{\"verdict\":\"pass|revise\",\"fixes\":[{\"path\":\"...\",\"value\":...,\"reason\":\"...\"}]}。"
+                "path 白名单示例：time_config.total_simulation_hours, "
+                "event_config.initial_posts[0].poster_agent_id, "
+                "agent_configs[3].activity_level, twitter_config.viral_threshold。"
+                "不要重写整份配置。"
+                f"\n{get_language_instruction()}"
+            )
+            raw = client.chat_json(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+                max_tokens=4096,
+            )
+            if (raw.get("verdict") or "pass") == "pass":
+                return params
+            fixes = raw.get("fixes") if isinstance(raw.get("fixes"), list) else []
+            applied = []
+            for fix in fixes:
+                if not isinstance(fix, dict):
+                    continue
+                path = str(fix.get("path") or "")
+                value = fix.get("value")
+                if self._apply_config_fix(params, path, value):
+                    applied.append(f"{path}={value} ({fix.get('reason') or ''})")
+            if applied:
+                note = "config_review: " + "; ".join(applied[:12])
+                prev = params.generation_reasoning or ""
+                params.generation_reasoning = f"{prev} | {note}" if prev else note
+                logger.info(f"配置终审已应用 {len(applied)} 项修正")
+            return params
+        except Exception as e:
+            logger.warning(f"配置终审跳过: {e}")
+            return params
+
+    def _apply_config_fix(
+        self, params: SimulationParameters, path: str, value: Any
+    ) -> bool:
+        """仅应用白名单字段。"""
+        path = path.strip()
+        try:
+            if path.startswith("time_config.") and params.time_config:
+                key = path.split(".", 1)[1]
+                if key in (
+                    "total_simulation_hours",
+                    "minutes_per_round",
+                    "agents_per_hour_min",
+                    "agents_per_hour_max",
+                ):
+                    setattr(params.time_config, key, int(value))
+                    return True
+            if path.startswith("event_config.initial_posts[") and params.event_config:
+                import re
+                m = re.match(
+                    r"event_config\.initial_posts\[(\d+)\]\.poster_agent_id$", path
+                )
+                if m:
+                    idx = int(m.group(1))
+                    posts = params.event_config.initial_posts
+                    if 0 <= idx < len(posts):
+                        posts[idx]["poster_agent_id"] = int(value)
+                        return True
+            if path.startswith("agent_configs[") and params.agent_configs:
+                import re
+                m = re.match(
+                    r"agent_configs\[(\d+)\]\.(activity_level|posts_per_hour|comments_per_hour|influence_weight|sentiment_bias|stance)$",
+                    path,
+                )
+                if m:
+                    idx = int(m.group(1))
+                    field_name = m.group(2)
+                    if 0 <= idx < len(params.agent_configs):
+                        agent = params.agent_configs[idx]
+                        if field_name == "stance":
+                            setattr(agent, field_name, str(value))
+                        else:
+                            setattr(agent, field_name, float(value))
+                        return True
+            if path.startswith("twitter_config.") and params.twitter_config:
+                key = path.split(".", 1)[1]
+                if key in (
+                    "recency_weight",
+                    "popularity_weight",
+                    "relevance_weight",
+                    "echo_chamber_strength",
+                ):
+                    setattr(params.twitter_config, key, float(value))
+                    return True
+                if key == "viral_threshold":
+                    params.twitter_config.viral_threshold = max(3, min(50, int(value)))
+                    return True
+            if path.startswith("reddit_config.") and params.reddit_config:
+                key = path.split(".", 1)[1]
+                if key in (
+                    "recency_weight",
+                    "popularity_weight",
+                    "relevance_weight",
+                    "echo_chamber_strength",
+                ):
+                    setattr(params.reddit_config, key, float(value))
+                    return True
+                if key == "viral_threshold":
+                    params.reddit_config.viral_threshold = max(3, min(50, int(value)))
+                    return True
+        except Exception as e:
+            logger.debug(f"忽略非法 fix path={path}: {e}")
+        return False
+
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
         """解析事件配置结果"""
         return EventConfig(
@@ -832,7 +1095,7 @@ class SimulationConfigGenerator:
             hot_topics=result.get("hot_topics", []),
             narrative_direction=result.get("narrative_direction", "")
         )
-    
+
     def _assign_initial_post_agents(
         self,
         event_config: EventConfig,
@@ -917,7 +1180,7 @@ class SimulationConfigGenerator:
         
         event_config.initial_posts = updated_posts
         return event_config
-    
+
     def _generate_agent_configs_batch(
         self,
         context: str,

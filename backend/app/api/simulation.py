@@ -328,6 +328,231 @@ def _config_file_looks_complete(config: dict | None) -> bool:
     return bool(config.get("time_config")) and bool(config.get("agent_configs"))
 
 
+def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict:
+    """读取 profiles 实时快照（HTTP 与 SSE 共用）。不存在目录时返回 file_exists=False。"""
+    import json
+    import csv
+    from datetime import datetime
+
+    sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+    if not os.path.exists(sim_dir):
+        return {
+            "simulation_id": simulation_id,
+            "platform": platform,
+            "count": 0,
+            "total_expected": None,
+            "is_generating": False,
+            "file_exists": False,
+            "file_modified_at": None,
+            "profiles": [],
+            "not_found": True,
+        }
+
+    if platform == "reddit":
+        profiles_file = os.path.join(sim_dir, "reddit_profiles.json")
+    else:
+        profiles_file = os.path.join(sim_dir, "twitter_profiles.csv")
+
+    file_exists = os.path.exists(profiles_file)
+    profiles = []
+    file_modified_at = None
+
+    if file_exists:
+        file_stat = os.stat(profiles_file)
+        file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+        try:
+            if platform == "reddit":
+                with open(profiles_file, "r", encoding="utf-8") as f:
+                    profiles = json.load(f)
+            else:
+                with open(profiles_file, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    profiles = list(reader)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"读取 profiles 文件失败（可能正在写入中）: {e}")
+            profiles = []
+
+    is_generating = False
+    total_expected = None
+    state_file = os.path.join(sim_dir, "state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state_data = json.load(f)
+                status = state_data.get("status", "")
+                is_generating = status == "preparing"
+                total_expected = state_data.get("entities_count") or state_data.get("profiles_count")
+        except Exception:
+            pass
+
+    profile_count = len(profiles) if isinstance(profiles, list) else 0
+    if not total_expected and profile_count > 0:
+        total_expected = profile_count
+    elif total_expected and profile_count > total_expected and not is_generating:
+        total_expected = profile_count
+
+    return {
+        "simulation_id": simulation_id,
+        "platform": platform,
+        "count": profile_count,
+        "total_expected": total_expected,
+        "is_generating": is_generating,
+        "file_exists": file_exists,
+        "file_modified_at": file_modified_at,
+        "profiles": profiles,
+    }
+
+
+def read_config_realtime(simulation_id: str) -> dict:
+    """读取 config 实时快照（HTTP 与 SSE 共用）。"""
+    import json
+    from datetime import datetime
+
+    sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+    if not os.path.exists(sim_dir):
+        return {
+            "simulation_id": simulation_id,
+            "file_exists": False,
+            "file_modified_at": None,
+            "is_generating": False,
+            "generation_stage": None,
+            "config_generated": False,
+            "config": None,
+            "not_found": True,
+        }
+
+    config_file = os.path.join(sim_dir, "simulation_config.json")
+    file_exists = os.path.exists(config_file)
+    config = None
+    file_modified_at = None
+
+    if file_exists:
+        file_stat = os.stat(config_file)
+        file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"读取 config 文件失败（可能正在写入中）: {e}")
+            config = None
+
+    is_generating = False
+    generation_stage = None
+    config_generated = False
+    state_file = os.path.join(sim_dir, "state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state_data = json.load(f)
+                status = state_data.get("status", "")
+                is_generating = status == "preparing"
+                config_generated = state_data.get("config_generated", False)
+                if is_generating:
+                    if state_data.get("profiles_generated", False):
+                        generation_stage = "generating_config"
+                    else:
+                        generation_stage = "generating_profiles"
+                elif status == "ready":
+                    generation_stage = "completed"
+        except Exception:
+            pass
+
+    if config and _config_file_looks_complete(config):
+        config_generated = True
+        if generation_stage is None:
+            generation_stage = "completed"
+        if is_generating:
+            is_generating = False
+
+    response_data = {
+        "simulation_id": simulation_id,
+        "file_exists": file_exists,
+        "file_modified_at": file_modified_at,
+        "is_generating": is_generating,
+        "generation_stage": generation_stage,
+        "config_generated": config_generated,
+        "config": config,
+    }
+
+    if config:
+        response_data["summary"] = {
+            "total_agents": len(config.get("agent_configs", [])),
+            "simulation_hours": config.get("time_config", {}).get("total_simulation_hours"),
+            "initial_posts_count": len(config.get("event_config", {}).get("initial_posts", [])),
+            "hot_topics_count": len(config.get("event_config", {}).get("hot_topics", [])),
+            "has_twitter_config": "twitter_config" in config,
+            "has_reddit_config": "reddit_config" in config,
+            "generated_at": config.get("generated_at"),
+            "llm_model": config.get("llm_model"),
+        }
+
+    return response_data
+
+
+def read_simulation_actions(
+    simulation_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    platform=None,
+    agent_id=None,
+    round_num=None,
+) -> dict:
+    """读取动作历史快照（HTTP 与 SSE 共用）。"""
+    enriched = []
+    try:
+        from app.api.run import (
+            _actions_from_oasis_db,
+            _db_candidates,
+            _normalize_action,
+        )
+
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        for db in _db_candidates(sim_dir):
+            rows = _actions_from_oasis_db(db, limit=limit + offset + 50)
+            if not rows:
+                continue
+            db_name = str(getattr(db, "name", "") or "")
+            platform_guess = "reddit" if "reddit" in db_name else "twitter"
+            if platform and platform != platform_guess:
+                continue
+            for i, row in enumerate(rows):
+                if agent_id is not None and int(row.get("agent_id") or -1) != agent_id:
+                    continue
+                if round_num is not None and int(row.get("round") or -1) != round_num:
+                    continue
+                norm = _normalize_action(row, i)
+                norm["platform"] = row.get("platform") or platform_guess
+                args = norm.get("action_args") if isinstance(norm.get("action_args"), dict) else {}
+                if norm.get("content") and not args.get("content"):
+                    args = {**args, "content": norm["content"]}
+                    norm["action_args"] = args
+                enriched.append(norm)
+    except Exception as e:
+        logger.warning(f"从 OASIS DB 富化动作失败，回退 jsonl: {e}")
+
+    if enriched:
+        page = enriched[offset : offset + limit]
+        return {
+            "count": len(page),
+            "actions": page,
+            "source": "oasis_db",
+        }
+
+    actions = SimulationRunner.get_actions(
+        simulation_id=simulation_id,
+        limit=limit,
+        offset=offset,
+        platform=platform,
+        agent_id=agent_id,
+        round_num=round_num,
+    )
+    return {
+        "count": len(actions),
+        "actions": [a.to_dict() for a in actions],
+        "source": "jsonl",
+    }
+
+
 def _check_simulation_prepared(simulation_id: str) -> tuple:
     """
     检查模拟是否已经准备完成
@@ -1149,103 +1374,19 @@ def get_simulation_profiles_realtime(simulation_id: str):
     
     Query参数：
         platform: 平台类型（reddit/twitter，默认reddit）
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "platform": "reddit",
-                "count": 15,
-                "total_expected": 93,  // 预期总数（如果有）
-                "is_generating": true,  // 是否正在生成
-                "file_exists": true,
-                "file_modified_at": "2025-12-04T18:20:00",
-                "profiles": [...]
-            }
-        }
     """
-    import json
-    import csv
-    from datetime import datetime
-    
     try:
         platform = request.args.get('platform', 'reddit')
-        
-        # 获取模拟目录
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
-        
-        if not os.path.exists(sim_dir):
+        data = read_profiles_realtime(simulation_id, platform)
+        if data.get("not_found"):
             return jsonify({
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
-        
-        # 确定文件路径
-        if platform == "reddit":
-            profiles_file = os.path.join(sim_dir, "reddit_profiles.json")
-        else:
-            profiles_file = os.path.join(sim_dir, "twitter_profiles.csv")
-        
-        # 检查文件是否存在
-        file_exists = os.path.exists(profiles_file)
-        profiles = []
-        file_modified_at = None
-        
-        if file_exists:
-            # 获取文件修改时间
-            file_stat = os.stat(profiles_file)
-            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
-            
-            try:
-                if platform == "reddit":
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        profiles = json.load(f)
-                else:
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        profiles = list(reader)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"读取 profiles 文件失败（可能正在写入中）: {e}")
-                profiles = []
-        
-        # 检查是否正在生成（通过 state.json 判断）
-        is_generating = False
-        total_expected = None
-        
-        state_file = os.path.join(sim_dir, "state.json")
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r', encoding='utf-8') as f:
-                    state_data = json.load(f)
-                    status = state_data.get("status", "")
-                    is_generating = status == "preparing"
-                    total_expected = state_data.get("entities_count") or state_data.get("profiles_count")
-            except Exception:
-                pass
-
-        # 多方案 materialize / 旧数据常漏写 entities_count：用已有人设数兜底
-        profile_count = len(profiles) if isinstance(profiles, list) else 0
-        if not total_expected and profile_count > 0:
-            total_expected = profile_count
-        elif total_expected and profile_count > total_expected and not is_generating:
-            # 已生成完成时，以实际人设数为准
-            total_expected = profile_count
-        
         return jsonify({
             "success": True,
-            "data": {
-                "simulation_id": simulation_id,
-                "platform": platform,
-                "count": profile_count,
-                "total_expected": total_expected,
-                "is_generating": is_generating,
-                "file_exists": file_exists,
-                "file_modified_at": file_modified_at,
-                "profiles": profiles
-            }
+            "data": {k: v for k, v in data.items() if k != "not_found"}
         })
-        
     except Exception as e:
         logger.error(f"实时获取Profile失败: {str(e)}")
         return jsonify({
@@ -1265,115 +1406,18 @@ def get_simulation_config_realtime(simulation_id: str):
     - 适用于生成过程中的实时查看
     - 返回额外的元数据（如文件修改时间、是否正在生成等）
     - 即使配置还没生成完也能返回部分信息
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "simulation_id": "sim_xxxx",
-                "file_exists": true,
-                "file_modified_at": "2025-12-04T18:20:00",
-                "is_generating": true,  // 是否正在生成
-                "generation_stage": "generating_config",  // 当前生成阶段
-                "config": {...}  // 配置内容（如果存在）
-            }
-        }
     """
-    import json
-    from datetime import datetime
-    
     try:
-        # 获取模拟目录
-        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
-        
-        if not os.path.exists(sim_dir):
+        data = read_config_realtime(simulation_id)
+        if data.get("not_found"):
             return jsonify({
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
-        
-        # 配置文件路径
-        config_file = os.path.join(sim_dir, "simulation_config.json")
-        
-        # 检查文件是否存在
-        file_exists = os.path.exists(config_file)
-        config = None
-        file_modified_at = None
-        
-        if file_exists:
-            # 获取文件修改时间
-            file_stat = os.stat(config_file)
-            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
-            
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"读取 config 文件失败（可能正在写入中）: {e}")
-                config = None
-        
-        # 检查是否正在生成（通过 state.json 判断）
-        is_generating = False
-        generation_stage = None
-        config_generated = False
-        
-        state_file = os.path.join(sim_dir, "state.json")
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r', encoding='utf-8') as f:
-                    state_data = json.load(f)
-                    status = state_data.get("status", "")
-                    is_generating = status == "preparing"
-                    config_generated = state_data.get("config_generated", False)
-                    
-                    # 判断当前阶段
-                    if is_generating:
-                        if state_data.get("profiles_generated", False):
-                            generation_stage = "generating_config"
-                        else:
-                            generation_stage = "generating_profiles"
-                    elif status == "ready":
-                        generation_stage = "completed"
-            except Exception:
-                pass
-
-        # 文件已有完整配置时，即使 state 未标记也视为已生成（修复多方案 materialize 漏写）
-        if config and _config_file_looks_complete(config):
-            config_generated = True
-            if generation_stage is None:
-                generation_stage = "completed"
-            if is_generating:
-                is_generating = False
-        
-        # 构建返回数据
-        response_data = {
-            "simulation_id": simulation_id,
-            "file_exists": file_exists,
-            "file_modified_at": file_modified_at,
-            "is_generating": is_generating,
-            "generation_stage": generation_stage,
-            "config_generated": config_generated,
-            "config": config
-        }
-        
-        # 如果配置存在，提取一些关键统计信息
-        if config:
-            response_data["summary"] = {
-                "total_agents": len(config.get("agent_configs", [])),
-                "simulation_hours": config.get("time_config", {}).get("total_simulation_hours"),
-                "initial_posts_count": len(config.get("event_config", {}).get("initial_posts", [])),
-                "hot_topics_count": len(config.get("event_config", {}).get("hot_topics", [])),
-                "has_twitter_config": "twitter_config" in config,
-                "has_reddit_config": "reddit_config" in config,
-                "generated_at": config.get("generated_at"),
-                "llm_model": config.get("llm_model")
-            }
-        
         return jsonify({
             "success": True,
-            "data": response_data
+            "data": {k: v for k, v in data.items() if k != "not_found"}
         })
-        
     except Exception as e:
         logger.error(f"实时获取Config失败: {str(e)}")
         return jsonify({
@@ -2008,15 +2052,6 @@ def get_simulation_actions(simulation_id: str):
         platform: 过滤平台（twitter/reddit）
         agent_id: 过滤Agent ID
         round_num: 过滤轮次
-    
-    返回：
-        {
-            "success": true,
-            "data": {
-                "count": 100,
-                "actions": [...]
-            }
-        }
     """
     try:
         limit = request.args.get('limit', 100, type=int)
@@ -2025,70 +2060,18 @@ def get_simulation_actions(simulation_id: str):
         agent_id = request.args.get('agent_id', type=int)
         round_num = request.args.get('round_num', type=int)
 
-        # 优先从 OASIS DB 还原真实动作（twitter 脚本曾写空壳 LLM_ACTION）
-        enriched = []
-        try:
-            from pathlib import Path
-            from app.api.run import (
-                _actions_from_oasis_db,
-                _db_candidates,
-                _normalize_action,
-            )
-            from app.config import Config as _Cfg
-
-            sim_dir = os.path.join(_Cfg.OASIS_SIMULATION_DATA_DIR, simulation_id)
-            for db in _db_candidates(sim_dir):
-                rows = _actions_from_oasis_db(db, limit=limit + offset + 50)
-                if not rows:
-                    continue
-                db_name = str(getattr(db, "name", "") or "")
-                platform_guess = "reddit" if "reddit" in db_name else "twitter"
-                if platform and platform != platform_guess:
-                    continue
-                for i, row in enumerate(rows):
-                    if agent_id is not None and int(row.get("agent_id") or -1) != agent_id:
-                        continue
-                    if round_num is not None and int(row.get("round") or -1) != round_num:
-                        continue
-                    norm = _normalize_action(row, i)
-                    norm["platform"] = row.get("platform") or platform_guess
-                    args = norm.get("action_args") if isinstance(norm.get("action_args"), dict) else {}
-                    if norm.get("content") and not args.get("content"):
-                        args = {**args, "content": norm["content"]}
-                        norm["action_args"] = args
-                    enriched.append(norm)
-        except Exception as e:
-            logger.warning(f"从 OASIS DB 富化动作失败，回退 jsonl: {e}")
-
-        if enriched:
-            page = enriched[offset:offset + limit]
-            return jsonify({
-                "success": True,
-                "data": {
-                    "count": len(page),
-                    "actions": page,
-                    "source": "oasis_db",
-                }
-            })
-        
-        actions = SimulationRunner.get_actions(
-            simulation_id=simulation_id,
+        data = read_simulation_actions(
+            simulation_id,
             limit=limit,
             offset=offset,
             platform=platform,
             agent_id=agent_id,
-            round_num=round_num
+            round_num=round_num,
         )
-        
         return jsonify({
             "success": True,
-            "data": {
-                "count": len(actions),
-                "actions": [a.to_dict() for a in actions],
-                "source": "jsonl",
-            }
+            "data": data,
         })
-        
     except Exception as e:
         logger.error(f"获取动作历史失败: {str(e)}")
         return jsonify({

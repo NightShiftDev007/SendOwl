@@ -4,12 +4,28 @@ export function listDecisions() {
   return service.get('/api/decision/list')
 }
 
+export function deleteDecision(decisionId) {
+  return service.delete(`/api/decision/${decisionId}`)
+}
+
 export function createDecision(body) {
   return requestWithRetry(() => service.post('/api/decision/create', body))
 }
 
 export function getDecision(decisionId) {
   return service.get(`/api/decision/${decisionId}`)
+}
+
+export function ensureDecisionSims(decisionId) {
+  return requestWithRetry(() =>
+    service.post(`/api/decision/${decisionId}/ensure-sims`),
+  )
+}
+
+export function replaceDecisionScenarios(decisionId, body = {}) {
+  return requestWithRetry(() =>
+    service.post(`/api/decision/${decisionId}/scenarios`, body),
+  )
 }
 
 export function prepareDecision(decisionId, body = {}) {

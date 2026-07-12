@@ -35,12 +35,8 @@
             <span class="mono">{{ $t('home.systemStatus') }}</span>
           </div>
           <div class="stat">
-            <div class="stat-label">{{ $t('home.statOntologies') }}</div>
-            <div class="stat-value mono">{{ stats.ontologies }}</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">{{ $t('home.statDecisions') }}</div>
-            <div class="stat-value mono">{{ stats.decisions }}</div>
+            <div class="stat-label">{{ $t('home.statTasks') }}</div>
+            <div class="stat-value mono">{{ stats.tasks }}</div>
           </div>
           <div class="stat">
             <div class="stat-label">{{ $t('home.statEngine') }}</div>
@@ -126,7 +122,8 @@
         </div>
       </section>
 
-      <HistoryDatabase />
+      <HistoryDatabase :refresh-token="historyRefresh" @trashed="onHistoryTrashed" />
+      <RecycleBin :refresh-token="trashRefresh" @changed="onTrashChanged" />
     </div>
   </div>
 </template>
@@ -136,8 +133,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
+import RecycleBin from '../components/RecycleBin.vue'
 import { setPendingUpload } from '../store/pendingUpload.js'
-import { listOntologies } from '../api/ontology'
 import { health, listDecisions } from '../api/decision'
 
 const router = useRouter()
@@ -148,7 +145,31 @@ const loading = ref(false)
 const isDragOver = ref(false)
 const fileInput = ref(null)
 const engineOk = ref(false)
-const stats = ref({ ontologies: '—', decisions: '—' })
+const stats = ref({ tasks: '—' })
+const trashRefresh = ref(0)
+const historyRefresh = ref(0)
+
+const onHistoryTrashed = () => {
+  trashRefresh.value += 1
+  refreshStats()
+}
+
+const onTrashChanged = () => {
+  historyRefresh.value += 1
+  refreshStats()
+}
+
+const refreshStats = async () => {
+  try {
+    const d = await listDecisions().catch(() => null)
+    const dList = d?.data?.decisions || d?.decisions || (Array.isArray(d?.data) ? d.data : [])
+    stats.value = {
+      tasks: Array.isArray(dList) ? String(dList.length) : '—',
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 const canSubmit = computed(
   () => formData.value.simulationRequirement.trim() !== '' && files.value.length > 0,
@@ -196,18 +217,11 @@ const startSimulation = () => {
 
 onMounted(async () => {
   try {
-    const [h, o, d] = await Promise.all([
+    const [h] = await Promise.all([
       health().catch(() => null),
-      listOntologies().catch(() => null),
-      listDecisions().catch(() => null),
+      refreshStats(),
     ])
     engineOk.value = h?.status === 'ok' || h?.data?.status === 'ok'
-    const oList = o?.data?.ontologies || o?.ontologies || (Array.isArray(o?.data) ? o.data : [])
-    const dList = d?.data?.decisions || d?.decisions || (Array.isArray(d?.data) ? d.data : [])
-    stats.value = {
-      ontologies: Array.isArray(oList) ? String(oList.length) : '—',
-      decisions: Array.isArray(dList) ? String(dList.length) : '—',
-    }
   } catch {
     engineOk.value = false
   }

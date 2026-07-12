@@ -68,7 +68,7 @@ def http_json(method: str, path: str, body=None, timeout=120, headers=None):
 
 def main():
     req_text = REQ_PATH.read_text(encoding="utf-8") if REQ_PATH.exists() else (
-        "预测江城市电动自行车限行新政不同发布策略下的舆论传播与观点分布"
+        "预测北京市丰台区电动自行车限行试点不同发布策略下的舆论传播与观点分布"
     )
     files = []
     for p in sorted(CASE_DIR.glob("*.md")):
@@ -82,7 +82,7 @@ def main():
     body, ctype = multipart_encode(
         {
             "simulation_requirement": req_text,
-            "project_name": "江城市限行新政Demo",
+            "project_name": "北京丰台限行试点Demo",
             "additional_context": "虚构案例，用于多方案发布策略对比",
         },
         files,
@@ -98,7 +98,7 @@ def main():
     build_resp = http_json(
         "POST",
         "/api/graph/build",
-        {"project_id": project_id, "graph_name": "jiangcheng_ebike_demo"},
+        {"project_id": project_id, "graph_name": "beijing_fengtai_ebike_demo"},
         timeout=60,
     )
     if not build_resp.get("success"):

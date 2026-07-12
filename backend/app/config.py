@@ -33,6 +33,11 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # 前置/后置规划与终审（百炼 qwen3.7-plus + json_object）
+    LLM_CAST_PLANNER_MODEL = os.environ.get('LLM_CAST_PLANNER_MODEL', 'qwen3.7-plus')
+    LLM_PROFILE_REVIEW_ROUNDS = int(os.environ.get('LLM_PROFILE_REVIEW_ROUNDS', '2'))
+    LLM_CONFIG_BATCH_WORKERS = int(os.environ.get('LLM_CONFIG_BATCH_WORKERS', '3'))
+    LLM_RATE_LIMIT_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_RETRIES', '3'))
 
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')

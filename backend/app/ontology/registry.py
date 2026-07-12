@@ -38,6 +38,7 @@ def init_schema(db_path: str | None = None) -> None:
               status TEXT DEFAULT 'created',
               build_task_id TEXT,
               simulation_requirement TEXT,
+              trashed_at TEXT,
               created_at TEXT,
               updated_at TEXT
             );
@@ -67,6 +68,7 @@ def init_schema(db_path: str | None = None) -> None:
               sample_count INTEGER DEFAULT 3,
               max_rounds INTEGER DEFAULT 10,
               shared_world_dir TEXT,
+              trashed_at TEXT,
               created_at TEXT,
               updated_at TEXT
             );
@@ -110,6 +112,14 @@ def init_schema(db_path: str | None = None) -> None:
                 conn.execute(
                     "ALTER TABLE ontologies ADD COLUMN simulation_requirement TEXT"
                 )
+            if "trashed_at" not in ont_cols:
+                conn.execute("ALTER TABLE ontologies ADD COLUMN trashed_at TEXT")
+            dec_cols = {
+                r[1]
+                for r in conn.execute("PRAGMA table_info(decisions)").fetchall()
+            }
+            if "trashed_at" not in dec_cols:
+                conn.execute("ALTER TABLE decisions ADD COLUMN trashed_at TEXT")
         except Exception:
             pass
         conn.commit()
@@ -176,11 +186,20 @@ def list_documents_by_ontology_ids(
     return result
 
 
-def list_ontologies() -> List[Dict[str, Any]]:
+def list_ontologies(include_trashed: bool = False) -> List[Dict[str, Any]]:
     with connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM ontologies ORDER BY created_at DESC"
-        ).fetchall()
+        if include_trashed:
+            rows = conn.execute(
+                "SELECT * FROM ontologies ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM ontologies
+                WHERE trashed_at IS NULL OR trashed_at = ''
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
     items = [_enrich_ontology(_row_to_dict(r)) for r in rows]
     docs_map = list_documents_by_ontology_ids([o["id"] for o in items if o.get("id")])
     for item in items:
@@ -366,16 +385,32 @@ def get_decision(decision_id: str) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
-def list_decisions() -> List[Dict[str, Any]]:
+def list_decisions(include_trashed: bool = False) -> List[Dict[str, Any]]:
     with connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM decisions ORDER BY created_at DESC"
-        ).fetchall()
+        if include_trashed:
+            rows = conn.execute(
+                "SELECT * FROM decisions ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM decisions
+                WHERE trashed_at IS NULL OR trashed_at = ''
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
 def update_decision(decision_id: str, **fields) -> Optional[Dict[str, Any]]:
-    allowed = {"status", "shared_world_dir", "title", "sample_count", "max_rounds"}
+    allowed = {
+        "status",
+        "shared_world_dir",
+        "title",
+        "sample_count",
+        "max_rounds",
+        "version_id",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_decision(decision_id)
@@ -551,3 +586,248 @@ def list_runs_for_scenario(scenario_id: str) -> List[Dict[str, Any]]:
             d["metrics"] = None
         out.append(d)
     return out
+
+
+def _rm_path(path: Optional[str]) -> None:
+    import os
+    import shutil
+
+    if not path:
+        return
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.isfile(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def _is_trashed(row: Optional[Dict[str, Any]]) -> bool:
+    if not row:
+        return False
+    return bool(str(row.get("trashed_at") or "").strip())
+
+
+def trash_decision(decision_id: str, *, cascade_ontology: bool = True) -> bool:
+    """移入回收站（软删除），保留磁盘产物。
+
+    cascade_ontology=True（用户删任务）时：若该本体已无其它活跃决策，连同本体一起软删。
+    cascade_ontology=False 用于「一本体一活跃决策」替换流程，避免本体被误软删。
+    """
+    dec = get_decision(decision_id)
+    if not dec:
+        return False
+    if _is_trashed(dec):
+        return True
+    now = _utc_now()
+    ontology_id = dec.get("ontology_id") or ""
+    with connection() as conn:
+        conn.execute(
+            "UPDATE decisions SET trashed_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, decision_id),
+        )
+    if cascade_ontology and ontology_id:
+        still_active = [
+            d
+            for d in list_decisions(include_trashed=False)
+            if d.get("ontology_id") == ontology_id and d["id"] != decision_id
+        ]
+        if not still_active:
+            ont = get_ontology(ontology_id)
+            if ont and not _is_trashed(ont):
+                with connection() as conn:
+                    conn.execute(
+                        "UPDATE ontologies SET trashed_at = ?, updated_at = ? WHERE id = ?",
+                        (now, now, ontology_id),
+                    )
+    return True
+
+
+def trash_ontology(ontology_id: str) -> bool:
+    """本体移入回收站，并级联软删其下决策。"""
+    ont = get_ontology(ontology_id)
+    if not ont:
+        return False
+    now = _utc_now()
+    with connection() as conn:
+        if not _is_trashed(ont):
+            conn.execute(
+                "UPDATE ontologies SET trashed_at = ?, updated_at = ? WHERE id = ?",
+                (now, now, ontology_id),
+            )
+        conn.execute(
+            """
+            UPDATE decisions
+            SET trashed_at = ?, updated_at = ?
+            WHERE ontology_id = ? AND (trashed_at IS NULL OR trashed_at = '')
+            """,
+            (now, now, ontology_id),
+        )
+    return True
+
+
+def restore_decision(decision_id: str) -> bool:
+    """恢复任务。若同本体已有其它活跃决策，先将其入回收站（保持一活跃）。"""
+    dec = get_decision(decision_id)
+    if not dec or not _is_trashed(dec):
+        return False
+    ontology_id = dec.get("ontology_id") or ""
+    # 恢复前顶掉同本体其它活跃决策
+    if ontology_id:
+        for other in list_decisions(include_trashed=False):
+            if other.get("ontology_id") == ontology_id and other["id"] != decision_id:
+                trash_decision(other["id"], cascade_ontology=False)
+    ont = get_ontology(ontology_id) if ontology_id else None
+    now = _utc_now()
+    with connection() as conn:
+        if ont and _is_trashed(ont):
+            conn.execute(
+                "UPDATE ontologies SET trashed_at = NULL, updated_at = ? WHERE id = ?",
+                (now, ont["id"]),
+            )
+        conn.execute(
+            "UPDATE decisions SET trashed_at = NULL, updated_at = ? WHERE id = ?",
+            (now, decision_id),
+        )
+    return True
+
+
+def restore_ontology(ontology_id: str) -> bool:
+    ont = get_ontology(ontology_id)
+    if not ont or not _is_trashed(ont):
+        return False
+    now = _utc_now()
+    with connection() as conn:
+        conn.execute(
+            "UPDATE ontologies SET trashed_at = NULL, updated_at = ? WHERE id = ?",
+            (now, ontology_id),
+        )
+        conn.execute(
+            """
+            UPDATE decisions
+            SET trashed_at = NULL, updated_at = ?
+            WHERE ontology_id = ? AND trashed_at IS NOT NULL AND trashed_at != ''
+            """,
+            (now, ontology_id),
+        )
+    return True
+
+
+def list_trash() -> List[Dict[str, Any]]:
+    """回收站：一条 = 一个任务（决策），对齐历史库 / MiroFish 语义。
+
+    不展示本体行：本体是任务资源，不作为用户可见的回收站条目。
+    """
+    decisions = [
+        d for d in list_decisions(include_trashed=True) if _is_trashed(d)
+    ]
+    items: List[Dict[str, Any]] = []
+    for d in decisions:
+        items.append(
+            {
+                "kind": "decision",
+                "id": d["id"],
+                "ontology_id": d.get("ontology_id"),
+                "title": d.get("title") or d["id"],
+                "trashed_at": d.get("trashed_at"),
+                "created_at": d.get("created_at"),
+                "status": d.get("status"),
+            }
+        )
+    items.sort(key=lambda x: x.get("trashed_at") or "", reverse=True)
+    return items
+
+
+def purge_decision(decision_id: str) -> bool:
+    """彻底删除决策及其 runs / 场景 / 磁盘产物。
+
+    若本体已无任何决策引用（含回收站），一并 purge_ontology 清除孤儿本体。
+    """
+    import os
+
+    from app.config import Config
+
+    dec = get_decision(decision_id)
+    if not dec:
+        return False
+
+    ontology_id = dec.get("ontology_id") or ""
+    runs = list_runs_for_decision(decision_id)
+    scenarios = list_scenarios(decision_id)
+
+    for r in runs:
+        _rm_path(r.get("run_dir"))
+        sim_id = r.get("sim_id")
+        if sim_id:
+            _rm_path(os.path.join(Config.RUN_DIR, sim_id))
+            _rm_path(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id))
+
+    _rm_path(dec.get("shared_world_dir"))
+    _rm_path(os.path.join(Config.DECISION_DIR, decision_id))
+    _rm_path(os.path.join(Config.REPORTS_DIR, decision_id))
+    for name in (f"{decision_id}.json", f"{decision_id}.md"):
+        _rm_path(os.path.join(Config.REPORTS_DIR, name))
+
+    with connection() as conn:
+        for r in runs:
+            conn.execute("DELETE FROM runs WHERE id = ?", (r["id"],))
+        for s in scenarios:
+            conn.execute("DELETE FROM scenarios WHERE id = ?", (s["id"],))
+        conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
+
+    if ontology_id:
+        remaining = [
+            d
+            for d in list_decisions(include_trashed=True)
+            if d.get("ontology_id") == ontology_id
+        ]
+        if not remaining:
+            purge_ontology(ontology_id)
+    return True
+
+
+def purge_ontology(ontology_id: str) -> bool:
+    """彻底删除本体及其文档/版本/磁盘产物。
+
+    不级联硬删决策：回收站里每条独立清除，避免点本体一条把下属决策全清掉。
+    若仍有关联决策，仅删除本体元数据与本体磁盘产物；决策条目继续留在回收站自行处理。
+    """
+    import os
+
+    from app.config import Config
+
+    ont = get_ontology(ontology_id)
+    if not ont:
+        return False
+
+    docs = list_documents(ontology_id)
+    versions = list_versions(ontology_id)
+
+    for doc in docs:
+        _rm_path(doc.get("path"))
+    for ver in versions:
+        _rm_path(ver.get("snapshot_path"))
+
+    _rm_path(os.path.join(Config.ONTOLOGY_DIR, ontology_id))
+    _rm_path(os.path.join(Config.SNAPSHOT_DIR, ontology_id))
+    _rm_path(os.path.join(Config.UPLOAD_FOLDER, "ontologies", ontology_id))
+
+    with connection() as conn:
+        conn.execute(
+            "DELETE FROM ontology_documents WHERE ontology_id = ?", (ontology_id,)
+        )
+        conn.execute(
+            "DELETE FROM ontology_versions WHERE ontology_id = ?", (ontology_id,)
+        )
+        conn.execute("DELETE FROM ontologies WHERE id = ?", (ontology_id,))
+    return True
+
+
+# 兼容旧名：默认改为进回收站
+def delete_decision(decision_id: str) -> bool:
+    return trash_decision(decision_id)
+
+
+def delete_ontology(ontology_id: str) -> bool:
+    return trash_ontology(ontology_id)

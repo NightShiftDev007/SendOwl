@@ -47,6 +47,7 @@
     "systemReadyDesc": "引擎待命。上传文档即可构建常驻本体，进入决策闭环。",
     "statOntologies": "本体",
     "statDecisions": "决策任务",
+    "statTasks": "任务数",
     "statEngine": "引擎",
     "createDecision": "多方案决策",
     "metricLowCost": "低成本",
@@ -81,11 +82,15 @@
     "layoutWorkbench": "工作台",
     "stepNames": [
       "本体构建",
-      "创建决策",
-      "多方案推演",
+      "环境准备",
+      "推演监控",
       "量化对比",
       "深度互动"
-    ]
+    ],
+    "stepNavLabel": "流程步骤",
+    "stepNavCurrent": "当前步骤",
+    "stepNavGo": "前往{name}",
+    "stepNavLocked": "尚未到达该步骤（缺少对应 ID）"
   },
   "step1": {
     "ontologyGeneration": "本体生成",
@@ -373,7 +378,25 @@
     "notStarted": "未开始",
     "roundsProgress": "{current}/{total} 轮",
     "untitledSimulation": "未命名模拟",
-    "unknownFile": "未知文件"
+    "unknownFile": "未知文件",
+    "delete": "移入回收站",
+    "deleting": "处理中…",
+    "deleteConfirm": "确认将该任务移入回收站？可稍后恢复；彻底清除请在回收站操作。",
+    "deleteSuccess": "已移入回收站",
+    "deleteFailed": "移入回收站失败：{error}"
+  },
+  "trash": {
+    "title": "回收站",
+    "empty": "回收站为空",
+    "kindDecision": "决策",
+    "kindOntology": "本体",
+    "trashedAt": "删除于",
+    "restore": "恢复",
+    "purge": "彻底删除",
+    "purgeConfirm": "确认彻底删除「{title}」？仅删除这一条，不可恢复。",
+    "purgeOntologyHint": "关联的决策条目仍会留在回收站，需单独彻底删除。",
+    "restoreFailed": "恢复失败：{error}",
+    "purgeFailed": "彻底删除失败：{error}"
   },
   "api": {
     "projectNotFound": "项目不存在: {id}",
@@ -496,8 +519,13 @@
     "configComplete": "配置生成完成",
     "generatingTimeConfig": "生成时间配置...",
     "generatingEventConfig": "生成事件配置和热点话题...",
+    "generatingTimeAndEventConfig": "并行生成时间配置与事件配置...",
     "generatingAgentConfig": "生成Agent配置 ({start}-{end}/{total})...",
     "generatingPlatformConfig": "生成平台配置...",
+    "planningCastSheet": "规划分角表（Cast Sheet）...",
+    "reviewingProfiles": "人设终审中（第 {round}/{max} 轮）...",
+    "reviewingSimConfig": "模拟配置终审中...",
+    "castExcluded": "已裁剪实体: {names}",
     "zepSearchQuery": "关于{name}的所有信息、活动、事件、关系和背景",
     "timeConfigLabel": "时间配置",
     "eventConfigLabel": "事件配置",

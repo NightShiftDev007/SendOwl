@@ -289,6 +289,14 @@ MiroFish 的输出是叙事型 Markdown 报告；决策中心在其**前面**加
 
 每阶段结束都有可演示的端到端产品，不存在"憋两个阶段才能看到东西"的死区。
 
+### 实时进度（SSE）
+
+- 任务进度（建图 / prepare / 报告）走 `GET /api/tasks/<task_id>/events`（SSE）；推演走 `GET /api/decision/<decision_id>/events`。
+- Step2 预览走 `GET /api/simulation/<sim_id>/prepare/preview/events`；Step3 动作走 `GET /api/simulation/<sim_id>/actions/events`；Step4 日志走 `GET /api/report/<report_id>/logs/events`（服务端 watch，变化才推）。
+- 图谱刷新不推数据本身：由 task/decision SSE 事件节流触发客户端重拉。
+- 现有 status HTTP 接口保留作快照与降级；断线后 `EventSource` 自动重连并先拉快照；SSE 彻底失败时才短轮询。
+- **部署约束**：进度 pub/sub 在进程内内存，默认单进程多线程（`threaded=True`）。多 worker（如 gunicorn 多进程）需另接 Redis pub/sub，本期不做。Flask debug 热重载会断 SSE，属预期。
+
 ## 10. 待定问题与已定结论
 
 ### 已定

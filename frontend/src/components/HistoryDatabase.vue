@@ -32,21 +32,30 @@
         <!-- 卡片头部：simulation_id 和 功能可用状态 -->
         <div class="card-header">
           <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
-          <div class="card-status-icons">
-            <span 
-              class="status-icon" 
-              :class="{ available: project.project_id, unavailable: !project.project_id }"
-              :title="$t('history.graphBuild')"
-            >◇</span>
-            <span 
-              class="status-icon available" 
-              :title="$t('history.envSetup')"
-            >◈</span>
-            <span 
-              class="status-icon" 
-              :class="{ available: project.report_id, unavailable: !project.report_id }"
-              :title="$t('history.analysisReport')"
-            >◆</span>
+          <div class="card-header-right">
+            <div class="card-status-icons">
+              <span 
+                class="status-icon" 
+                :class="{ available: project.project_id, unavailable: !project.project_id }"
+                :title="$t('history.graphBuild')"
+              >◇</span>
+              <span 
+                class="status-icon available" 
+                :title="$t('history.envSetup')"
+              >◈</span>
+              <span 
+                class="status-icon" 
+                :class="{ available: project.report_id, unavailable: !project.report_id }"
+                :title="$t('history.analysisReport')"
+              >◆</span>
+            </div>
+            <button
+              type="button"
+              class="card-delete-btn"
+              :disabled="deletingId === project.simulation_id"
+              :title="$t('history.delete')"
+              @click.stop="confirmDelete(project)"
+            >×</button>
           </div>
         </div>
 
@@ -119,7 +128,15 @@
                 </span>
                 <span class="modal-create-time">{{ formatDate(selectedProject.created_at) }} {{ formatTime(selectedProject.created_at) }}</span>
               </div>
-              <button class="modal-close" @click="closeModal">×</button>
+              <div class="modal-header-actions">
+                <button
+                  type="button"
+                  class="modal-delete"
+                  :disabled="deletingId === selectedProject.simulation_id"
+                  @click="confirmDelete(selectedProject)"
+                >{{ deletingId === selectedProject.simulation_id ? $t('history.deleting') : $t('history.delete') }}</button>
+                <button class="modal-close" @click="closeModal">×</button>
+              </div>
             </div>
 
             <!-- 弹窗内容 -->
@@ -195,6 +212,13 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import { deleteDecision } from '../api/decision'
+import { patchWorkflowContext, touchWorkflowStep } from '../store/workflowContext'
+
+const emit = defineEmits(['trashed'])
+const props = defineProps({
+  refreshToken: { type: Number, default: 0 },
+})
 
 const router = useRouter()
 const route = useRoute()
@@ -203,6 +227,7 @@ const { t } = useI18n()
 // 状态
 const projects = ref([])
 const loading = ref(true)
+const deletingId = ref(null)
 const isExpanded = ref(false)
 const hoveringCard = ref(null)
 const historyContainer = ref(null)
@@ -409,6 +434,7 @@ const closeModal = () => {
 const goToProject = () => {
   const oid = selectedProject.value?.ontology_id || selectedProject.value?.project_id
   if (oid) {
+    touchWorkflowStep(1, { projectId: oid })
     router.push({ name: 'Process', params: { projectId: oid } })
     closeModal()
   }
@@ -418,9 +444,18 @@ const goToProject = () => {
 const goToSimulation = () => {
   const p = selectedProject.value
   if (p?.kind === 'decision' && (p.decision_id || p.simulation_id)) {
+    const simId = p.decision_id || p.simulation_id
+    const reportId = p.report_id || simId
+    touchWorkflowStep(2, {
+      projectId: p.ontology_id || p.project_id || '',
+      simulationId: simId,
+      reportId,
+    })
+    // 历史决策通常已有报告，允许顶栏跳到 Step4
+    if (reportId) patchWorkflowContext({ maxReached: Math.max(4, 2) })
     router.push({
       name: 'Simulation',
-      params: { simulationId: p.decision_id || p.simulation_id },
+      params: { simulationId: simId },
     })
     closeModal()
     return
@@ -428,6 +463,7 @@ const goToSimulation = () => {
   // 本体：进 Step1，由用户点「进入环境搭建」创建推演
   const oid = p?.ontology_id || p?.project_id
   if (oid) {
+    touchWorkflowStep(1, { projectId: oid })
     router.push({ name: 'Process', params: { projectId: oid } })
     closeModal()
   }
@@ -435,8 +471,14 @@ const goToSimulation = () => {
 
 // 报告（五步 Step4）
 const goToReport = () => {
-  const id = selectedProject.value?.decision_id || selectedProject.value?.report_id
+  const p = selectedProject.value
+  const id = p?.decision_id || p?.report_id
   if (id) {
+    touchWorkflowStep(4, {
+      projectId: p.ontology_id || p.project_id || '',
+      simulationId: p.decision_id || p.simulation_id || id,
+      reportId: id,
+    })
     router.push({ name: 'Report', params: { reportId: id } })
     closeModal()
   }
@@ -455,6 +497,31 @@ const loadHistory = async () => {
     projects.value = []
   } finally {
     loading.value = false
+  }
+}
+
+const confirmDelete = async (project) => {
+  if (!project?.simulation_id || deletingId.value) return
+  if (!window.confirm(t('history.deleteConfirm'))) return
+
+  deletingId.value = project.simulation_id
+  try {
+    // 历史卡一律按「任务」处理：对应 decision，进回收站
+    const id = project.decision_id || project.simulation_id
+    const res = await deleteDecision(id)
+    if (!res?.success) {
+      throw new Error(res?.error || t('common.unknownError'))
+    }
+    await loadHistory()
+    if (selectedProject.value?.simulation_id === project.simulation_id) {
+      closeModal()
+    }
+    emit('trashed', { kind: 'decision', id })
+  } catch (error) {
+    console.error('移入回收站失败:', error)
+    window.alert(t('history.deleteFailed', { error: error.message || error }))
+  } finally {
+    deletingId.value = null
   }
 }
 
@@ -544,6 +611,10 @@ watch(() => route.path, (newPath) => {
   if (newPath === '/') {
     loadHistory()
   }
+})
+
+watch(() => props.refreshToken, () => {
+  loadHistory()
 })
 
 onMounted(async () => {
@@ -711,11 +782,45 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
+.card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* 功能状态图标组 */
 .card-status-icons {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.card-delete-btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.card-delete-btn:hover:not(:disabled) {
+  color: #DC2626;
+  border-color: #FECACA;
+  background: #FEF2F2;
+}
+
+.card-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .status-icon {
@@ -1119,6 +1224,37 @@ onUnmounted(() => {
   font-size: 0.75rem;
   color: #9CA3AF;
   letter-spacing: 0.3px;
+}
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-delete {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #FECACA;
+  background: #FEF2F2;
+  color: #DC2626;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-delete:hover:not(:disabled) {
+  background: #FEE2E2;
+  border-color: #F87171;
+}
+
+.modal-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .modal-close {

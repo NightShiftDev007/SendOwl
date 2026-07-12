@@ -15,7 +15,6 @@ from app.config import Config
 from app.models.task import TaskManager, TaskStatus
 from app.ontology import registry
 from app.ontology.snapshot import export_snapshot
-from app.ontology.templates import get_template
 from app.ontology.text_processor import TextProcessor
 from app.utils.file_parser import FileParser
 from app.utils.logger import get_logger
@@ -82,12 +81,11 @@ def create_from_files(
     lock_schema: bool = False,
 ) -> Dict[str, Any]:
     """
-    创建本体记录、保存文档、生成或加载 schema。
+    创建本体记录、保存文档，并用 LLM 生成 schema（始终 LLM，与 MiroFish 一致；失败不回退模板）。
 
     files: FileStorage 列表，或 (filename, bytes) 元组列表。
-    对齐 MiroFish：preprocess 后落盘 extracted_text.txt，并持久化 simulation_requirement。
+    use_llm_ontology 保留兼容，创建路径强制走 LLM。
     """
-    schema: Optional[Dict[str, Any]] = None
     document_texts: List[str] = []
     all_text_parts: List[str] = []
 
@@ -124,21 +122,17 @@ def create_from_files(
     if all_text.strip():
         save_extracted_text(ontology_id, all_text)
 
-    if use_llm_ontology and document_texts:
-        try:
-            from app.ontology.ontology_generator import OntologyGenerator
+    if not document_texts:
+        raise ValueError("没有可用文档，无法用 LLM 生成 SCHEMA")
 
-            gen = OntologyGenerator()
-            schema = gen.generate(
-                document_texts=document_texts,
-                simulation_requirement=simulation_requirement
-                or "构建适合社交媒体舆论模拟的本体",
-            )
-        except Exception as e:
-            logger.warning(f"LLM 本体生成失败，回退模板: {e}")
-            schema = get_template(template)
-    else:
-        schema = get_template(template)
+    from app.ontology.ontology_generator import OntologyGenerator
+
+    gen = OntologyGenerator()
+    schema = gen.generate(
+        document_texts=document_texts,
+        simulation_requirement=simulation_requirement
+        or "构建适合社交媒体舆论模拟的本体",
+    )
 
     registry.update_ontology(
         ontology_id,
@@ -193,7 +187,18 @@ def build_graph(
 
     schema = ont.get("schema")
     if not schema or not use_existing_schema:
-        schema = get_template(ont.get("template") or "opinion")
+        # 与 MiroFish 一致：缺 schema / 强制重建时用 LLM，不回退模板
+        text_for_schema = _combined_document_text(ontology_id)
+        if not text_for_schema.strip():
+            raise ValueError("没有可建图的文档内容，无法用 LLM 生成 SCHEMA")
+        from app.ontology.ontology_generator import OntologyGenerator
+
+        gen = OntologyGenerator()
+        schema = gen.generate(
+            document_texts=[text_for_schema],
+            simulation_requirement=ont.get("simulation_requirement")
+            or "构建适合社交媒体舆论模拟的本体",
+        )
         registry.update_ontology(ontology_id, schema=schema)
 
     text = _combined_document_text(ontology_id)

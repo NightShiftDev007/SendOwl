@@ -21,6 +21,10 @@ export function listOntologies() {
   return service.get('/api/ontology/list')
 }
 
+export function deleteOntology(ontologyId) {
+  return service.delete(`/api/ontology/${ontologyId}`)
+}
+
 export function getOntology(ontologyId) {
   return service.get(`/api/ontology/${ontologyId}`)
 }

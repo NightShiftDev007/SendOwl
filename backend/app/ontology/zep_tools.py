@@ -988,38 +988,36 @@ class ZepToolsService:
         result.sub_queries = sub_queries
         logger.info(t("console.generatedSubQueries", count=len(sub_queries)))
         
-        # Step 2: 对每个子问题进行语义搜索
+        # Step 2: 对每个子问题 + 主查询进行并行语义搜索
         all_facts = []
         all_edges = []
         seen_facts = set()
-        
-        for sub_query in sub_queries:
-            search_result = self.search_graph(
+
+        search_queries = list(sub_queries) + [query]
+        search_limits = [15] * len(sub_queries) + [20]
+
+        def _search_one(q_and_limit):
+            q, lim = q_and_limit
+            return self.search_graph(
                 graph_id=graph_id,
-                query=sub_query,
-                limit=15,
-                scope="edges"
+                query=q,
+                limit=lim,
+                scope="edges",
             )
-            
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(
+                executor.map(_search_one, zip(search_queries, search_limits))
+            )
+
+        for search_result in results:
             for fact in search_result.facts:
                 if fact not in seen_facts:
                     all_facts.append(fact)
                     seen_facts.add(fact)
-            
             all_edges.extend(search_result.edges)
-        
-        # 对原始问题也进行搜索
-        main_search = self.search_graph(
-            graph_id=graph_id,
-            query=query,
-            limit=20,
-            scope="edges"
-        )
-        for fact in main_search.facts:
-            if fact not in seen_facts:
-                all_facts.append(fact)
-                seen_facts.add(fact)
-        
+
         result.semantic_facts = all_facts
         result.total_facts = len(all_facts)
         

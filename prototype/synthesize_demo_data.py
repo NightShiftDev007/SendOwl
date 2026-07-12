@@ -20,7 +20,7 @@ OUTPUTS = ROOT / "outputs" / "synthetic"
 SCENARIOS = json.loads((ROOT / "scenarios.json").read_text(encoding="utf-8"))
 
 AGENTS = [
-    {"id": 0, "name": "江城市交管局", "role": "official", "stance_prior": "supportive"},
+    {"id": 0, "name": "丰台交通支队", "role": "official", "stance_prior": "supportive"},
     {"id": 1, "name": "周明远", "role": "official", "stance_prior": "supportive"},
     {"id": 2, "name": "陈大伟", "role": "rider_leader", "stance_prior": "opposing"},
     {"id": 3, "name": "阿杰", "role": "rider", "stance_prior": "opposing"},

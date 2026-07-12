@@ -9,6 +9,7 @@ import {
   getDecision,
   getDecisionStatus,
   listDecisions,
+  ensureDecisionSims,
 } from './decision'
 
 const simIdCache = new Map()
@@ -59,10 +60,25 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
   }
 
   if (simIdCache.has(raw)) {
-    // 缓存命中时仍拉一次 detail，供 prepare 判断 N/M
+    // 缓存命中时仍拉一次 detail，并用服务端最新 sim_id 刷新（原地换方案后旧缓存会失效）
     try {
       const res = await getDecision(raw)
-      return { decisionId: raw, simId: simIdCache.get(raw), detail: res.data || {} }
+      const detail = res.data || {}
+      const runs =
+        detail.runs ||
+        (detail.scenarios || []).flatMap((s) => s.runs || []) ||
+        (detail.matrix || []).flatMap((m) => m.runs || [])
+      const fresh =
+        detail.sim_id ||
+        detail.simulation_id ||
+        runs.find((r) => r.sim_id)?.sim_id ||
+        null
+      if (fresh) {
+        simIdCache.set(raw, fresh)
+        return { decisionId: raw, simId: fresh, detail }
+      }
+      // 方案已替换但 sim 尚未就绪：清掉失效缓存，走下方补建逻辑
+      simIdCache.delete(raw)
     } catch (_) {
       return { decisionId: raw, simId: simIdCache.get(raw) }
     }
@@ -74,29 +90,117 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
     detail.runs ||
     (detail.scenarios || []).flatMap((s) => s.runs || []) ||
     (detail.matrix || []).flatMap((m) => m.runs || [])
-  const simId =
+  let simId =
     detail.sim_id ||
     detail.simulation_id ||
     runs.find((r) => r.sim_id)?.sim_id ||
     null
+
+  // 建图前创建的任务可能尚无 sim：尝试补建空壳
+  if (!simId && raw.startsWith('dec_')) {
+    try {
+      const ensured = await ensureDecisionSims(raw)
+      const ed = ensured?.data || {}
+      const eruns =
+        ed.runs ||
+        (ed.scenarios || []).flatMap((s) => s.runs || []) ||
+        (ed.matrix || []).flatMap((m) => m.runs || [])
+      simId =
+        ed.sim_id ||
+        ed.simulation_id ||
+        eruns.find((r) => r.sim_id)?.sim_id ||
+        null
+      if (simId) {
+        simIdCache.set(raw, simId)
+        return { decisionId: raw, simId, detail: { ...detail, ...ed } }
+      }
+    } catch (_) {
+      /* 图谱未就绪时会失败，交给调用方 */
+    }
+  }
+
   if (!simId) {
     throw new Error(
-      '该决策没有关联的 simulation（可能是终局架构前的旧数据）。请从本体重新「进入环境搭建」创建。',
+      '该决策尚未关联 simulation（图谱可能仍在构建）。请等建图完成后再进入环境搭建。',
     )
   }
   simIdCache.set(raw, simId)
   return { decisionId: raw, simId, detail }
 }
 
-/** Step1 → 创建默认 N=1 决策，路由仍用 decisionId */
+/** Step1 → 创建默认 N=1 决策，路由仍用 decisionId。
+ * 未显式传 scenarios 时复用同本体活跃决策，避免历史回放/反复进入重复建卡。
+ * Step2 换方案请走 replaceDecisionScenarios（原地更新），不要再 createSimulation。
+ */
 export const createSimulation = async (data = {}) => {
   const ontologyId = data.project_id || data.ontology_id
   if (!ontologyId) throw new Error('缺少 ontology_id / project_id')
 
+  const hasExplicitScenarios =
+    Array.isArray(data.scenarios) && data.scenarios.length > 0
+
+  // 复用：同本体已有活跃决策，且本次未显式传方案
+  if (!hasExplicitScenarios) {
+    try {
+      const listed = await listDecisions()
+      const decList = listed?.data || []
+      const existing = decList.find((d) => d.ontology_id === ontologyId)
+      if (existing?.id) {
+        const ont = await getOntology(ontologyId).catch(() => null)
+        let detail = await getDecision(existing.id).catch(() => null)
+        let payload = detail?.data || {}
+        let simId =
+          payload.sim_id ||
+          (payload.runs || []).find((r) => r.sim_id)?.sim_id ||
+          (payload.scenarios || [])
+            .flatMap((s) => s.runs || [])
+            .find((r) => r.sim_id)?.sim_id ||
+          null
+
+        // 建图已完成但任务尚无 sim：补建空壳，保证进入 Step2 可用
+        if (!simId && ont?.data?.graph_id) {
+          try {
+            await snapshotOntology(ontologyId).catch(() => null)
+            const ensured = await ensureDecisionSims(existing.id)
+            payload = ensured?.data || payload
+            simId =
+              payload.sim_id ||
+              (payload.scenarios || [])
+                .flatMap((s) => s.runs || [])
+                .find((r) => r.sim_id)?.sim_id ||
+              null
+          } catch (_) {
+            /* prepare 阶段仍会再补 */
+          }
+        }
+
+        if (simId) simIdCache.set(existing.id, simId)
+        return {
+          success: true,
+          data: {
+            ...existing,
+            simulation_id: existing.id,
+            decision_id: existing.id,
+            sim_id: simId,
+            project_id: ontologyId,
+            ontology_id: ontologyId,
+            graph_id: ont?.data?.graph_id,
+            status: existing.status || 'created',
+            scenario_count: (payload.scenarios || []).length || 1,
+            sample_count: Number(existing.sample_count ?? 1),
+            reused: true,
+          },
+        }
+      }
+    } catch (_) {
+      /* 列表失败则继续创建 */
+    }
+  }
+
   try {
     await snapshotOntology(ontologyId)
   } catch (_) {
-    /* 已有版本时可能失败，忽略 */
+    /* 建图前尚无图谱/已有版本时可能失败，忽略；后端允许空 version_id */
   }
 
   const ont = await getOntology(ontologyId).catch(() => null)
@@ -106,20 +210,23 @@ export const createSimulation = async (data = {}) => {
     ont?.data?.name?.slice(0, 40) ||
     `推演 ${ontologyId.slice(0, 8)}`
 
-  const scenarios = (data.scenarios || defaultScenarios(title)).map((s) => ({
-    name: s.name,
-    kind: s.kind || 'custom',
-    color: s.color,
-    hypothesis: s.content || s.hypothesis || '',
-    preferred_poster_keywords: String(s.poster_hint || '')
-      .split(/[,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean),
-    initial_posts:
-      s.initial_posts || (s.content ? [{ content: s.content, poster_hint: s.poster_hint || 'official' }] : []),
-    content: s.content,
-    poster_hint: s.poster_hint,
-  }))
+  const scenarios = (hasExplicitScenarios ? data.scenarios : defaultScenarios(title)).map(
+    (s) => ({
+      name: s.name,
+      kind: s.kind || 'custom',
+      color: s.color,
+      hypothesis: s.content || s.hypothesis || '',
+      preferred_poster_keywords: String(s.poster_hint || '')
+        .split(/[,，]/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+      initial_posts:
+        s.initial_posts ||
+        (s.content ? [{ content: s.content, poster_hint: s.poster_hint || 'official' }] : []),
+      content: s.content,
+      poster_hint: s.poster_hint,
+    }),
+  )
 
   const res = await createDecision({
     ontology_id: ontologyId,
@@ -520,7 +627,9 @@ const toHistoryFiles = (documents = []) =>
       char_count: doc.char_count,
     }))
 
-/** 历史库：本体 + 决策（N=1 显示为单次推演） */
+/** 历史任务库：一条 = 一个决策任务（对齐 MiroFish「一条 = 一次 simulation」）
+ * 本体是任务背后的资源，不单独占卡。
+ */
 export const getSimulationHistory = async (limit = 20) => {
   const [ontologies, decisions] = await Promise.all([
     listOntologies().catch(() => ({ data: [] })),
@@ -535,7 +644,6 @@ export const getSimulationHistory = async (limit = 20) => {
 
   const fromDecisions = decList.slice(0, limit).map((d) => {
     const n = Number(d.sample_count || 1)
-    // 无法直接拿 scenario 数时，用标题启发式；详情页再区分
     return {
       kind: 'decision',
       simulation_id: d.id,
@@ -553,20 +661,5 @@ export const getSimulationHistory = async (limit = 20) => {
     }
   })
 
-  const remain = Math.max(0, limit - fromDecisions.length)
-  const fromOntologies = ontList.slice(0, remain).map((o) => ({
-    kind: 'ontology',
-    simulation_id: o.id,
-    project_id: o.id,
-    report_id: null,
-    ontology_id: o.id,
-    simulation_requirement: o.simulation_requirement || o.name || o.id,
-    status: o.status,
-    created_at: o.created_at,
-    current_round: o.status === 'ready' ? 1 : 0,
-    total_rounds: 1,
-    files: docsByOntology[o.id] || toHistoryFiles(o.documents),
-  }))
-
-  return { success: true, data: [...fromDecisions, ...fromOntologies].slice(0, limit) }
+  return { success: true, data: fromDecisions }
 }

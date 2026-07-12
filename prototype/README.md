@@ -8,7 +8,7 @@
 
 ```
 prototype/
-  case/                     # 虚构「江城市电动自行车限行」种子材料
+  case/                     # 「北京市丰台区电动自行车限行」种子材料（真实地名）
   scenarios.json            # 三方案干预定义（强硬 / 柔性 / Baseline）
   build_shared_world.py     # API：本体→图谱→prepare 共享世界
   run_scenarios.py          # 导出 / 物化 / 顺序跑三方案；或 synthesize 离线数据

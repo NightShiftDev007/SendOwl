@@ -21,10 +21,7 @@
         </div>
       </template>
       <template #right>
-        <div class="workflow-step">
-          <span class="step-num">Step {{ currentStep }}/5</span>
-          <span class="step-name">{{ $tm('main.stepNames')[currentStep - 1] }}</span>
-        </div>
+        <StepNav :current-step="1" :project-id="currentProjectId" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -71,6 +68,7 @@ import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step1GraphBuild from '../components/Step1GraphBuild.vue'
+import StepNav from '../components/StepNav.vue'
 import {
   generateOntology,
   getProject,
@@ -80,6 +78,8 @@ import {
   getOntologyGraphLive,
   snapshotOntology,
 } from '../api/graph'
+import { createSimulation } from '../api/simulation'
+import { subscribeTask } from '../api/sse'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 
 const route = useRoute()
@@ -103,6 +103,9 @@ const systemLogs = ref([])
 
 let pollTimer = null
 let graphPollTimer = null
+let taskSse = null
+let lastGraphRefreshAt = 0
+const GRAPH_REFRESH_MIN_MS = 5000
 
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
@@ -154,6 +157,7 @@ const addLog = (msg) => {
     }) +
     '.' +
     new Date().getMilliseconds().toString().padStart(3, '0')
+  console.log(`[SandOwl ${time}] ${msg}`)
   systemLogs.value.push({ time, msg })
   if (systemLogs.value.length > 100) systemLogs.value.shift()
 }
@@ -206,6 +210,27 @@ const handleNewProject = async () => {
       router.replace({ name: 'Process', params: { projectId: id } })
       ontologyProgress.value = null
       addLog(`Ontology generated successfully for project ${id}`)
+
+      // 点启动引擎即创建任务（Decision），失败不阻断建图；Step1 完成时可兜底复用/创建
+      try {
+        const taskRes = await createSimulation({
+          ontology_id: id,
+          project_id: id,
+          title:
+            pending.simulationRequirement?.slice(0, 40)?.trim() ||
+            res.data?.name?.slice(0, 40) ||
+            `任务 ${String(id).slice(0, 8)}`,
+        })
+        const decId = taskRes?.data?.decision_id || taskRes?.data?.simulation_id
+        if (decId) {
+          addLog(`Task created: ${decId}`)
+        } else {
+          addLog('Task create returned without decision_id (will retry at Step1 exit)')
+        }
+      } catch (taskErr) {
+        addLog(`Task create deferred: ${taskErr.message}`)
+      }
+
       await startBuildGraph()
     } else {
       error.value = res.error || 'Ontology generation failed'
@@ -304,10 +329,17 @@ const startBuildGraph = async () => {
   }
 }
 
-const startGraphPolling = () => {
-  addLog('Started polling for graph data...')
+const maybeRefreshGraph = (force = false) => {
+  const now = Date.now()
+  if (!force && now - lastGraphRefreshAt < GRAPH_REFRESH_MIN_MS) return
+  lastGraphRefreshAt = now
   fetchGraphData()
-  graphPollTimer = setInterval(fetchGraphData, 10000)
+}
+
+const startGraphPolling = () => {
+  // 不再固定间隔轮询：首拉一次，后续由 task SSE 事件节流触发
+  addLog('Started graph refresh (SSE-driven)...')
+  maybeRefreshGraph(true)
 }
 
 const fetchGraphData = async () => {
@@ -339,8 +371,61 @@ const fetchGraphData = async () => {
 
 const startPollingTask = (taskId) => {
   stopPolling()
-  pollTimer = setInterval(() => pollTaskStatus(taskId), 2000)
-  pollTaskStatus(taskId)
+  // 无真实 task_id：降级轮询本体状态
+  if (!taskId || !String(taskId).startsWith('task_')) {
+    pollTimer = setInterval(() => pollTaskStatus(null), 2000)
+    pollTaskStatus(null)
+    return
+  }
+
+  let settled = false
+  const applyTask = async (task) => {
+    if (!task || settled) return
+    if (task.message && task.message !== buildProgress.value?.message) {
+      addLog(task.message)
+    }
+    buildProgress.value = { progress: task.progress || 0, message: task.message }
+    maybeRefreshGraph()
+
+    if (['completed', 'success', 'ready'].includes(task.status)) {
+      settled = true
+      addLog('Graph build task completed.')
+      stopPolling()
+      stopGraphPolling()
+      currentPhase.value = 2
+      await finalizeBuild()
+    } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
+      settled = true
+      stopPolling()
+      stopGraphPolling()
+      error.value = task.error || '建图失败'
+      addLog(`Graph build failed: ${error.value}`)
+      currentPhase.value = 1
+    }
+  }
+
+  taskSse = subscribeTask(taskId, {
+    onOpen: () => {
+      // 重连后拉一次快照补齐
+      getBuildStatus(currentProjectId.value, taskId)
+        .then((res) => applyTask(res.data || {}))
+        .catch(() => {})
+      maybeRefreshGraph(true)
+    },
+    onEvent: (data) => applyTask(data),
+    onDone: (data) => applyTask(data),
+    onError: (err) => {
+      if (settled) return
+      addLog(`SSE 建图进度异常，降级轮询: ${err?.message || err?.error || err}`)
+      // 降级：短轮询兜底 + 图谱低频刷新
+      if (!pollTimer) {
+        pollTimer = setInterval(() => pollTaskStatus(taskId), 3000)
+      }
+      if (!graphPollTimer) {
+        graphPollTimer = setInterval(() => maybeRefreshGraph(true), 10000)
+      }
+    },
+  })
 }
 
 const pollTaskStatus = async (taskId) => {
@@ -365,6 +450,7 @@ const pollTaskStatus = async (taskId) => {
       addLog(task.message)
     }
     buildProgress.value = { progress: task.progress || 0, message: task.message }
+    maybeRefreshGraph()
 
     if (['completed', 'success', 'ready'].includes(task.status)) {
       addLog('Graph build task completed.')
@@ -438,6 +524,14 @@ const stopPolling = () => {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
+  }
+  if (taskSse) {
+    try {
+      taskSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    taskSse = null
   }
 }
 

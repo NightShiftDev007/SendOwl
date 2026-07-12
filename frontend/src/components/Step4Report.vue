@@ -376,18 +376,6 @@
       </div>
     </div>
 
-    <!-- Bottom Console Logs -->
-    <div class="console-logs">
-      <div class="log-header">
-        <span class="log-title">CONSOLE OUTPUT</span>
-        <span class="log-id">{{ reportId || 'NO_REPORT' }}</span>
-      </div>
-      <div class="log-content" ref="logContent">
-        <div class="log-line" v-for="(log, idx) in consoleLogs" :key="idx">
-          <span class="log-msg" :class="getLogLevelClass(log)">{{ log }}</span>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -395,9 +383,11 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportStatus } from '../api/report'
 import { getDecisionCompare } from '../api/decision'
 import CompareChapter from './CompareChapter.vue'
+import { touchWorkflowStep } from '../store/workflowContext'
+import { subscribeTask, subscribeReportLogs } from '../api/sse'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -413,6 +403,10 @@ const emit = defineEmits(['add-log', 'update-status'])
 // Navigation
 const goToInteraction = () => {
   if (props.reportId) {
+    touchWorkflowStep(5, {
+      reportId: props.reportId,
+      simulationId: props.simulationId || '',
+    })
     router.push({ name: 'Interaction', params: { reportId: props.reportId } })
   }
 }
@@ -432,7 +426,6 @@ const isComplete = ref(false)
 const startTime = ref(null)
 const leftPanel = ref(null)
 const rightPanel = ref(null)
-const logContent = ref(null)
 const showRawResult = reactive({})
 const comparePayload = ref(null)
 
@@ -1835,6 +1828,7 @@ const workflowSteps = computed(() => {
 
 // Methods
 const addLog = (msg) => {
+  console.log(`[SandOwl] ${msg}`)
   emit('add-log', msg)
 }
 
@@ -2016,73 +2010,198 @@ const getActionLabel = (action) => {
   return keys[action] ? t(keys[action]) : action
 }
 
-const getLogLevelClass = (log) => {
-  if (log.includes('ERROR') || log.includes('错误')) return 'error'
-  if (log.includes('WARNING') || log.includes('警告')) return 'warning'
-  // INFO 使用默认颜色，不标记为 success
-  return ''
-}
-
-// Polling
+// Polling / SSE
 let agentLogTimer = null
 let consoleLogTimer = null
+let reportSse = null
+let logsSse = null
+
+const stopReportSse = () => {
+  if (reportSse) {
+    try {
+      reportSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    reportSse = null
+  }
+}
+
+const stopLogsSse = () => {
+  if (logsSse) {
+    try {
+      logsSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    logsSse = null
+  }
+}
+
+const startReportTaskSse = () => {
+  stopReportSse()
+  const rid = props.reportId
+  if (!rid) return
+  let tid = null
+  try {
+    tid = sessionStorage.getItem(`adc_report_task_${rid}`)
+  } catch (_) {
+    tid = null
+  }
+  if (!tid || !String(tid).startsWith('task_')) return
+
+  reportSse = subscribeTask(tid, {
+    onOpen: () => {
+      getReportStatus(rid).catch(() => {})
+    },
+    onEvent: (data) => {
+      if (data?.message) addLog(data.message)
+      if (data?.progress != null) {
+        /* progress available via logs / UI sections */
+      }
+      if (data?.status === 'failed') {
+        emit('update-status', 'error')
+        addLog(`报告生成失败: ${data.error || 'unknown'}`)
+      }
+    },
+    onDone: (data) => {
+      if (data?.status === 'failed') {
+        emit('update-status', 'error')
+        return
+      }
+      isComplete.value = true
+      emit('update-status', 'completed')
+      addLog('报告生成任务完成')
+      try {
+        sessionStorage.removeItem(`adc_report_task_${rid}`)
+      } catch (_) {
+        /* ignore */
+      }
+    },
+    onError: (err) => {
+      console.warn('[SandOwl] report SSE error', err)
+    },
+  })
+}
+
+const applyAgentLogEntries = (newLogs = []) => {
+  if (!newLogs.length) return
+  newLogs.forEach((log) => {
+    agentLogs.value.push(log)
+
+    if (log.action === 'planning_complete' && log.details?.outline) {
+      reportOutline.value = log.details.outline
+    }
+
+    if (log.action === 'section_start') {
+      currentSectionIndex.value = log.section_index
+    }
+
+    if (log.action === 'section_complete') {
+      if (log.details?.content) {
+        generatedSections.value[log.section_index] = log.details.content
+        expandedContent.value.add(log.section_index - 1)
+        currentSectionIndex.value = null
+      }
+    }
+
+    if (log.action === 'report_complete') {
+      isComplete.value = true
+      currentSectionIndex.value = null
+      emit('update-status', 'completed')
+      stopPolling()
+    }
+
+    if (log.action === 'report_start') {
+      startTime.value = new Date(log.timestamp)
+    }
+  })
+
+  nextTick(() => {
+    if (rightPanel.value) {
+      if (isComplete.value) {
+        rightPanel.value.scrollTop = 0
+      } else {
+        rightPanel.value.scrollTop = rightPanel.value.scrollHeight
+      }
+    }
+  })
+}
+
+const applyConsoleLogEntries = (newLogs = []) => {
+  if (!newLogs.length) return
+  consoleLogs.value.push(...newLogs)
+  for (const line of newLogs) {
+    console.log(`[SandOwl report] ${line}`)
+  }
+}
+
+const applyLogsPayload = (data) => {
+  if (!data) return
+  const agentPart = data.agent || {}
+  const consolePart = data.console || {}
+  const agentNew = agentPart.logs || []
+  const consoleNew = consolePart.logs || []
+  if (agentNew.length) {
+    applyAgentLogEntries(agentNew)
+    if (agentPart.next_line != null) agentLogLine.value = agentPart.next_line
+    else agentLogLine.value = (agentPart.from_line || agentLogLine.value) + agentNew.length
+  }
+  if (consoleNew.length) {
+    applyConsoleLogEntries(consoleNew)
+    if (consolePart.next_line != null) consoleLogLine.value = consolePart.next_line
+    else consoleLogLine.value = (consolePart.from_line || consoleLogLine.value) + consoleNew.length
+  }
+}
+
+const startLogsSse = () => {
+  stopLogsSse()
+  if (agentLogTimer) {
+    clearInterval(agentLogTimer)
+    agentLogTimer = null
+  }
+  if (consoleLogTimer) {
+    clearInterval(consoleLogTimer)
+    consoleLogTimer = null
+  }
+  const rid = props.reportId
+  if (!rid) return
+
+  logsSse = subscribeReportLogs(
+    rid,
+    {
+      onEvent: (data) => applyLogsPayload(data),
+      onDone: (data) => {
+        applyLogsPayload(data)
+      },
+      onError: (err) => {
+        console.warn('[SandOwl] report logs SSE error, fallback poll', err)
+        stopLogsSse()
+        if (!agentLogTimer) {
+          fetchAgentLog()
+          agentLogTimer = setInterval(fetchAgentLog, 2000)
+        }
+        if (!consoleLogTimer) {
+          fetchConsoleLog()
+          consoleLogTimer = setInterval(fetchConsoleLog, 1500)
+        }
+      },
+    },
+    { agentFrom: agentLogLine.value, consoleFrom: consoleLogLine.value },
+  )
+}
 
 const fetchAgentLog = async () => {
   if (!props.reportId) return
-  
+
   try {
     const res = await getAgentLog(props.reportId, agentLogLine.value)
-    
+
     if (res.success && res.data) {
       const newLogs = res.data.logs || []
-      
       if (newLogs.length > 0) {
-        newLogs.forEach(log => {
-          agentLogs.value.push(log)
-          
-          if (log.action === 'planning_complete' && log.details?.outline) {
-            reportOutline.value = log.details.outline
-          }
-          
-          if (log.action === 'section_start') {
-            currentSectionIndex.value = log.section_index
-          }
-
-          // section_complete - 章节生成完成
-          if (log.action === 'section_complete') {
-            if (log.details?.content) {
-              generatedSections.value[log.section_index] = log.details.content
-              // 自动展开刚生成的章节
-              expandedContent.value.add(log.section_index - 1)
-              currentSectionIndex.value = null
-            }
-          }
-          
-          if (log.action === 'report_complete') {
-            isComplete.value = true
-            currentSectionIndex.value = null  // 确保清除 loading 状态
-            emit('update-status', 'completed')
-            stopPolling()
-            // 滚动逻辑统一在循环结束后的 nextTick 中处理
-          }
-          
-          if (log.action === 'report_start') {
-            startTime.value = new Date(log.timestamp)
-          }
-        })
-        
+        applyAgentLogEntries(newLogs)
         agentLogLine.value = res.data.from_line + newLogs.length
-        
-        nextTick(() => {
-          if (rightPanel.value) {
-            // 如果任务已完成，滚动到顶部；否则滚动到底部跟随最新日志
-            if (isComplete.value) {
-              rightPanel.value.scrollTop = 0
-            } else {
-              rightPanel.value.scrollTop = rightPanel.value.scrollHeight
-            }
-          }
-        })
       }
     }
   } catch (err) {
@@ -2137,22 +2256,16 @@ const extractFinalContent = (response) => {
 
 const fetchConsoleLog = async () => {
   if (!props.reportId) return
-  
+
   try {
     const res = await getConsoleLog(props.reportId, consoleLogLine.value)
-    
+
     if (res.success && res.data) {
       const newLogs = res.data.logs || []
-      
+
       if (newLogs.length > 0) {
-        consoleLogs.value.push(...newLogs)
+        applyConsoleLogEntries(newLogs)
         consoleLogLine.value = res.data.from_line + newLogs.length
-        
-        nextTick(() => {
-          if (logContent.value) {
-            logContent.value.scrollTop = logContent.value.scrollHeight
-          }
-        })
       }
     }
   } catch (err) {
@@ -2161,13 +2274,10 @@ const fetchConsoleLog = async () => {
 }
 
 const startPolling = () => {
-  if (agentLogTimer || consoleLogTimer) return
-  
-  fetchAgentLog()
-  fetchConsoleLog()
-  
-  agentLogTimer = setInterval(fetchAgentLog, 2000)
-  consoleLogTimer = setInterval(fetchConsoleLog, 1500)
+  if (logsSse || agentLogTimer || consoleLogTimer) return
+
+  startLogsSse()
+  startReportTaskSse()
 }
 
 const stopPolling = () => {
@@ -2179,6 +2289,8 @@ const stopPolling = () => {
     clearInterval(consoleLogTimer)
     consoleLogTimer = null
   }
+  stopLogsSse()
+  stopReportSse()
 }
 
 // Lifecycle
@@ -2207,6 +2319,7 @@ onUnmounted(() => {
 
 watch(() => props.reportId, (newId) => {
   if (newId) {
+    stopPolling()
     agentLogs.value = []
     consoleLogs.value = []
     agentLogLine.value = 0
@@ -5121,57 +5234,6 @@ watch(() => props.reportId, (newId) => {
   padding: 2px 6px;
   border-radius: 4px;
 }
-
-/* Console Logs - 与 Step3Simulation.vue 保持一致 */
-.console-logs {
-  background: #000;
-  color: #DDD;
-  padding: 16px;
-  font-family: var(--font-mono);
-  border-top: 1px solid #222;
-  flex-shrink: 0;
-}
-
-.log-header {
-  display: flex;
-  justify-content: space-between;
-  border-bottom: 1px solid #333;
-  padding-bottom: 8px;
-  margin-bottom: 8px;
-  font-size: 10px;
-  color: #666;
-}
-
-.log-title {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.log-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  height: 100px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.log-content::-webkit-scrollbar { width: 4px; }
-.log-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-
-.log-line {
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.log-msg {
-  color: #BBB;
-  word-break: break-all;
-}
-
-.log-msg.error { color: #EF5350; }
-.log-msg.warning { color: #FFA726; }
-.log-msg.success { color: #66BB6A; }
 </style>
 
 <style>

@@ -51,6 +51,20 @@ def list_decisions():
     return jsonify({"success": True, "data": registry.list_decisions()})
 
 
+@decision_bp.delete("/<decision_id>")
+def delete_decision(decision_id: str):
+    """移入回收站（软删除），不立即清磁盘。"""
+    registry.init_schema()
+    try:
+        ok = registry.trash_decision(decision_id)
+        if not ok:
+            return jsonify({"success": False, "error": f"决策不存在: {decision_id}"}), 404
+        return jsonify({"success": True, "data": {"id": decision_id, "trashed": True}})
+    except Exception as e:
+        logger.exception("trash decision failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @decision_bp.get("/<decision_id>")
 def get_decision(decision_id: str):
     registry.init_schema()
@@ -59,6 +73,41 @@ def get_decision(decision_id: str):
         return jsonify({"success": True, "data": data})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 404
+
+
+@decision_bp.post("/<decision_id>/ensure-sims")
+def ensure_decision_sims(decision_id: str):
+    """建图完成后为任务补建 sim 空壳（不跑 LLM prepare）。"""
+    registry.init_schema()
+    try:
+        data = ScenarioRunner().ensure_sims(decision_id)
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        logger.exception("ensure sims failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@decision_bp.post("/<decision_id>/scenarios")
+def replace_decision_scenarios(decision_id: str):
+    """原地替换方案与 runs，不新建 Decision、不进回收站。"""
+    registry.init_schema()
+    body = request.get_json(silent=True) or {}
+    try:
+        data = ScenarioRunner().replace_scenarios(
+            decision_id=decision_id,
+            scenarios=body.get("scenarios") or [],
+            sample_count=int(
+                body.get("sample_count") if body.get("sample_count") is not None else 1
+            ),
+            max_rounds=int(body.get("max_rounds") or 10),
+            title=body.get("title"),
+        )
+        return jsonify({"success": True, "data": data})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+    except Exception as e:
+        logger.exception("replace scenarios failed")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @decision_bp.post("/<decision_id>/prepare")

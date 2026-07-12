@@ -24,6 +24,20 @@ def list_ontologies():
     return jsonify({"success": True, "data": registry.list_ontologies()})
 
 
+@ontology_bp.delete("/<ontology_id>")
+def delete_ontology(ontology_id: str):
+    """移入回收站（软删除，级联其下决策），不立即清磁盘。"""
+    registry.init_schema()
+    try:
+        ok = registry.trash_ontology(ontology_id)
+        if not ok:
+            return jsonify({"success": False, "error": f"本体不存在: {ontology_id}"}), 404
+        return jsonify({"success": True, "data": {"id": ontology_id, "trashed": True}})
+    except Exception as e:
+        logger.exception("trash ontology failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @ontology_bp.post("/create")
 def create_ontology():
     registry.init_schema()
@@ -38,10 +52,9 @@ def create_ontology():
         "simulation_requirement"
     ) or (request.json or {}).get("simulation_requirement", "")
     use_llm = request.form.get("use_llm_ontology", "true")
-    if isinstance(use_llm, str):
-        use_llm_ontology = use_llm.lower() in ("1", "true", "yes")
-    else:
-        use_llm_ontology = bool(use_llm)
+    # 兼容旧参数；SCHEMA 始终 LLM，忽略关闭开关
+    _ = use_llm
+    use_llm_ontology = True
 
     files = request.files.getlist("files") if request.files else []
     try:

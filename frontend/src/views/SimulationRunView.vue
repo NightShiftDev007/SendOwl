@@ -15,10 +15,11 @@
         </div>
       </template>
       <template #right>
-        <div class="workflow-step">
-          <span class="step-num">Step 3/5</span>
-          <span class="step-name">{{ $tm('main.stepNames')[2] }}</span>
-        </div>
+        <StepNav
+          :current-step="3"
+          :project-id="projectData?.project_id || ''"
+          :simulation-id="currentSimulationId"
+        />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -66,8 +67,10 @@ import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
+import StepNav from '../components/StepNav.vue'
 import { getProject, getOntologyGraphLive } from '../api/graph'
 import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus } from '../api/simulation'
+import { subscribeDecision } from '../api/sse'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -122,6 +125,7 @@ const isSimulating = computed(() => currentStatus.value === 'processing')
 // --- Helpers ---
 const addLog = (msg) => {
   const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + new Date().getMilliseconds().toString().padStart(3, '0')
+  console.log(`[SandOwl ${time}] ${msg}`)
   systemLogs.value.push({ time, msg })
   if (systemLogs.value.length > 200) {
     systemLogs.value.shift()
@@ -260,20 +264,65 @@ const refreshGraph = () => {
   }
 }
 
-// --- Auto Refresh Logic ---
+// --- Auto Refresh Logic（decision SSE 事件驱动，失败降级定时器）---
 let graphRefreshTimer = null
+let decisionGraphSse = null
+let lastGraphRefreshAt = 0
+const GRAPH_REFRESH_MIN_MS = 15000
+
+const maybeRefreshGraph = (force = false) => {
+  const now = Date.now()
+  if (!force && now - lastGraphRefreshAt < GRAPH_REFRESH_MIN_MS) return
+  lastGraphRefreshAt = now
+  refreshGraph()
+}
 
 const startGraphRefresh = () => {
-  if (graphRefreshTimer) return
+  if (decisionGraphSse || graphRefreshTimer) return
   addLog(t('log.graphRealtimeRefreshStart'))
-  // 立即刷新一次，然后每30秒刷新
-  graphRefreshTimer = setInterval(refreshGraph, 30000)
+  maybeRefreshGraph(true)
+
+  const id = currentSimulationId.value
+  if (!id) {
+    graphRefreshTimer = setInterval(() => maybeRefreshGraph(true), 30000)
+    return
+  }
+
+  decisionGraphSse = subscribeDecision(id, {
+    onEvent: () => maybeRefreshGraph(),
+    onDone: () => {
+      maybeRefreshGraph(true)
+      stopGraphRefresh()
+    },
+    onError: (err) => {
+      console.warn('[SandOwl] decision graph SSE error, fallback timer', err)
+      if (decisionGraphSse) {
+        try {
+          decisionGraphSse.close()
+        } catch (_) {
+          /* ignore */
+        }
+        decisionGraphSse = null
+      }
+      if (!graphRefreshTimer) {
+        graphRefreshTimer = setInterval(() => maybeRefreshGraph(true), 30000)
+      }
+    },
+  })
 }
 
 const stopGraphRefresh = () => {
   if (graphRefreshTimer) {
     clearInterval(graphRefreshTimer)
     graphRefreshTimer = null
+  }
+  if (decisionGraphSse) {
+    try {
+      decisionGraphSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    decisionGraphSse = null
     addLog(t('log.graphRealtimeRefreshStop'))
   }
 }
