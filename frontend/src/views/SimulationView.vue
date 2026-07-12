@@ -17,8 +17,7 @@
       <template #right>
         <StepNav
           :current-step="2"
-          :project-id="projectData?.project_id || ''"
-          :simulation-id="currentSimulationId"
+          :decision-id="currentDecisionId"
         />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -44,7 +43,8 @@
       <!-- Right Panel: Step2 环境搭建 -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step2EnvSetup
-          :simulationId="currentSimulationId"
+          :decisionId="currentDecisionId"
+          :simulationId="resolvedSimulationId"
           :projectData="projectData"
           :graphData="graphData"
           :systemLogs="systemLogs"
@@ -59,15 +59,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
 import StepNav from '../components/StepNav.vue'
-import { getProject, getOntologyGraphLive } from '../api/graph'
-import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv } from '../api/simulation'
+import { getProject, getOntologyGraph } from '../api/graph'
+import { getSimulation, stopSimulation, getEnvStatus, closeSimulationEnv, resolveSimContext } from '../api/simulation'
 import { useI18n } from 'vue-i18n'
+import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -75,14 +77,15 @@ const router = useRouter()
 
 // Props
 const props = defineProps({
-  simulationId: String
+  decisionId: String,
 })
 
 // Layout State
 const viewMode = ref('split')
 
-// Data State
-const currentSimulationId = ref(route.params.simulationId)
+// Data State：路由主 ID 为 decisionId；simulationId 为真实 sim_*
+const currentDecisionId = ref(props.decisionId || route.params.decisionId)
+const resolvedSimulationId = ref('')
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
@@ -137,9 +140,8 @@ const toggleMaximize = (target) => {
 }
 
 const handleGoBack = () => {
-  // 返回到 process 页面
-  if (projectData.value?.project_id) {
-    router.push({ name: 'Process', params: { projectId: projectData.value.project_id } })
+  if (currentDecisionId.value) {
+    router.push(taskRoute(1, currentDecisionId.value))
   } else {
     router.push('/')
   }
@@ -154,19 +156,11 @@ const handleNextStep = (params = {}) => {
   } else {
     addLog(t('log.useAutoRounds'))
   }
-  
-  // 构建路由参数
-  const routeParams = {
-    name: 'SimulationRun',
-    params: { simulationId: currentSimulationId.value }
-  }
-  
-  // 如果有自定义轮数，通过 query 参数传递
+
+  const routeParams = taskRoute(3, currentDecisionId.value)
   if (params.maxRounds) {
     routeParams.query = { maxRounds: params.maxRounds }
   }
-  
-  // 跳转到 Step 3 页面
   router.push(routeParams)
 }
 
@@ -177,11 +171,11 @@ const handleNextStep = (params = {}) => {
  * 当用户从 Step 3 返回到 Step 2 时，默认用户要退出模拟
  */
 const checkAndStopRunningSimulation = async () => {
-  if (!currentSimulationId.value) return
+  if (!currentDecisionId.value) return
   
   try {
     // 先检查模拟环境是否存活
-    const envStatusRes = await getEnvStatus({ simulation_id: currentSimulationId.value })
+    const envStatusRes = await getEnvStatus({ simulation_id: currentDecisionId.value })
     
     if (envStatusRes.success && envStatusRes.data?.env_alive) {
       addLog(t('log.detectedSimEnvRunning'))
@@ -189,7 +183,7 @@ const checkAndStopRunningSimulation = async () => {
       // 尝试优雅关闭模拟环境
       try {
         const closeRes = await closeSimulationEnv({ 
-          simulation_id: currentSimulationId.value,
+          simulation_id: currentDecisionId.value,
           timeout: 10  // 10秒超时
         })
         
@@ -207,7 +201,7 @@ const checkAndStopRunningSimulation = async () => {
       }
     } else {
       // 环境未运行，但可能进程还在，检查模拟状态
-      const simRes = await getSimulation(currentSimulationId.value)
+      const simRes = await getSimulation(currentDecisionId.value)
       if (simRes.success && simRes.data?.status === 'running') {
         addLog(t('log.detectedSimRunning'))
         await forceStopSimulation()
@@ -224,7 +218,7 @@ const checkAndStopRunningSimulation = async () => {
  */
 const forceStopSimulation = async () => {
   try {
-    const stopRes = await stopSimulation({ simulation_id: currentSimulationId.value })
+    const stopRes = await stopSimulation({ simulation_id: currentDecisionId.value })
     if (stopRes.success) {
       addLog(t('log.simForceStopSuccess'))
     } else {
@@ -237,16 +231,23 @@ const forceStopSimulation = async () => {
 
 const loadSimulationData = async () => {
   try {
-    addLog(t('log.loadingSimData', { id: currentSimulationId.value }))
+    addLog(t('log.loadingSimData', { id: currentDecisionId.value }))
 
-    // 获取 simulation 信息
-    const simRes = await getSimulation(currentSimulationId.value)
+    const ctx = await resolveSimContext(currentDecisionId.value)
+    if (ctx?.simId) resolvedSimulationId.value = ctx.simId
+    touchWorkflowStep(2, {
+      decisionId: currentDecisionId.value,
+      simulationId: resolvedSimulationId.value || undefined,
+      ontologyId: ctx?.detail?.ontology_id,
+    })
+
+    // 获取 simulation / decision 信息
+    const simRes = await getSimulation(currentDecisionId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
-
-      // 获取 project 信息
-      if (simData.project_id) {
-        const projRes = await getProject(simData.project_id)
+      const oid = simData.project_id || simData.ontology_id
+      if (oid) {
+        const projRes = await getProject(oid)
         if (projRes.success && projRes.data) {
           projectData.value = { ...projRes.data, project_id: projRes.data.id || projRes.data.project_id, ontology: projRes.data.ontology || projRes.data.schema, schema: projRes.data.schema || projRes.data.ontology }
           addLog(t('log.projectLoadSuccess', { id: projRes.data.project_id }))
@@ -268,7 +269,7 @@ const loadGraph = async (_graphId) => {
   if (!ontologyId) return
   graphLoading.value = true
   try {
-    const res = await getOntologyGraphLive(ontologyId)
+    const res = await getOntologyGraph(ontologyId)
     if (res.success) {
       graphData.value = res.data
       addLog(t('log.graphDataLoadSuccess'))
@@ -297,6 +298,19 @@ onMounted(async () => {
   // 加载模拟数据
   loadSimulationData()
 })
+
+watch(
+  () => route.params.decisionId,
+  async (newId, oldId) => {
+    if (!newId || newId === oldId || newId === currentDecisionId.value) return
+    currentDecisionId.value = newId
+    resolvedSimulationId.value = ''
+    projectData.value = null
+    graphData.value = null
+    await checkAndStopRunningSimulation()
+    await loadSimulationData()
+  },
+)
 </script>
 
 <style scoped>

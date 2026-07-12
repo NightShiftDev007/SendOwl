@@ -17,15 +17,15 @@
           确认后在同一任务上应用方案并开始环境准备；N&gt;1 时若无 Baseline，将自动追加「Baseline·不干预」作为对照
         </p>
       </div>
-      <!-- Step 01: 模拟实例 -->
-      <div class="step-card" :class="{ 'active': phase === 0, 'completed': phase > 0 }">
+      <!-- Step 01: 模拟实例（ADC：任务在 Step1 已创建，进入本页即视为完成） -->
+      <div class="step-card" :class="{ 'active': phase === 0 && !hasInstance, 'completed': hasInstance || phase > 0 }">
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">01</span>
             <span class="step-title">{{ $t('step2.simInstanceInit') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="phase > 0" class="badge success">{{ $t('common.completed') }}</span>
+            <span v-if="hasInstance || phase > 0" class="badge success">{{ $t('common.completed') }}</span>
             <span v-else class="badge processing">{{ $t('step2.initializing') }}</span>
           </div>
         </div>
@@ -36,18 +36,22 @@
             {{ $t('step2.simInstanceDesc') }}
           </p>
 
-          <div v-if="simulationId" class="info-card">
+          <div v-if="hasInstance" class="info-card">
             <div class="info-row">
               <span class="info-label">Project ID</span>
-              <span class="info-value mono">{{ projectData?.project_id }}</span>
+              <span class="info-value mono">{{ projectData?.project_id || '—' }}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Graph ID</span>
-              <span class="info-value mono">{{ projectData?.graph_id }}</span>
+              <span class="info-value mono">{{ projectData?.graph_id || '—' }}</span>
             </div>
             <div class="info-row">
+              <span class="info-label">Decision ID</span>
+              <span class="info-value mono">{{ workflowId }}</span>
+            </div>
+            <div class="info-row" v-if="resolvedSimDisplay">
               <span class="info-label">Simulation ID</span>
-              <span class="info-value mono">{{ simulationId }}</span>
+              <span class="info-value mono">{{ resolvedSimDisplay }}</span>
             </div>
             <div class="info-row">
               <span class="info-label">Task ID</span>
@@ -684,10 +688,24 @@ import ScenarioEditor from './ScenarioEditor.vue'
 const { t } = useI18n()
 
 const props = defineProps({
-  simulationId: String,  // 从父组件传入
+  decisionId: String, // 路由主 ID：dec_*
+  simulationId: String, // 真实 sim_*（可选）；兼容旧调用时也可能是 dec_*
   projectData: Object,
   graphData: Object,
-  systemLogs: Array
+  systemLogs: { type: Array, default: () => [] },
+})
+
+/** 业务任务 ID：优先 decisionId */
+const workflowId = computed(() => props.decisionId || props.simulationId)
+
+/** 任务已在 Step1 创建；进入本页即视为「模拟实例」完成 */
+const hasInstance = computed(() => Boolean(workflowId.value))
+
+/** 真实 sim_*（若父组件已解析） */
+const resolvedSimDisplay = computed(() => {
+  const sid = props.simulationId
+  if (sid && String(sid).startsWith('sim_')) return sid
+  return ''
 })
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
@@ -834,7 +852,7 @@ function canRetryStage(stage) {
 }
 
 async function retryStage(stage) {
-  if (!props.simulationId || retryingStage.value) return
+  if (!workflowId.value || retryingStage.value) return
   retryingStage.value = stage
   lastStageError.value = ''
   if (stage === 'profiles') {
@@ -851,7 +869,7 @@ async function retryStage(stage) {
   emit('update-status', 'processing')
   try {
     const res = await prepareSimulation({
-      simulation_id: props.simulationId,
+      simulation_id: workflowId.value,
       use_llm_for_profiles: true,
       parallel_profile_count: 5,
       force_regenerate: true,
@@ -996,7 +1014,7 @@ const selectProfile = (profile) => {
 
 // 自动开始准备模拟
 const startPrepareSimulation = async () => {
-  if (!props.simulationId) {
+  if (!workflowId.value) {
     addLog(t('log.errorMissingSimId'))
     emit('update-status', 'error')
     return
@@ -1009,13 +1027,13 @@ const startPrepareSimulation = async () => {
   
   // 标记第一步完成，开始第二步
   phase.value = 1
-  addLog(t('log.simInstanceCreated', { id: props.simulationId }))
+  addLog(t('log.simInstanceCreated', { id: workflowId.value }))
   addLog(t('log.preparingSimEnv'))
   emit('update-status', 'processing')
 
   // 先探测磁盘是否已有完整配置，避免 N>1 prepareDecision 反复冲掉 LLM 结果
   try {
-    const peek = await getSimulationConfigRealtime(props.simulationId)
+    const peek = await getSimulationConfigRealtime(workflowId.value)
     if (peek.success && configLooksReady(peek.data)) {
       addLog(t('log.detectedExistingPrep'))
       await loadPreparedData()
@@ -1028,7 +1046,7 @@ const startPrepareSimulation = async () => {
   // 以服务端决策为准，不要把本地未应用的方案数传进去误判 N>1
   try {
     const res = await prepareSimulation({
-      simulation_id: props.simulationId,
+      simulation_id: workflowId.value,
       use_llm_for_profiles: true,
       parallel_profile_count: 5,
     })
@@ -1081,7 +1099,7 @@ const applyScenariosAndPrepare = async () => {
   if (applyingScenarios.value) return
   applyingScenarios.value = true
   try {
-    const decisionId = props.simulationId
+    const decisionId = workflowId.value
     if (!decisionId) throw new Error('缺少 decision_id')
 
     let toApply = [...scenarios.value]
@@ -1214,7 +1232,7 @@ const startPolling = () => {
 
   prepareSse = subscribeTask(tid, {
     onOpen: () => {
-      getPrepareStatus({ task_id: tid, simulation_id: props.simulationId })
+      getPrepareStatus({ task_id: tid, simulation_id: workflowId.value })
         .then((res) => {
           if (res.success) applyPrepare(res.data)
         })
@@ -1259,11 +1277,11 @@ const stopPreviewSse = () => {
 }
 
 const startPreviewSse = () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
   // 已有 SSE 或已降级定时器时不重复开
   if (previewSse || profilesTimer || configTimer) return
 
-  previewSse = subscribePreparePreview(props.simulationId, {
+  previewSse = subscribePreparePreview(workflowId.value, {
     onEvent: (data) => {
       const profilesData = data?.profiles
       const configData = data?.config
@@ -1305,12 +1323,12 @@ const stopProfilesPolling = () => {
 }
 
 const pollPrepareStatus = async () => {
-  if (!taskId.value && !props.simulationId) return
+  if (!taskId.value && !workflowId.value) return
   
   try {
     const res = await getPrepareStatus({
       task_id: taskId.value,
-      simulation_id: props.simulationId
+      simulation_id: workflowId.value
     })
     
     if (res.success && res.data) {
@@ -1431,10 +1449,10 @@ const applyProfilesSnapshot = (data) => {
 }
 
 const fetchProfilesRealtime = async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
 
   try {
-    const res = await getSimulationProfilesRealtime(props.simulationId, 'reddit')
+    const res = await getSimulationProfilesRealtime(workflowId.value, 'reddit')
 
     if (res.success && res.data) {
       applyProfilesSnapshot(res.data)
@@ -1547,10 +1565,10 @@ const applyConfigSnapshot = (data) => {
 }
 
 const fetchConfigRealtime = async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
 
   try {
-    const res = await getSimulationConfigRealtime(props.simulationId)
+    const res = await getSimulationConfigRealtime(workflowId.value)
 
     if (res.success && res.data) {
       applyConfigSnapshot(res.data)
@@ -1570,7 +1588,7 @@ const loadPreparedData = async () => {
 
   // 获取配置（使用实时接口）
   try {
-    const res = await getSimulationConfigRealtime(props.simulationId)
+    const res = await getSimulationConfigRealtime(workflowId.value)
     if (res.success && res.data) {
       if (configLooksReady(res.data) || (res.data.config_generated && res.data.config)) {
         simulationConfig.value = res.data.config
@@ -1613,13 +1631,14 @@ const loadPreparedData = async () => {
 }
 
 onMounted(async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
   addLog(t('log.step2Init'))
+  addLog(t('log.simInstanceCreated', { id: workflowId.value }))
   addLog('请确认方案后点击「确认方案并准备环境」；历史回放若已准备完成将自动续跑')
 
   // 回填已有方案到编辑器
   try {
-    const detail = await getDecision(props.simulationId).catch(() => null)
+    const detail = await getDecision(workflowId.value).catch(() => null)
     const payload = detail?.data || {}
     const existingScenarios = payload.scenarios || []
     if (existingScenarios.length > 0) {
@@ -1645,7 +1664,7 @@ onMounted(async () => {
       await startPrepareSimulation()
       return
     }
-    const peek = await getSimulationConfigRealtime(props.simulationId).catch(() => null)
+    const peek = await getSimulationConfigRealtime(workflowId.value).catch(() => null)
     if (peek?.success && configLooksReady(peek.data)) {
       addLog(t('log.detectedExistingPrep'))
       await startPrepareSimulation()

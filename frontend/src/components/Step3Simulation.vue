@@ -310,11 +310,13 @@ import { generateReport } from '../api/report'
 import { subscribeDecision, subscribeSimulationActions } from '../api/sse'
 import RunMatrixPanel from './RunMatrixPanel.vue'
 import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
 
 const { t } = useI18n()
 
 const props = defineProps({
-  simulationId: String,
+  decisionId: String,
+  simulationId: String, // 真实 sim_*（可选）
   maxRounds: Number, // 从Step2传入的最大轮数
   minutesPerRound: {
     type: Number,
@@ -324,6 +326,9 @@ const props = defineProps({
   graphData: Object,
   systemLogs: Array
 })
+
+/** 业务任务 ID：优先 decisionId */
+const workflowId = computed(() => props.decisionId || props.simulationId)
 
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
 
@@ -404,7 +409,7 @@ const resetAllState = () => {
 
 // 启动模拟
 const doStartSimulation = async () => {
-  if (!props.simulationId) {
+  if (!workflowId.value) {
     addLog(t('log.errorMissingSimId'))
     return
   }
@@ -419,7 +424,7 @@ const doStartSimulation = async () => {
   
   try {
     const params = {
-      simulation_id: props.simulationId,
+      simulation_id: workflowId.value,
       platform: 'parallel',
       force: true,  // 强制重新开始
       enable_graph_memory_update: true  // 开启动态图谱更新
@@ -462,13 +467,13 @@ const doStartSimulation = async () => {
 
 // 停止模拟
 const handleStopSimulation = async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
   
   isStopping.value = true
   addLog(t('log.stoppingSim'))
   
   try {
-    const res = await stopSimulation({ simulation_id: props.simulationId })
+    const res = await stopSimulation({ simulation_id: workflowId.value })
     
     if (res.success) {
       addLog(t('log.simStoppedSuccess'))
@@ -504,7 +509,7 @@ const startStatusPolling = () => {
     statusTimer = null
   }
 
-  const id = props.simulationId
+  const id = workflowId.value
   if (!id) return
 
   // 优先 SSE；失败再降级轮询
@@ -714,10 +719,10 @@ const applyRunStatus = (data) => {
 }
 
 const fetchRunStatus = async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
   
   try {
-    const res = await getRunStatus(props.simulationId)
+    const res = await getRunStatus(workflowId.value)
     
     if (res.success && res.data) {
       applyRunStatus(res.data)
@@ -752,10 +757,10 @@ const checkPlatformsCompleted = (data) => {
 }
 
 const fetchRunStatusDetail = async () => {
-  if (!props.simulationId) return
+  if (!workflowId.value) return
 
   try {
-    const res = await getRunStatusDetail(props.simulationId, {
+    const res = await getRunStatusDetail(workflowId.value, {
       simId: selectedSimId.value || undefined,
     })
 
@@ -820,7 +825,7 @@ const formatActionTime = (timestamp) => {
 }
 
 const handleNextStep = async () => {
-  if (!props.simulationId) {
+  if (!workflowId.value) {
     addLog(t('log.errorMissingSimId'))
     return
   }
@@ -835,7 +840,7 @@ const handleNextStep = async () => {
   
   try {
     const res = await generateReport({
-      simulation_id: props.simulationId,
+      simulation_id: workflowId.value,
       force_regenerate: true
     })
     
@@ -845,17 +850,21 @@ const handleNextStep = async () => {
       if (reportId && reportTaskId && String(reportTaskId).startsWith('task_')) {
         try {
           sessionStorage.setItem(`adc_report_task_${reportId}`, reportTaskId)
+          const decisionId = workflowId.value
+          if (decisionId && decisionId !== reportId) {
+            sessionStorage.setItem(`adc_report_task_${decisionId}`, reportTaskId)
+          }
         } catch (_) {
           /* ignore */
         }
       }
       addLog(t('log.reportGenTaskStarted', { reportId }))
-      touchWorkflowStep(4, {
-        reportId,
-        simulationId: props.simulationId || '',
-      })
-      // 跳转到报告页面
-      router.push({ name: 'Report', params: { reportId } })
+      const decisionId = workflowId.value
+      const patch = { decisionId }
+      if (String(reportId || '').startsWith('report_')) patch.reportId = reportId
+      touchWorkflowStep(4, patch)
+      // 跳转到报告页面：地址栏始终用 decisionId
+      router.push(taskRoute(4, decisionId))
     } else {
       addLog(t('log.reportGenFailed', { error: res.error || t('common.unknownError') }))
       isGeneratingReport.value = false
@@ -888,7 +897,7 @@ watch(
 
 onMounted(() => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
+  if (workflowId.value) {
     doStartSimulation()
   }
 })

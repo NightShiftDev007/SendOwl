@@ -387,14 +387,16 @@ import { getAgentLog, getConsoleLog, getReportStatus } from '../api/report'
 import { getDecisionCompare } from '../api/decision'
 import CompareChapter from './CompareChapter.vue'
 import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
 import { subscribeTask, subscribeReportLogs } from '../api/sse'
 
 const router = useRouter()
 const { t } = useI18n()
 
 const props = defineProps({
-  reportId: String,
-  simulationId: String,
+  decisionId: String,
+  reportId: String, // 真实 report_*；对比模式可为 dec_*
+  simulationId: String, // 真实 sim_*（可选）
   systemLogs: Array
 })
 
@@ -402,12 +404,19 @@ const emit = defineEmits(['add-log', 'update-status'])
 
 // Navigation
 const goToInteraction = () => {
-  if (props.reportId) {
-    touchWorkflowStep(5, {
-      reportId: props.reportId,
-      simulationId: props.simulationId || '',
-    })
-    router.push({ name: 'Interaction', params: { reportId: props.reportId } })
+  const decisionId = props.decisionId || (
+    String(props.reportId || '').startsWith('dec_') ? props.reportId : ''
+  )
+  if (decisionId) {
+    const patch = { decisionId }
+    if (props.reportId && String(props.reportId).startsWith('report_')) {
+      patch.reportId = props.reportId
+    }
+    if (props.simulationId && String(props.simulationId).startsWith('sim_')) {
+      patch.simulationId = props.simulationId
+    }
+    touchWorkflowStep(5, patch)
+    router.push(taskRoute(5, decisionId))
   }
 }
 
@@ -2041,10 +2050,13 @@ const stopLogsSse = () => {
 const startReportTaskSse = () => {
   stopReportSse()
   const rid = props.reportId
-  if (!rid) return
+  const decisionId = props.decisionId
+  if (!rid && !decisionId) return
   let tid = null
   try {
-    tid = sessionStorage.getItem(`adc_report_task_${rid}`)
+    tid =
+      (rid && sessionStorage.getItem(`adc_report_task_${rid}`)) ||
+      (decisionId && sessionStorage.getItem(`adc_report_task_${decisionId}`))
   } catch (_) {
     tid = null
   }
@@ -2052,7 +2064,7 @@ const startReportTaskSse = () => {
 
   reportSse = subscribeTask(tid, {
     onOpen: () => {
-      getReportStatus(rid).catch(() => {})
+      if (rid) getReportStatus(rid).catch(() => {})
     },
     onEvent: (data) => {
       if (data?.message) addLog(data.message)
@@ -2295,7 +2307,7 @@ const stopPolling = () => {
 
 // Lifecycle
 const loadCompareIfNeeded = async () => {
-  const id = props.simulationId || props.reportId
+  const id = props.decisionId || props.simulationId || props.reportId
   if (!id || !String(id).startsWith('dec_')) return
   try {
     const res = await getDecisionCompare(id, { report: true })
@@ -2306,8 +2318,8 @@ const loadCompareIfNeeded = async () => {
 }
 
 onMounted(() => {
-  if (props.reportId) {
-    addLog(`Report Agent initialized: ${props.reportId}`)
+  if (props.reportId || props.decisionId) {
+    addLog(`Report Agent initialized: ${props.reportId || props.decisionId}`)
     startPolling()
     loadCompareIfNeeded()
   }

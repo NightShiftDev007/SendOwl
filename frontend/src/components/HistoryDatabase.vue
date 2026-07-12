@@ -211,9 +211,10 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getSimulationHistory } from '../api/simulation'
+import { getSimulationHistory, createSimulation } from '../api/simulation'
 import { deleteDecision } from '../api/decision'
 import { patchWorkflowContext, touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute, resolveDecisionId } from '../utils/taskRoute'
 
 const emit = defineEmits(['trashed'])
 const props = defineProps({
@@ -431,55 +432,62 @@ const closeModal = () => {
 }
 
 // 本体工作台（Step1）
-const goToProject = () => {
-  const oid = selectedProject.value?.ontology_id || selectedProject.value?.project_id
-  if (oid) {
-    touchWorkflowStep(1, { projectId: oid })
-    router.push({ name: 'Process', params: { projectId: oid } })
+const goToProject = async () => {
+  const p = selectedProject.value
+  if (!p) return
+  let decisionId = p.decision_id || (String(p.simulation_id || '').startsWith('dec_') ? p.simulation_id : null)
+  const oid = p.ontology_id || p.project_id
+  if (!decisionId && oid) {
+    decisionId = await resolveDecisionId(oid)
+  }
+  if (!decisionId && oid) {
+    try {
+      const res = await createSimulation({ ontology_id: oid, project_id: oid })
+      decisionId = res?.data?.decision_id || res?.data?.simulation_id
+    } catch (e) {
+      console.error('创建/复用任务失败', e)
+    }
+  }
+  if (decisionId) {
+    touchWorkflowStep(1, { decisionId, ontologyId: oid || undefined })
+    router.push(taskRoute(1, decisionId))
     closeModal()
   }
 }
 
 // 进入五步推演 / 环境搭建
-const goToSimulation = () => {
+const goToSimulation = async () => {
   const p = selectedProject.value
   if (p?.kind === 'decision' && (p.decision_id || p.simulation_id)) {
-    const simId = p.decision_id || p.simulation_id
-    const reportId = p.report_id || simId
+    const decisionId = p.decision_id || p.simulation_id
     touchWorkflowStep(2, {
-      projectId: p.ontology_id || p.project_id || '',
-      simulationId: simId,
-      reportId,
+      decisionId,
+      ontologyId: p.ontology_id || p.project_id || '',
     })
     // 历史决策通常已有报告，允许顶栏跳到 Step4
-    if (reportId) patchWorkflowContext({ maxReached: Math.max(4, 2) })
-    router.push({
-      name: 'Simulation',
-      params: { simulationId: simId },
-    })
+    if (p.report_id || decisionId) patchWorkflowContext({ maxReached: Math.max(4, 2) })
+    router.push(taskRoute(2, decisionId))
     closeModal()
     return
   }
-  // 本体：进 Step1，由用户点「进入环境搭建」创建推演
-  const oid = p?.ontology_id || p?.project_id
-  if (oid) {
-    touchWorkflowStep(1, { projectId: oid })
-    router.push({ name: 'Process', params: { projectId: oid } })
-    closeModal()
-  }
+  // 本体：解析/创建决策后进 Step1
+  await goToProject()
 }
 
 // 报告（五步 Step4）
 const goToReport = () => {
   const p = selectedProject.value
-  const id = p?.decision_id || p?.report_id
-  if (id) {
-    touchWorkflowStep(4, {
-      projectId: p.ontology_id || p.project_id || '',
-      simulationId: p.decision_id || p.simulation_id || id,
-      reportId: id,
-    })
-    router.push({ name: 'Report', params: { reportId: id } })
+  const decisionId = p?.decision_id || (String(p?.report_id || '').startsWith('dec_') ? p.report_id : null) || p?.simulation_id
+  if (decisionId && String(decisionId).startsWith('dec_')) {
+    const patch = {
+      decisionId,
+      ontologyId: p.ontology_id || p.project_id || '',
+    }
+    if (p.report_id && String(p.report_id).startsWith('report_')) {
+      patch.reportId = p.report_id
+    }
+    touchWorkflowStep(4, patch)
+    router.push(taskRoute(4, decisionId))
     closeModal()
   }
 }

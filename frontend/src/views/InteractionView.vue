@@ -17,9 +17,7 @@
       <template #right>
         <StepNav
           :current-step="5"
-          :project-id="projectData?.project_id || ''"
-          :simulation-id="simulationId || ''"
-          :report-id="currentReportId"
+          :decision-id="currentDecisionId"
         />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -46,8 +44,9 @@
       <!-- Right Panel: Step5 深度互动 -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step5Interaction
-          :reportId="currentReportId"
-          :simulationId="simulationId"
+          :decisionId="currentDecisionId"
+          :reportId="resolvedReportId"
+          :simulationId="resolvedSimulationId"
           :systemLogs="systemLogs"
           @add-log="addLog"
           @update-status="updateStatus"
@@ -65,32 +64,30 @@ import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import StepNav from '../components/StepNav.vue'
-import { getProject, getOntologyGraphLive } from '../api/graph'
-import { getSimulation } from '../api/simulation'
-import { getReport } from '../api/report'
+import { getProject, getOntologyGraph } from '../api/graph'
+import { getSimulation, resolveSimContext } from '../api/simulation'
+import { getReport, resolveReportId } from '../api/report'
+import { touchWorkflowStep } from '../store/workflowContext'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
-// Props
 const props = defineProps({
-  reportId: String
+  decisionId: String,
 })
 
-// Layout State - 默认切换到工作台视角
 const viewMode = ref('workbench')
 
-// Data State
-const currentReportId = ref(route.params.reportId)
-const simulationId = ref(null)
+const currentDecisionId = ref(props.decisionId || route.params.decisionId)
+const resolvedReportId = ref('')
+const resolvedSimulationId = ref('')
 const projectData = ref(null)
 const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
-const currentStatus = ref('ready') // ready | processing | completed | error
+const currentStatus = ref('ready')
 
-// --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
   if (viewMode.value === 'workbench') return { width: '0%', opacity: 0, transform: 'translateX(-20px)' }
@@ -103,10 +100,7 @@ const rightPanelStyle = computed(() => {
   return { width: '50%', opacity: 1, transform: 'translateX(0)' }
 })
 
-// --- Status Computed ---
-const statusClass = computed(() => {
-  return currentStatus.value
-})
+const statusClass = computed(() => currentStatus.value)
 
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
@@ -115,7 +109,6 @@ const statusText = computed(() => {
   return 'Ready'
 })
 
-// --- Helpers ---
 const addLog = (msg) => {
   const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + new Date().getMilliseconds().toString().padStart(3, '0')
   console.log(`[SandOwl ${time}] ${msg}`)
@@ -129,7 +122,6 @@ const updateStatus = (status) => {
   currentStatus.value = status
 }
 
-// --- Layout Methods ---
 const toggleMaximize = (target) => {
   if (viewMode.value === target) {
     viewMode.value = 'split'
@@ -138,34 +130,56 @@ const toggleMaximize = (target) => {
   }
 }
 
-// --- Data Logic ---
 const loadReportData = async () => {
   try {
-    addLog(t('log.loadReportData', { id: currentReportId.value }))
+    const decisionId = currentDecisionId.value
+    addLog(t('log.loadReportData', { id: decisionId }))
 
-    // 获取 report 信息以获取 simulation_id
-    const reportRes = await getReport(currentReportId.value)
+    try {
+      const ctx = await resolveSimContext(decisionId)
+      if (ctx?.simId) resolvedSimulationId.value = ctx.simId
+    } catch (_) {
+      /* ignore */
+    }
+
+    let rid = ''
+    try {
+      rid = (await resolveReportId(decisionId)) || ''
+    } catch (_) {
+      rid = ''
+    }
+    resolvedReportId.value = rid || decisionId
+
+    const reportRes = await getReport(resolvedReportId.value)
     if (reportRes.success && reportRes.data) {
       const reportData = reportRes.data
-      simulationId.value = reportData.simulation_id
+      if (reportData.simulation_id && String(reportData.simulation_id).startsWith('sim_')) {
+        resolvedSimulationId.value = reportData.simulation_id
+      }
 
-      if (simulationId.value) {
-        // 获取 simulation 信息
-        const simRes = await getSimulation(simulationId.value)
-        if (simRes.success && simRes.data) {
-          const simData = simRes.data
+      touchWorkflowStep(5, {
+        decisionId,
+        simulationId: resolvedSimulationId.value || undefined,
+        reportId: rid && String(rid).startsWith('report_') ? rid : undefined,
+      })
 
-          // 获取 project 信息
-          if (simData.project_id) {
-            const projRes = await getProject(simData.project_id)
-            if (projRes.success && projRes.data) {
-              projectData.value = { ...projRes.data, project_id: projRes.data.id || projRes.data.project_id, ontology: projRes.data.ontology || projRes.data.schema, schema: projRes.data.schema || projRes.data.ontology }
-              addLog(t('log.projectLoadSuccess', { id: projRes.data.project_id }))
-
-              // 获取 graph 数据
-              if (projRes.data.graph_id) {
-                await loadGraph(projRes.data.graph_id)
-              }
+      const lookupId = resolvedSimulationId.value || decisionId
+      const simRes = await getSimulation(lookupId)
+      if (simRes.success && simRes.data) {
+        const simData = simRes.data
+        const oid = simData.project_id || simData.ontology_id
+        if (oid) {
+          const projRes = await getProject(oid)
+          if (projRes.success && projRes.data) {
+            projectData.value = {
+              ...projRes.data,
+              project_id: projRes.data.id || projRes.data.project_id,
+              ontology: projRes.data.ontology || projRes.data.schema,
+              schema: projRes.data.schema || projRes.data.ontology,
+            }
+            addLog(t('log.projectLoadSuccess', { id: projRes.data.project_id }))
+            if (projRes.data.graph_id) {
+              await loadGraph(projRes.data.graph_id)
             }
           }
         }
@@ -183,7 +197,7 @@ const loadGraph = async (_graphId) => {
   if (!ontologyId) return
   graphLoading.value = true
   try {
-    const res = await getOntologyGraphLive(ontologyId)
+    const res = await getOntologyGraph(ontologyId)
     if (res.success) {
       graphData.value = res.data
       addLog(t('log.graphDataLoadSuccess'))
@@ -203,13 +217,12 @@ const refreshGraph = () => {
   }
 }
 
-// Watch route params
-watch(() => route.params.reportId, (newId) => {
-  if (newId && newId !== currentReportId.value) {
-    currentReportId.value = newId
+watch(() => route.params.decisionId, (newId) => {
+  if (newId && newId !== currentDecisionId.value) {
+    currentDecisionId.value = newId
     loadReportData()
   }
-}, { immediate: true })
+})
 
 onMounted(() => {
   addLog(t('log.interactionViewInit'))

@@ -7,6 +7,7 @@
 - GET /api/report/<report_id>/logs/events → Step4 agent/console 日志增量
 
 事件为全量状态快照或增量；终态发 event: done 后关闭；心跳 : ping。
+- GET /api/ontology/<ontology_id>/graph/events → 建图期图谱推送
 """
 
 from __future__ import annotations
@@ -600,3 +601,124 @@ def report_logs_events(report_id: str):
             interval=WATCH_INTERVAL_SEC,
         )
     )
+
+
+@stream_bp.get("/ontology/<ontology_id>/graph/events")
+def ontology_graph_events(ontology_id: str):
+    """建图期图谱 SSE：对齐 MiroFish data 读图，指纹用 node/edge count。"""
+    from app.api.ontology import read_ontology_graph, resolve_ontology_graph_id
+    from app.models.task import TaskManager
+    from app.ontology import registry as ont_registry
+
+    def fetch():
+        data = read_ontology_graph(ontology_id)
+        if not data:
+            return {
+                "ontology_id": ontology_id,
+                "graph_id": None,
+                "nodes": [],
+                "edges": [],
+                "node_count": 0,
+                "edge_count": 0,
+                "_stable": True,
+            }
+        # 指纹只看规模，避免对全图 JSON 做 MD5
+        return {
+            "ontology_id": ontology_id,
+            "graph_id": data.get("graph_id"),
+            "nodes": data.get("nodes") or [],
+            "edges": data.get("edges") or [],
+            "node_count": int(data.get("node_count") or 0),
+            "edge_count": int(data.get("edge_count") or 0),
+            "source": data.get("source"),
+            "_fp": (
+                f"{data.get('graph_id') or ''}:"
+                f"{int(data.get('node_count') or 0)}:"
+                f"{int(data.get('edge_count') or 0)}"
+            ),
+        }
+
+    def done(snap: Any) -> bool:
+        try:
+            ont_registry.init_schema()
+            ont = ont_registry.get_ontology(ontology_id)
+            if not ont:
+                return False
+            status = str(ont.get("status") or "").lower()
+            if status in ("ready", "graph_completed", "failed", "error"):
+                return True
+            tid = ont.get("build_task_id") or ont.get("graph_build_task_id")
+            if tid:
+                task = TaskManager().get_task(tid)
+                if task and task.status in TERMINAL_STATUSES:
+                    return True
+            # 无进行中任务且已有图：视为可结束（避免永久挂起）
+            if resolve_ontology_graph_id(ontology_id) and status in (
+                "ready",
+                "graph_completed",
+            ):
+                return True
+        except Exception:
+            return False
+        return False
+
+    def generate():
+        """自定义 watch：用 _fp 字段做指纹，变化才推全量 nodes/edges。"""
+        last_fp: Optional[str] = None
+        last_heartbeat = time.time()
+        last_snap: Any = None
+        send_initial = True
+        try:
+            while True:
+                try:
+                    snap = fetch()
+                except Exception as e:
+                    yield _sse_format(
+                        "task_error",
+                        {"error": str(e), "status": "failed"},
+                    )
+                    yield _sse_format("done", {"status": "failed", "error": str(e)})
+                    return
+
+                fp = (
+                    snap.get("_fp")
+                    if isinstance(snap, dict) and snap.get("_fp") is not None
+                    else _fingerprint(
+                        {
+                            "graph_id": (snap or {}).get("graph_id"),
+                            "node_count": (snap or {}).get("node_count"),
+                            "edge_count": (snap or {}).get("edge_count"),
+                        }
+                        if isinstance(snap, dict)
+                        else snap
+                    )
+                )
+                # _stable 空快照：仅首包或指纹变化时推
+                if send_initial or fp != last_fp:
+                    if fp != last_fp or (send_initial and last_fp is None):
+                        last_fp = fp
+                        last_snap = snap
+                        out = dict(snap) if isinstance(snap, dict) else snap
+                        if isinstance(out, dict):
+                            out.pop("_fp", None)
+                            out.pop("_stable", None)
+                        yield _sse_format("graph", out)
+                        send_initial = False
+                        last_heartbeat = time.time()
+
+                if done(snap if snap is not None else last_snap):
+                    out = dict(last_snap) if isinstance(last_snap, dict) else (last_snap or {})
+                    if isinstance(out, dict):
+                        out.pop("_fp", None)
+                        out.pop("_stable", None)
+                    yield _sse_format("done", out)
+                    return
+
+                time.sleep(WATCH_INTERVAL_SEC)
+                if time.time() - last_heartbeat >= HEARTBEAT_SEC:
+                    yield ": ping\n\n"
+                    last_heartbeat = time.time()
+        except GeneratorExit:
+            pass
+
+    return _sse_response(generate())

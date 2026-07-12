@@ -136,6 +136,7 @@ import HistoryDatabase from '../components/HistoryDatabase.vue'
 import RecycleBin from '../components/RecycleBin.vue'
 import { setPendingUpload } from '../store/pendingUpload.js'
 import { health, listDecisions } from '../api/decision'
+import { taskRoute } from '../utils/taskRoute'
 
 const router = useRouter()
 
@@ -212,7 +213,8 @@ const removeFile = (index) => {
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
   setPendingUpload(files.value, formData.value.simulationRequirement)
-  router.push({ name: 'Process', params: { projectId: 'new' } })
+  // 瞬态入口：MainView 创建 ontology+Decision 后会 replace 到 /tasks/dec_xxx/graph
+  router.push(taskRoute(1, 'new'))
 }
 
 onMounted(async () => {

@@ -78,8 +78,14 @@ export async function resolveDecisionId(raw) {
   if (isOntologyId(id)) {
     try {
       const listed = await listDecisions()
-      const list = listed?.data || listed?.data?.decisions || []
-      const arr = Array.isArray(list) ? list : []
+      const raw = listed?.data
+      const arr = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.decisions)
+          ? raw.decisions
+          : Array.isArray(listed?.decisions)
+            ? listed.decisions
+            : []
       const found = arr.find((d) => d.ontology_id === id || d.project_id === id)
       return found?.id || null
     } catch {
@@ -90,7 +96,14 @@ export async function resolveDecisionId(raw) {
   if (isSimulationId(id)) {
     try {
       const listed = await listDecisions()
-      const arr = Array.isArray(listed?.data) ? listed.data : []
+      const raw = listed?.data
+      const arr = Array.isArray(raw)
+        ? raw
+        : Array.isArray(raw?.decisions)
+          ? raw.decisions
+          : Array.isArray(listed?.decisions)
+            ? listed.decisions
+            : []
       for (const d of arr) {
         if (!d?.id) continue
         const detail = await getDecision(d.id).catch(() => null)

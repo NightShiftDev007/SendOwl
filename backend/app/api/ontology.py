@@ -139,101 +139,93 @@ def versions(ontology_id: str):
     )
 
 
-@ontology_bp.get("/<ontology_id>/graph")
-def graph(ontology_id: str):
+def resolve_ontology_graph_id(ontology_id: str) -> str | None:
+    """解析可用 graph_id：ontology 字段 → 进行中的 build task.result。"""
     registry.init_schema()
+    ont = registry.get_ontology(ontology_id)
+    if not ont:
+        return None
+    graph_id = ont.get("graph_id")
+    if graph_id:
+        return graph_id
+    tid = ont.get("build_task_id") or ont.get("graph_build_task_id")
+    if not tid:
+        return None
+    try:
+        from app.models.task import TaskManager
+
+        task = TaskManager().get_task(tid)
+        if task and task.result:
+            graph_id = task.result.get("graph_id")
+            if graph_id and not ont.get("graph_id"):
+                try:
+                    registry.update_ontology(ontology_id, graph_id=graph_id)
+                except Exception:
+                    pass
+            return graph_id
+    except Exception:
+        pass
+    return None
+
+
+def read_ontology_graph(ontology_id: str) -> dict | None:
+    """读图谱数据（对齐 MiroFish /api/graph/data/{graph_id}）。
+
+    优先 Zep live；无 graph_id 时回退最新快照。都没有返回 None。
+    """
+    registry.init_schema()
+    graph_id = resolve_ontology_graph_id(ontology_id)
+    if graph_id:
+        try:
+            from app.config import Config
+            from app.ontology.graph_builder import GraphBuilderService
+
+            builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+            data = builder.get_graph_data(graph_id)
+            nodes = data.get("nodes") or []
+            edges = data.get("edges") or []
+            return {
+                "graph_id": graph_id,
+                "nodes": nodes,
+                "edges": edges,
+                "node_count": data.get("node_count") or len(nodes),
+                "edge_count": data.get("edge_count") or len(edges),
+                "source": "zep",
+            }
+        except Exception as e:
+            logger.warning(f"read zep graph failed for {ontology_id}: {e}")
+
     latest = registry.get_latest_version(ontology_id)
     if latest and latest.get("snapshot_path"):
         try:
             snap = load_snapshot(latest["snapshot_path"])
-            return jsonify(
-                {
-                    "success": True,
-                    "data": {
-                        "version": latest,
-                        "nodes": snap.get("nodes") or [],
-                        "edges": snap.get("edges") or [],
-                        "graph_id": snap.get("graph_id"),
-                    },
-                }
-            )
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-
-    # 无快照时回退 live（建图刚完成、快照尚未写出的竞态窗口）
-    ont = registry.get_ontology(ontology_id)
-    graph_id = (ont or {}).get("graph_id")
-    if not graph_id:
-        return jsonify({"success": False, "error": "无可用快照"}), 404
-    try:
-        from app.config import Config
-        from app.ontology.graph_builder import GraphBuilderService
-
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-        data = builder.get_graph_data(graph_id)
-        return jsonify(
-            {
-                "success": True,
-                "data": {
-                    "graph_id": graph_id,
-                    "nodes": data.get("nodes") or [],
-                    "edges": data.get("edges") or [],
-                    "node_count": data.get("node_count"),
-                    "edge_count": data.get("edge_count"),
-                    "live": True,
-                },
+            nodes = snap.get("nodes") or []
+            edges = snap.get("edges") or []
+            return {
+                "version": latest,
+                "graph_id": snap.get("graph_id") or latest.get("graph_id"),
+                "nodes": nodes,
+                "edges": edges,
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+                "source": "snapshot",
             }
-        )
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        except Exception as e:
+            logger.warning(f"read snapshot graph failed for {ontology_id}: {e}")
+    return None
 
 
-@ontology_bp.get("/<ontology_id>/graph/live")
-def graph_live(ontology_id: str):
-    """直读 Zep 当前图谱（建图过程中可实时刷图）。"""
+@ontology_bp.get("/<ontology_id>/graph")
+def graph(ontology_id: str):
+    """一次性拉图（有 graph_id 读 Zep；否则快照）。"""
     registry.init_schema()
     ont = registry.get_ontology(ontology_id)
     if not ont:
         return jsonify({"success": False, "error": "not found"}), 404
-    graph_id = ont.get("graph_id")
-    # 建图中途：本体尚未回写时，从进行中的 task.result 取 graph_id
-    if not graph_id:
-        tid = ont.get("build_task_id")
-        if tid:
-            from app.models.task import TaskManager
-
-            task = TaskManager().get_task(tid)
-            if task and task.result:
-                graph_id = task.result.get("graph_id")
-                if graph_id and not ont.get("graph_id"):
-                    try:
-                        registry.update_ontology(ontology_id, graph_id=graph_id)
-                    except Exception:
-                        pass
-    if not graph_id:
+    data = read_ontology_graph(ontology_id)
+    if not data:
         return jsonify({"success": False, "error": "图谱尚未创建"}), 404
-    try:
-        from app.config import Config
-        from app.ontology.graph_builder import GraphBuilderService
-
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-        data = builder.get_graph_data(graph_id)
-        return jsonify(
-            {
-                "success": True,
-                "data": {
-                    "graph_id": graph_id,
-                    "nodes": data.get("nodes") or [],
-                    "edges": data.get("edges") or [],
-                    "node_count": data.get("node_count"),
-                    "edge_count": data.get("edge_count"),
-                    "live": True,
-                },
-            }
-        )
-    except Exception as e:
-        logger.exception("live graph fetch failed")
-        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({"success": True, "data": data})
 
 
 @ontology_bp.put("/<ontology_id>/schema")

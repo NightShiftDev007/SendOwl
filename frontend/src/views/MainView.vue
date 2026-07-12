@@ -21,7 +21,7 @@
         </div>
       </template>
       <template #right>
-        <StepNav :current-step="1" :project-id="currentProjectId" />
+        <StepNav :current-step="1" :decision-id="currentDecisionId" />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
           <span class="dot"></span>
@@ -62,7 +62,7 @@
  * Step1 本体/建图工作台 —— 结构对齐 MiroFish MainView，
  * 数据层走 ontology API（project_id ≡ ontology_id）。
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import AppHeader from '../components/AppHeader.vue'
@@ -75,12 +75,18 @@ import {
   buildGraph,
   getBuildStatus,
   getOntologyGraph,
-  getOntologyGraphLive,
   snapshotOntology,
 } from '../api/graph'
 import { createSimulation } from '../api/simulation'
-import { subscribeTask } from '../api/sse'
+import { getDecision } from '../api/decision'
+import { subscribeTask, subscribeOntologyGraph } from '../api/sse'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
+import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
+
+const props = defineProps({
+  decisionId: String,
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -90,7 +96,10 @@ const viewMode = ref('split')
 const currentStep = ref(1)
 const stepNames = computed(() => tm('main.stepNames'))
 
-const currentProjectId = ref(route.params.projectId || route.params.ontologyId)
+/** 路由主 ID：dec_*（或瞬态 new） */
+const currentDecisionId = ref(props.decisionId || route.params.decisionId || 'new')
+/** 派生资源：真实 ontology */
+const ontologyId = ref('')
 const loading = ref(false)
 const graphLoading = ref(false)
 const error = ref('')
@@ -104,8 +113,7 @@ const systemLogs = ref([])
 let pollTimer = null
 let graphPollTimer = null
 let taskSse = null
-let lastGraphRefreshAt = 0
-const GRAPH_REFRESH_MIN_MS = 5000
+let graphSse = null
 
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
@@ -167,17 +175,54 @@ const toggleMaximize = (target) => {
 }
 
 const handleNextStep = () => {
-  /* Step1 通过 createSimulation 自行跳到 /simulation/:id */
+  /* Step1 通过 createSimulation 自行跳到 /tasks/:decisionId/environment */
 }
 
 const initProject = async () => {
   addLog('Project view initialized.')
   void t
   void stepNames
-  if (currentProjectId.value === 'new') {
+  const id = currentDecisionId.value
+  if (id === 'new') {
     await handleNewProject()
-  } else {
+    return
+  }
+  if (String(id).startsWith('dec_')) {
+    await loadFromDecision(id)
+    return
+  }
+  // 兼容：若误传入 ont_*，先解析/创建决策后再加载
+  ontologyId.value = id
+  await loadProject()
+}
+
+const loadFromDecision = async (decisionId) => {
+  try {
+    loading.value = true
+    addLog(`Loading task ${decisionId}...`)
+    const res = await getDecision(decisionId)
+    const payload = res?.data || res
+    // API 形如 { decision: { ontology_id }, scenarios, ... }
+    const decision = payload?.decision || payload
+    const oid =
+      decision?.ontology_id ||
+      decision?.project_id ||
+      payload?.ontology_id ||
+      payload?.project_id
+    if (!oid) {
+      error.value = '任务缺少 ontology_id'
+      addLog(`Error: decision ${decisionId} has no ontology_id`)
+      return
+    }
+    currentDecisionId.value = decisionId
+    ontologyId.value = oid
+    touchWorkflowStep(1, { decisionId, ontologyId: oid })
     await loadProject()
+  } catch (err) {
+    error.value = err.message
+    addLog(`Exception loading decision: ${err.message}`)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -205,13 +250,13 @@ const handleNewProject = async () => {
     if (res.success) {
       clearPendingUpload()
       const id = res.data.id || res.data.project_id
-      currentProjectId.value = id
+      ontologyId.value = id
       projectData.value = normalizeProject(res.data)
-      router.replace({ name: 'Process', params: { projectId: id } })
       ontologyProgress.value = null
       addLog(`Ontology generated successfully for project ${id}`)
 
-      // 点启动引擎即创建任务（Decision），失败不阻断建图；Step1 完成时可兜底复用/创建
+      // 点启动引擎即创建任务（Decision），地址栏改为 /tasks/dec_xxx/graph
+      let decId = null
       try {
         const taskRes = await createSimulation({
           ontology_id: id,
@@ -221,9 +266,12 @@ const handleNewProject = async () => {
             res.data?.name?.slice(0, 40) ||
             `任务 ${String(id).slice(0, 8)}`,
         })
-        const decId = taskRes?.data?.decision_id || taskRes?.data?.simulation_id
+        decId = taskRes?.data?.decision_id || taskRes?.data?.simulation_id
         if (decId) {
           addLog(`Task created: ${decId}`)
+          currentDecisionId.value = decId
+          touchWorkflowStep(1, { decisionId: decId, ontologyId: id })
+          router.replace(taskRoute(1, decId))
         } else {
           addLog('Task create returned without decision_id (will retry at Step1 exit)')
         }
@@ -247,8 +295,12 @@ const handleNewProject = async () => {
 const loadProject = async () => {
   try {
     loading.value = true
-    addLog(`Loading project ${currentProjectId.value}...`)
-    const res = await getProject(currentProjectId.value)
+    if (!ontologyId.value) {
+      error.value = '缺少 ontologyId'
+      return
+    }
+    addLog(`Loading ontology ${ontologyId.value}...`)
+    const res = await getProject(ontologyId.value)
     if (res.success) {
       projectData.value = normalizeProject(res.data)
       updatePhaseByStatus(res.data.status)
@@ -259,7 +311,7 @@ const loadProject = async () => {
         await startBuildGraph()
       } else if (['building', 'graph_building'].includes(st)) {
         currentPhase.value = 1
-        startGraphPolling()
+        startGraphSse()
         // 无 task_id 时仍轮询本体状态
         startPollingTask(res.data.graph_build_task_id || null)
       } else if (['ready', 'graph_completed'].includes(st) || res.data.graph_id) {
@@ -305,17 +357,17 @@ const startBuildGraph = async () => {
     addLog('Initiating graph build...')
 
     const res = await buildGraph({
-      project_id: currentProjectId.value,
+      project_id: ontologyId.value,
       use_existing_schema: true,
       async: true,
     })
     if (res.success) {
       addLog(`Graph build task started. Task ID: ${res.data?.task_id || 'sync'}`)
-      startGraphPolling()
+      startGraphSse()
       if (res.data?.task_id) {
         startPollingTask(res.data.task_id)
       } else {
-        stopGraphPolling()
+        stopGraphSse()
         currentPhase.value = 2
         await finalizeBuild()
       }
@@ -329,40 +381,51 @@ const startBuildGraph = async () => {
   }
 }
 
-const maybeRefreshGraph = (force = false) => {
-  const now = Date.now()
-  if (!force && now - lastGraphRefreshAt < GRAPH_REFRESH_MIN_MS) return
-  lastGraphRefreshAt = now
-  fetchGraphData()
+const applyGraphPayload = (data) => {
+  if (!data) return
+  const nodes = data.nodes || []
+  const edges = data.edges || []
+  if (!nodes.length && !edges.length && !data.graph_id) return
+  graphData.value = data
+  const nodeCount = data.node_count || nodes.length || 0
+  const edgeCount = data.edge_count || edges.length || 0
+  addLog(`Graph data refreshed. Nodes: ${nodeCount}, Edges: ${edgeCount}`)
 }
 
-const startGraphPolling = () => {
-  // 不再固定间隔轮询：首拉一次，后续由 task SSE 事件节流触发
-  addLog('Started graph refresh (SSE-driven)...')
-  maybeRefreshGraph(true)
+const startGraphSse = () => {
+  stopGraphSse()
+  if (!ontologyId.value) return
+  addLog('Started graph SSE...')
+  graphSse = subscribeOntologyGraph(ontologyId.value, {
+    onEvent: (data) => applyGraphPayload(data),
+    onDone: (data) => {
+      applyGraphPayload(data)
+      graphSse = null
+    },
+    onError: (err) => {
+      console.warn('[SandOwl] graph SSE error, fallback GET /graph', err)
+      if (graphSse) {
+        try {
+          graphSse.close()
+        } catch (_) {
+          /* ignore */
+        }
+        graphSse = null
+      }
+      // 低频降级：GET /graph，不再打 live
+      if (!graphPollTimer) {
+        fetchGraphData()
+        graphPollTimer = setInterval(fetchGraphData, 15000)
+      }
+    },
+  })
 }
 
 const fetchGraphData = async () => {
   try {
-    // 建图中优先 live；尚无 graph_id/快照时 404 属正常，静默忽略
-    let gRes
-    try {
-      gRes = await getOntologyGraphLive(currentProjectId.value)
-    } catch (_) {
-      gRes = null
-    }
-    if (!gRes?.success) {
-      try {
-        gRes = await getOntologyGraph(currentProjectId.value)
-      } catch (_) {
-        return
-      }
-    }
+    const gRes = await getOntologyGraph(ontologyId.value)
     if (gRes?.success && gRes.data) {
-      graphData.value = gRes.data
-      const nodeCount = gRes.data.node_count || gRes.data.nodes?.length || 0
-      const edgeCount = gRes.data.edge_count || gRes.data.edges?.length || 0
-      addLog(`Graph data refreshed. Nodes: ${nodeCount}, Edges: ${edgeCount}`)
+      applyGraphPayload(gRes.data)
     }
   } catch (err) {
     console.warn('Graph fetch error:', err)
@@ -393,19 +456,19 @@ const startPollingTask = (taskId) => {
       addLog(task.message)
     }
     buildProgress.value = { progress: task.progress || 0, message: task.message }
-    maybeRefreshGraph()
+    // 图谱更新由 /graph/events 负责，此处只更新进度文案
 
     if (['completed', 'success', 'ready'].includes(task.status)) {
       settled = true
       addLog('Graph build task completed.')
       stopPolling()
-      stopGraphPolling()
+      stopGraphSse()
       currentPhase.value = 2
       await finalizeBuild()
     } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
       settled = true
       stopPolling()
-      stopGraphPolling()
+      stopGraphSse()
       error.value = task.error || '建图失败'
       addLog(`Graph build failed: ${error.value}`)
       currentPhase.value = 1
@@ -415,22 +478,17 @@ const startPollingTask = (taskId) => {
   taskSse = subscribeTask(taskId, {
     onOpen: () => {
       // 重连后拉一次快照补齐
-      getBuildStatus(currentProjectId.value, taskId)
+      getBuildStatus(ontologyId.value, taskId)
         .then((res) => applyTask(res.data || {}))
         .catch(() => {})
-      maybeRefreshGraph(true)
     },
     onEvent: (data) => applyTask(data),
     onDone: (data) => applyTask(data),
     onError: (err) => {
       if (settled) return
       addLog(`SSE 建图进度异常，降级轮询: ${err?.message || err?.error || err}`)
-      // 降级：短轮询兜底 + 图谱低频刷新
       if (!pollTimer) {
         pollTimer = setInterval(() => pollTaskStatus(taskId), 3000)
-      }
-      if (!graphPollTimer) {
-        graphPollTimer = setInterval(() => maybeRefreshGraph(true), 10000)
       }
     },
   })
@@ -440,10 +498,10 @@ const pollTaskStatus = async (taskId) => {
   try {
     let task = {}
     if (taskId) {
-      const res = await getBuildStatus(currentProjectId.value, taskId)
+      const res = await getBuildStatus(ontologyId.value, taskId)
       task = res.data || {}
     } else {
-      const projRes = await getProject(currentProjectId.value)
+      const projRes = await getProject(ontologyId.value)
       const st = projRes.data?.status
       if (['ready', 'graph_completed'].includes(st)) {
         task = { status: 'completed', progress: 100, message: 'ready' }
@@ -458,17 +516,16 @@ const pollTaskStatus = async (taskId) => {
       addLog(task.message)
     }
     buildProgress.value = { progress: task.progress || 0, message: task.message }
-    maybeRefreshGraph()
 
     if (['completed', 'success', 'ready'].includes(task.status)) {
       addLog('Graph build task completed.')
       stopPolling()
-      stopGraphPolling()
+      stopGraphSse()
       currentPhase.value = 2
       await finalizeBuild()
     } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
       stopPolling()
-      stopGraphPolling()
+      stopGraphSse()
       error.value = task.error || '建图失败'
       addLog(`Graph build failed: ${error.value}`)
       currentPhase.value = 1
@@ -479,10 +536,11 @@ const pollTaskStatus = async (taskId) => {
 }
 
 async function finalizeBuild() {
-  // 先落快照，再读图；失败则用 live，并短重试避免竞态
+  stopGraphSse()
+  // 先落快照，再读图；失败则短重试避免竞态
   for (let i = 0; i < 5; i++) {
     try {
-      await snapshotOntology(currentProjectId.value)
+      await snapshotOntology(ontologyId.value)
       addLog('Snapshot exported.')
       break
     } catch (e) {
@@ -490,7 +548,7 @@ async function finalizeBuild() {
       else await new Promise((r) => setTimeout(r, 800))
     }
   }
-  const projRes = await getProject(currentProjectId.value)
+  const projRes = await getProject(ontologyId.value)
   if (projRes.success) {
     projectData.value = normalizeProject(projRes.data)
   }
@@ -499,17 +557,9 @@ async function finalizeBuild() {
 
 const loadGraph = async () => {
   graphLoading.value = true
-  addLog(`Loading graph data: ${currentProjectId.value}`)
+  addLog(`Loading graph data: ${ontologyId.value}`)
   try {
-    let res
-    try {
-      res = await getOntologyGraphLive(currentProjectId.value)
-    } catch (_) {
-      res = null
-    }
-    if (!res?.success) {
-      res = await getOntologyGraph(currentProjectId.value)
-    }
+    const res = await getOntologyGraph(ontologyId.value)
     if (res?.success) {
       graphData.value = res.data
       addLog('Graph data loaded successfully.')
@@ -543,16 +593,39 @@ const stopPolling = () => {
   }
 }
 
-const stopGraphPolling = () => {
+const stopGraphSse = () => {
   if (graphPollTimer) {
     clearInterval(graphPollTimer)
     graphPollTimer = null
   }
+  if (graphSse) {
+    try {
+      graphSse.close()
+    } catch (_) {
+      /* ignore */
+    }
+    graphSse = null
+  }
 }
+
+// 兼容旧名
+const stopGraphPolling = stopGraphSse
 
 onMounted(() => {
   initProject()
 })
+
+watch(
+  () => route.params.decisionId,
+  (newId, oldId) => {
+    if (!newId || newId === oldId || newId === currentDecisionId.value) return
+    currentDecisionId.value = newId
+    ontologyId.value = ''
+    projectData.value = null
+    graphData.value = null
+    initProject()
+  },
+)
 
 onUnmounted(() => {
   stopPolling()

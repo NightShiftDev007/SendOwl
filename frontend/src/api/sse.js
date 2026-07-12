@@ -2,6 +2,7 @@
  * SSE 订阅封装
  * - subscribeTask(taskId): /api/tasks/:id/events
  * - subscribeDecision(decisionId): /api/decision/:id/events
+ * - subscribeOntologyGraph(ontologyId): /api/ontology/:id/graph/events
  * - subscribeStream(url, handlers, eventNames): 通用流
  *
  * 重连靠 EventSource 自动重连；onOpen 时可再拉 status 快照补齐。
@@ -274,6 +275,13 @@ export function subscribeReportLogs(reportId, handlers = {}, opts = {}) {
   }
 }
 
+/** 建图期图谱推送 */
+export function subscribeOntologyGraph(ontologyId, handlers = {}) {
+  if (!ontologyId) throw new Error('缺少 ontology_id')
+  const url = buildUrl(`/api/ontology/${encodeURIComponent(ontologyId)}/graph/events`)
+  return subscribeStream(url, handlers, ['graph'])
+}
+
 export default {
   subscribeStream,
   subscribeTask,
@@ -281,4 +289,5 @@ export default {
   subscribePreparePreview,
   subscribeSimulationActions,
   subscribeReportLogs,
+  subscribeOntologyGraph,
 }

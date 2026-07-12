@@ -80,17 +80,12 @@ export function getOntologyGraph(ontologyId) {
   return service.get(`/api/ontology/${ontologyId}/graph`)
 }
 
-/** 直读 Zep live 图（建图过程中刷图） */
-export function getOntologyGraphLive(ontologyId) {
-  return service.get(`/api/ontology/${ontologyId}/graph/live`)
-}
-
 /**
  * 兼容旧名 getGraphData —— ADC 用 ontologyId。
- * 默认 live（对齐 MiroFish /api/graph/data/{graph_id}）；snapshot 仅版本管理用。
+ * 统一走 /graph（有 graph_id 读 Zep，对齐 MiroFish /api/graph/data）。
  */
-export function getGraphData(ontologyId, { live = true } = {}) {
-  return live ? getOntologyGraphLive(ontologyId) : getOntologyGraph(ontologyId)
+export function getGraphData(ontologyId) {
+  return getOntologyGraph(ontologyId)
 }
 
 export function appendDocuments(ontologyId, formData) {

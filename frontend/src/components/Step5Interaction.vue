@@ -428,8 +428,10 @@ import { getDecisionStatus } from '../api/decision'
 const { t } = useI18n()
 
 const props = defineProps({
+  decisionId: String,
   reportId: String,
-  simulationId: String
+  simulationId: String,
+  systemLogs: Array
 })
 
 const emit = defineEmits(['add-log', 'update-status'])

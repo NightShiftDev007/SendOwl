@@ -179,6 +179,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { createSimulation } from '../api/simulation'
 import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -229,14 +230,12 @@ const handleEnterEnvSetup = async () => {
     })
 
     if (res.success && res.data?.simulation_id) {
+      const decisionId = res.data.decision_id || res.data.simulation_id
       touchWorkflowStep(2, {
-        projectId: ontologyId,
-        simulationId: res.data.simulation_id,
+        decisionId,
+        ontologyId,
       })
-      router.push({
-        name: 'Simulation',
-        params: { simulationId: res.data.simulation_id },
-      })
+      router.push(taskRoute(2, decisionId))
     } else {
       console.error('创建模拟失败:', res.error)
       alert(t('step1.createSimulationFailed', { error: res.error || t('common.unknownError') }))

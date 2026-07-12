@@ -17,8 +17,7 @@
       <template #right>
         <StepNav
           :current-step="3"
-          :project-id="projectData?.project_id || ''"
-          :simulation-id="currentSimulationId"
+          :decision-id="currentDecisionId"
         />
         <div class="step-divider"></div>
         <span class="status-indicator" :class="statusClass">
@@ -45,7 +44,8 @@
       <!-- Right Panel: Step3 开始模拟 -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <Step3Simulation
-          :simulationId="currentSimulationId"
+          :decisionId="currentDecisionId"
+          :simulationId="resolvedSimulationId"
           :maxRounds="maxRounds"
           :minutesPerRound="minutesPerRound"
           :projectData="projectData"
@@ -68,10 +68,12 @@ import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
 import StepNav from '../components/StepNav.vue'
-import { getProject, getOntologyGraphLive } from '../api/graph'
-import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus } from '../api/simulation'
+import { getProject, getOntologyGraph } from '../api/graph'
+import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus, resolveSimContext } from '../api/simulation'
 import { subscribeDecision } from '../api/sse'
 import { useI18n } from 'vue-i18n'
+import { touchWorkflowStep } from '../store/workflowContext'
+import { taskRoute } from '../utils/taskRoute'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -79,14 +81,15 @@ const router = useRouter()
 
 // Props
 const props = defineProps({
-  simulationId: String
+  decisionId: String,
 })
 
 // Layout State
 const viewMode = ref('split')
 
 // Data State
-const currentSimulationId = ref(route.params.simulationId)
+const currentDecisionId = ref(props.decisionId || route.params.decisionId)
+const resolvedSimulationId = ref('')
 // 直接在初始化时从 query 参数获取 maxRounds，确保子组件能立即获取到值
 const maxRounds = ref(route.query.maxRounds ? parseInt(route.query.maxRounds) : null)
 const minutesPerRound = ref(30) // 默认每轮30分钟
@@ -154,20 +157,20 @@ const handleGoBack = async () => {
   
   try {
     // 先尝试优雅关闭模拟环境
-    const envStatusRes = await getEnvStatus({ simulation_id: currentSimulationId.value })
+    const envStatusRes = await getEnvStatus({ simulation_id: currentDecisionId.value })
     
     if (envStatusRes.success && envStatusRes.data?.env_alive) {
       addLog(t('log.closingSimEnv'))
       try {
         await closeSimulationEnv({ 
-          simulation_id: currentSimulationId.value,
+          simulation_id: currentDecisionId.value,
           timeout: 10
         })
         addLog(t('log.simEnvClosed'))
       } catch (closeErr) {
         addLog(t('log.closeSimEnvFailed'))
         try {
-          await stopSimulation({ simulation_id: currentSimulationId.value })
+          await stopSimulation({ simulation_id: currentDecisionId.value })
           addLog(t('log.simForceStopSuccess'))
         } catch (stopErr) {
           addLog(t('log.forceStopFailed', { error: stopErr.message }))
@@ -178,7 +181,7 @@ const handleGoBack = async () => {
       if (isSimulating.value) {
         addLog(t('log.stoppingSimProcess'))
         try {
-          await stopSimulation({ simulation_id: currentSimulationId.value })
+          await stopSimulation({ simulation_id: currentDecisionId.value })
           addLog(t('log.simStopped'))
         } catch (err) {
           addLog(t('log.stopSimFailed', { error: err.message }))
@@ -190,7 +193,7 @@ const handleGoBack = async () => {
   }
   
   // 返回到 Step 2 (环境搭建)
-  router.push({ name: 'Simulation', params: { simulationId: currentSimulationId.value } })
+  router.push(taskRoute(2, currentDecisionId.value))
 }
 
 const handleNextStep = () => {
@@ -202,16 +205,28 @@ const handleNextStep = () => {
 // --- Data Logic ---
 const loadSimulationData = async () => {
   try {
-    addLog(t('log.loadingSimData', { id: currentSimulationId.value }))
+    addLog(t('log.loadingSimData', { id: currentDecisionId.value }))
+
+    try {
+      const ctx = await resolveSimContext(currentDecisionId.value)
+      if (ctx?.simId) resolvedSimulationId.value = ctx.simId
+      touchWorkflowStep(3, {
+        decisionId: currentDecisionId.value,
+        simulationId: resolvedSimulationId.value || undefined,
+        ontologyId: ctx?.detail?.ontology_id,
+      })
+    } catch (_) {
+      /* resolve 失败不阻断 */
+    }
     
     // 获取 simulation 信息
-    const simRes = await getSimulation(currentSimulationId.value)
+    const simRes = await getSimulation(currentDecisionId.value)
     if (simRes.success && simRes.data) {
       const simData = simRes.data
       
       // 获取 simulation config 以获取 minutes_per_round
       try {
-        const configRes = await getSimulationConfig(currentSimulationId.value)
+        const configRes = await getSimulationConfig(currentDecisionId.value)
         if (configRes.success && configRes.data?.time_config?.minutes_per_round) {
           minutesPerRound.value = configRes.data.time_config.minutes_per_round
           addLog(t('log.timeConfig', { minutes: minutesPerRound.value }))
@@ -221,8 +236,9 @@ const loadSimulationData = async () => {
       }
       
       // 获取 project 信息
-      if (simData.project_id) {
-        const projRes = await getProject(simData.project_id)
+      const oid = simData.project_id || simData.ontology_id
+      if (oid) {
+        const projRes = await getProject(oid)
         if (projRes.success && projRes.data) {
           projectData.value = { ...projRes.data, project_id: projRes.data.id || projRes.data.project_id, ontology: projRes.data.ontology || projRes.data.schema, schema: projRes.data.schema || projRes.data.ontology }
           addLog(t('log.projectLoadSuccess', { id: projRes.data.project_id }))
@@ -244,7 +260,7 @@ const loadGraph = async (_graphId) => {
   if (!ontologyId) return
   graphLoading.value = true
   try {
-    const res = await getOntologyGraphLive(ontologyId)
+    const res = await getOntologyGraph(ontologyId)
     if (res.success) {
       graphData.value = res.data
       addLog(t('log.graphDataLoadSuccess'))
@@ -282,7 +298,7 @@ const startGraphRefresh = () => {
   addLog(t('log.graphRealtimeRefreshStart'))
   maybeRefreshGraph(true)
 
-  const id = currentSimulationId.value
+  const id = currentDecisionId.value
   if (!id) {
     graphRefreshTimer = setInterval(() => maybeRefreshGraph(true), 30000)
     return
@@ -353,6 +369,19 @@ onMounted(() => {
   
   loadSimulationData()
 })
+
+watch(
+  () => route.params.decisionId,
+  (newId, oldId) => {
+    if (!newId || newId === oldId || newId === currentDecisionId.value) return
+    currentDecisionId.value = newId
+    resolvedSimulationId.value = ''
+    projectData.value = null
+    graphData.value = null
+    stopGraphRefresh()
+    loadSimulationData()
+  },
+)
 
 onUnmounted(() => {
   stopGraphRefresh()
