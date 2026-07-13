@@ -80,32 +80,34 @@
       <div class="right-panel" ref="rightPanel">
         <!-- Unified Action Bar - Professional Design -->
         <div class="action-bar">
-        <div class="action-bar-header">
-          <svg class="action-bar-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <div class="action-bar-text">
-            <span class="action-bar-title">{{ $t('step5.interactiveTools') }}</span>
-            <span class="action-bar-subtitle mono">{{ $t('step5.agentsAvailable', { count: profiles.length }) }}</span>
-          </div>
-          <span
-            class="env-mode-badge"
-            :class="envAlive ? 'is-live' : 'is-offline'"
-            :title="envAlive ? $t('step5.modeLiveHint') : $t('step5.modeOfflineHint')"
-          >
-            {{ envAlive ? $t('step5.modeLive') : $t('step5.modeOffline') }}
-          </span>
-        </div>
-          <div v-if="!envAlive" class="env-offline-banner">
-            {{ $t('step5.modeOfflineBanner') }}
-          </div>
-          <div v-if="runOptions.length > 1" class="run-select-bar">
-            <label class="mono">Run</label>
-            <select v-model="selectedSimId" @change="onSimChange">
-              <option v-for="o in runOptions" :key="o.sim_id || o.run_id" :value="o.sim_id">
-                {{ o.label }} ({{ o.status }})
-              </option>
-            </select>
+          <div class="action-bar-top">
+            <div class="action-bar-header">
+              <svg class="action-bar-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+              </svg>
+              <div class="action-bar-text">
+                <span class="action-bar-title">{{ $t('step5.interactiveTools') }}</span>
+                <span class="action-bar-subtitle mono">{{ $t('step5.agentsAvailable', { count: profiles.length }) }}</span>
+              </div>
+              <span
+                class="env-mode-badge"
+                :class="envAlive ? 'is-live' : 'is-offline'"
+                :title="envAlive ? $t('step5.modeLiveHint') : $t('step5.modeOfflineHint')"
+              >
+                {{ envAlive ? $t('step5.modeLive') : $t('step5.modeOffline') }}
+              </span>
+            </div>
+            <div v-if="!envAlive" class="env-offline-banner">
+              {{ $t('step5.modeOfflineBanner') }}
+            </div>
+            <div v-if="runOptions.length > 1" class="run-select-bar">
+              <label class="mono">Run</label>
+              <select v-model="selectedSimId" @change="onSimChange">
+                <option v-for="o in runOptions" :key="o.sim_id || o.run_id" :value="o.sim_id">
+                  {{ o.label }} ({{ o.status }})
+                </option>
+              </select>
+            </div>
           </div>
           <div class="action-bar-tabs">
             <button 
@@ -1397,12 +1399,19 @@ watch(() => props.simulationId, (newId) => {
 /* Action Bar - Professional Design */
 .action-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 14px 20px 12px;
   border-bottom: 1px solid #E5E7EB;
   background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFC 100%);
-  gap: 16px;
+  gap: 12px;
+}
+
+.action-bar-top {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
 .run-select-bar {
@@ -1422,8 +1431,8 @@ watch(() => props.simulationId, (newId) => {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 160px;
-  flex: 1;
+  min-width: 0;
+  width: 100%;
 }
 
 .env-mode-badge {
@@ -1451,7 +1460,7 @@ watch(() => props.simulationId, (newId) => {
 }
 
 .env-offline-banner {
-  margin: 0 0 10px;
+  margin: 0;
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.45;
@@ -1501,8 +1510,9 @@ watch(() => props.simulationId, (newId) => {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .tab-pill {
