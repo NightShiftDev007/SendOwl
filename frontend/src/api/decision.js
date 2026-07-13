@@ -23,9 +23,16 @@ export function ensureDecisionSims(decisionId) {
 }
 
 export function replaceDecisionScenarios(decisionId, body = {}) {
-  return requestWithRetry(() =>
-    service.post(`/api/decision/${decisionId}/scenarios`, body),
-  )
+  return requestWithRetry(async () => {
+    const res = await service.post(`/api/decision/${decisionId}/scenarios`, body)
+    try {
+      const { clearSimIdCache } = await import('./simulation')
+      clearSimIdCache(decisionId)
+    } catch (_) {
+      /* ignore */
+    }
+    return res
+  })
 }
 
 export function prepareDecision(decisionId, body = {}) {

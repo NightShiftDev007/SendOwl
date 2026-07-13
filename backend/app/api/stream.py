@@ -1,13 +1,12 @@
 """SSE 流式进度推送
 
-- GET /api/tasks/<task_id>/events  → TaskManager 任务进度
-- GET /api/decision/<decision_id>/events → Decision/Run 推演进度
-- GET /api/simulation/<sim_id>/prepare/preview/events → Step2 profiles+config 预览
-- GET /api/simulation/<sim_id>/actions/events → Step3 动作增量
-- GET /api/report/<report_id>/logs/events → Step4 agent/console 日志增量
+一阶段一 SSE：同连接推进度 + 结果增量，终态 done 关闭。
 
-事件为全量状态快照或增量；终态发 event: done 后关闭；心跳 : ping。
-- GET /api/ontology/<ontology_id>/graph/events → 建图期图谱推送
+- GET /api/tasks/<task_id>/events  → 建图 / N=1 prepare / 报告（帧内可含 graph / profiles / logs）
+- GET /api/decision/<decision_id>/events → N>1 prepare / 推演（帧内可含 profiles / 平台进度 / actions）
+
+以下端点保留作降级，正常路径前端不再订阅：
+- prepare/preview、actions、report logs、ontology graph events
 """
 
 from __future__ import annotations
@@ -160,13 +159,156 @@ def _watch_stream(
         pass
 
 
+def _task_snap_with_envelope(snap: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(snap, dict):
+        return snap
+    try:
+        from app.progress.envelope import build_task_envelope
+
+        tid = snap.get("task_id")
+        if tid:
+            out = dict(snap)
+            env = build_task_envelope(tid, snap)
+            out["envelope"] = env
+            # 方便前端不拆 envelope 也能读到人设增量
+            arts = env.get("artifacts") if isinstance(env, dict) else {}
+            if isinstance(arts, dict):
+                if arts.get("profiles_digest") is not None:
+                    out["profiles_digest"] = arts["profiles_digest"]
+                if arts.get("profile_count") is not None:
+                    out["profile_count"] = arts["profile_count"]
+                if arts.get("topics_count") is not None:
+                    out["topics_count"] = arts["topics_count"]
+                if arts.get("config_ready") is not None:
+                    out["config_ready"] = arts["config_ready"]
+
+            # Step1 建图：同帧附带 graph 快照（按规模变化推送）
+            meta = snap.get("metadata") if isinstance(snap.get("metadata"), dict) else {}
+            ont_id = (
+                arts.get("ontology_id")
+                if isinstance(arts, dict)
+                else None
+            ) or meta.get("ontology_id") or meta.get("project_id")
+            task_type = str(snap.get("task_type") or "")
+            if ont_id and (
+                "graph" in task_type
+                or "build" in task_type
+                or meta.get("ontology_id")
+                or meta.get("project_id")
+            ):
+                try:
+                    from app.api.ontology import read_ontology_graph
+
+                    g = read_ontology_graph(str(ont_id)) or {}
+                    node_count = int(g.get("node_count") or len(g.get("nodes") or []) or 0)
+                    edge_count = int(g.get("edge_count") or len(g.get("edges") or []) or 0)
+                    out["graph"] = {
+                        "ontology_id": ont_id,
+                        "graph_id": g.get("graph_id"),
+                        "nodes": g.get("nodes") or [],
+                        "edges": g.get("edges") or [],
+                        "node_count": node_count,
+                        "edge_count": edge_count,
+                        "source": g.get("source"),
+                    }
+                    if isinstance(arts, dict):
+                        arts = dict(arts)
+                        arts["node_count"] = node_count
+                        arts["edge_count"] = edge_count
+                        arts["graph_id"] = g.get("graph_id")
+                        env = dict(env)
+                        env["artifacts"] = arts
+                        out["envelope"] = env
+                except Exception as e:
+                    logger.debug(f"task graph enrich skip: {e}")
+
+            # Step4 报告：同帧附带 agent/console 日志增量
+            report_id = (arts.get("report_id") if isinstance(arts, dict) else None) or meta.get(
+                "report_id"
+            )
+            if report_id and (
+                task_type == "report_generate" or "report" in task_type
+            ):
+                try:
+                    from app.decision.report_agent import ReportManager
+
+                    agent_from = int(
+                        (arts or {}).get("agent_log_line")
+                        or meta.get("agent_log_line")
+                        or 0
+                    )
+                    console_from = int(
+                        (arts or {}).get("console_log_line")
+                        or meta.get("console_log_line")
+                        or 0
+                    )
+                    agent = ReportManager.get_agent_log(str(report_id), from_line=agent_from)
+                    console = ReportManager.get_console_log(
+                        str(report_id), from_line=console_from
+                    )
+                    agent_logs = agent.get("logs") or []
+                    console_logs = console.get("logs") or []
+                    agent_next = int(
+                        agent.get("total_lines")
+                        or agent_from + len(agent_logs)
+                    )
+                    console_next = int(
+                        console.get("total_lines")
+                        or console_from + len(console_logs)
+                    )
+                    out["agent_logs"] = agent_logs
+                    out["console_logs"] = console_logs
+                    out["agent_log_line"] = agent_next
+                    out["console_log_line"] = console_next
+                    if isinstance(arts, dict):
+                        arts = dict(arts)
+                        arts["agent_log_line"] = agent_next
+                        arts["console_log_line"] = console_next
+                        env = dict(env)
+                        env["artifacts"] = arts
+                        out["envelope"] = env
+                except Exception as e:
+                    logger.debug(f"task report logs enrich skip: {e}")
+            return out
+    except Exception:
+        pass
+    return snap
+
+
+def _task_dedupe_key(snap: Dict[str, Any]) -> str:
+    """含 profile_count / graph 规模 / 日志水位，避免只指纹进度导致结果增量被吞。"""
+    env = snap.get("envelope") if isinstance(snap, dict) else None
+    arts = (env or {}).get("artifacts") if isinstance(env, dict) else {}
+    graph = snap.get("graph") if isinstance(snap, dict) else None
+    return _fingerprint(
+        {
+            "status": snap.get("status") if isinstance(snap, dict) else None,
+            "progress": snap.get("progress") if isinstance(snap, dict) else None,
+            "message": snap.get("message") if isinstance(snap, dict) else None,
+            "profile_count": (arts or {}).get("profile_count")
+            or (snap.get("profile_count") if isinstance(snap, dict) else None),
+            "topics_count": (arts or {}).get("topics_count"),
+            "config_ready": (arts or {}).get("config_ready"),
+            "node_count": (arts or {}).get("node_count")
+            or ((graph or {}).get("node_count") if isinstance(graph, dict) else None),
+            "edge_count": (arts or {}).get("edge_count")
+            or ((graph or {}).get("edge_count") if isinstance(graph, dict) else None),
+            "agent_log_line": (arts or {}).get("agent_log_line")
+            or (snap.get("agent_log_line") if isinstance(snap, dict) else None),
+            "console_log_line": (arts or {}).get("console_log_line")
+            or (snap.get("console_log_line") if isinstance(snap, dict) else None),
+            "stage": (env or {}).get("stage") if isinstance(env, dict) else None,
+        }
+    )
+
+
 @stream_bp.get("/tasks/<task_id>/events")
 def task_events(task_id: str):
     """TaskManager 任务进度 SSE。"""
     tm = TaskManager()
     task = tm.get_task(task_id)
     if not task:
-        # 刚创建竞态：短暂等待任务出现；仍没有则发可重试错误（不标 failed / 不发 done）
+        # 刚创建竞态 / 进程重启后短暂等待 DB 回源；仍没有则发可重试错误
         def missing():
             for _ in range(10):
                 found = tm.get_task(task_id)
@@ -188,18 +330,23 @@ def task_events(task_id: str):
             # 任务已出现：推首包后进入正常订阅循环
             q = tm.subscribe(task_id)
             last_heartbeat = time.time()
+            last_key: Optional[str] = None
             try:
                 current = tm.get_task(task_id)
                 if current:
-                    snap = current.to_dict()
+                    snap = _task_snap_with_envelope(current.to_dict())
+                    last_key = _task_dedupe_key(snap)
                     yield _sse_format("progress", snap)
                     if current.status in TERMINAL_STATUSES:
                         yield _sse_format("done", snap)
                         return
                 while True:
                     try:
-                        snap = q.get(timeout=POLL_WAIT_SEC)
-                        yield _sse_format("progress", snap)
+                        snap = _task_snap_with_envelope(q.get(timeout=POLL_WAIT_SEC))
+                        key = _task_dedupe_key(snap)
+                        if key != last_key:
+                            last_key = key
+                            yield _sse_format("progress", snap)
                         status = str(snap.get("status") or "")
                         if status in ("completed", "failed"):
                             yield _sse_format("done", snap)
@@ -207,11 +354,15 @@ def task_events(task_id: str):
                         last_heartbeat = time.time()
                     except queue.Empty:
                         current = tm.get_task(task_id)
-                        if current and current.status in TERMINAL_STATUSES:
-                            snap = current.to_dict()
-                            yield _sse_format("progress", snap)
-                            yield _sse_format("done", snap)
-                            return
+                        if current:
+                            snap = _task_snap_with_envelope(current.to_dict())
+                            key = _task_dedupe_key(snap)
+                            if key != last_key:
+                                last_key = key
+                                yield _sse_format("progress", snap)
+                            if current.status in TERMINAL_STATUSES:
+                                yield _sse_format("done", snap)
+                                return
                         if time.time() - last_heartbeat >= HEARTBEAT_SEC:
                             yield ": ping\n\n"
                             last_heartbeat = time.time()
@@ -225,11 +376,13 @@ def task_events(task_id: str):
     def generate():
         q = tm.subscribe(task_id)
         last_heartbeat = time.time()
+        last_key: Optional[str] = None
         try:
             # 首包：当前快照
             current = tm.get_task(task_id)
             if current:
-                snap = current.to_dict()
+                snap = _task_snap_with_envelope(current.to_dict())
+                last_key = _task_dedupe_key(snap)
                 yield _sse_format("progress", snap)
                 if current.status in TERMINAL_STATUSES:
                     yield _sse_format("done", snap)
@@ -237,21 +390,28 @@ def task_events(task_id: str):
 
             while True:
                 try:
-                    snap = q.get(timeout=POLL_WAIT_SEC)
-                    yield _sse_format("progress", snap)
+                    snap = _task_snap_with_envelope(q.get(timeout=POLL_WAIT_SEC))
+                    key = _task_dedupe_key(snap)
+                    if key != last_key:
+                        last_key = key
+                        yield _sse_format("progress", snap)
                     status = str(snap.get("status") or "")
                     if status in ("completed", "failed"):
                         yield _sse_format("done", snap)
                         return
                     last_heartbeat = time.time()
                 except queue.Empty:
-                    # 再读一次内存态（避免错过 publish）
+                    # 再读一次：prepare 人设落盘后即使无 task publish 也能推进
                     current = tm.get_task(task_id)
-                    if current and current.status in TERMINAL_STATUSES:
-                        snap = current.to_dict()
-                        yield _sse_format("progress", snap)
-                        yield _sse_format("done", snap)
-                        return
+                    if current:
+                        snap = _task_snap_with_envelope(current.to_dict())
+                        key = _task_dedupe_key(snap)
+                        if key != last_key:
+                            last_key = key
+                            yield _sse_format("progress", snap)
+                        if current.status in TERMINAL_STATUSES:
+                            yield _sse_format("done", snap)
+                            return
                     if time.time() - last_heartbeat >= HEARTBEAT_SEC:
                         yield ": ping\n\n"
                         last_heartbeat = time.time()
@@ -263,22 +423,193 @@ def task_events(task_id: str):
     return _sse_response(generate())
 
 
+def _decision_terminal(status: str) -> bool:
+    # prepared 不关流：Step3 可能继续订同一 decision；由前端在 prepare 完成时自行 close
+    return status in (
+        "completed",
+        "failed",
+        "done",
+        "success",
+        "prepare_failed",
+    )
+
+
+def _decision_dedupe_key(snap: Dict[str, Any]) -> str:
+    """指纹含 profile_count / 平台进度 / actions watermark，避免吞增量。"""
+    env = snap.get("envelope") if isinstance(snap, dict) else None
+    arts = (env or {}).get("artifacts") if isinstance(env, dict) else {}
+    return _fingerprint(
+        {
+            "status": snap.get("status"),
+            "stage": snap.get("stage") or ((env or {}).get("stage") if isinstance(env, dict) else None),
+            "prepare_percent": snap.get("prepare_percent")
+            or ((env or {}).get("progress") if isinstance(env, dict) else None),
+            "message": snap.get("message")
+            or ((env or {}).get("message") if isinstance(env, dict) else None),
+            "profile_count": snap.get("profile_count")
+            or (arts or {}).get("profile_count"),
+            "topics_count": (arts or {}).get("topics_count"),
+            "progress": snap.get("progress"),
+            "twitter_current_round": snap.get("twitter_current_round")
+            or (arts or {}).get("twitter_current_round"),
+            "reddit_current_round": snap.get("reddit_current_round")
+            or (arts or {}).get("reddit_current_round"),
+            "twitter_actions_count": snap.get("twitter_actions_count")
+            or (arts or {}).get("twitter_actions_count"),
+            "reddit_actions_count": snap.get("reddit_actions_count")
+            or (arts or {}).get("reddit_actions_count"),
+            "actions_watermark": snap.get("actions_watermark")
+            or (arts or {}).get("actions_watermark"),
+            "runner_status": snap.get("runner_status")
+            or (arts or {}).get("runner_status"),
+        }
+    )
+
+
+def _pick_sim_from_snap(snap: Dict[str, Any], preferred_sim: Optional[str] = None) -> Optional[str]:
+    if preferred_sim:
+        return preferred_sim
+    if snap.get("sim_id"):
+        return str(snap["sim_id"])
+    for m in snap.get("matrix") or []:
+        for r in m.get("runs") or []:
+            sid = (r or {}).get("sim_id")
+            if sid:
+                return str(sid)
+    return None
+
+
+def _enrich_decision_run_snap(
+    snap: Dict[str, Any],
+    *,
+    sim_id: Optional[str] = None,
+    actions_from: int = 0,
+    actions_limit: int = 80,
+) -> Dict[str, Any]:
+    """为 Step3 同帧附带平台进度 + actions 增量。"""
+    if not isinstance(snap, dict):
+        return snap
+    out = dict(snap)
+    status_l = str(out.get("status") or "").lower()
+    # preparing 阶段不塞动作
+    if status_l == "preparing":
+        return out
+
+    sid = _pick_sim_from_snap(out, sim_id)
+    if not sid:
+        return out
+
+    out["sim_id"] = sid
+    try:
+        from app.engine.simulation_runner import SimulationRunner
+
+        rs = SimulationRunner.get_run_state(sid)
+        if rs:
+            rd = rs.to_dict() if hasattr(rs, "to_dict") else {}
+            for k in (
+                "runner_status",
+                "current_round",
+                "total_rounds",
+                "twitter_current_round",
+                "reddit_current_round",
+                "twitter_actions_count",
+                "reddit_actions_count",
+                "twitter_running",
+                "reddit_running",
+                "twitter_completed",
+                "reddit_completed",
+                "twitter_simulated_hours",
+                "reddit_simulated_hours",
+                "progress_percent",
+                "simulated_hours",
+            ):
+                if k in rd:
+                    out[k] = rd[k]
+            # 写入 envelope artifacts 供去重/前端
+            env = out.get("envelope")
+            if isinstance(env, dict):
+                arts = dict(env.get("artifacts") or {})
+                for k in (
+                    "twitter_current_round",
+                    "reddit_current_round",
+                    "twitter_actions_count",
+                    "reddit_actions_count",
+                    "runner_status",
+                ):
+                    if k in out:
+                        arts[k] = out[k]
+                arts["sim_id"] = sid
+                env = dict(env)
+                env["artifacts"] = arts
+                # 推演中 envelope status
+                rv = str(out.get("runner_status") or "").lower()
+                if rv == "completed":
+                    env["status"] = "completed"
+                    env["raw_status"] = "completed"
+                    env["progress"] = 100
+                elif rv in ("running", "starting"):
+                    env["status"] = "running"
+                    env["raw_status"] = out.get("status") or "running"
+                out["envelope"] = env
+    except Exception as e:
+        logger.debug(f"enrich run_state skip: {e}")
+
+    # actions 增量
+    try:
+        from app.api.simulation import read_simulation_actions
+
+        # 取较新窗口再按 watermark 切
+        pack = read_simulation_actions(sid, limit=max(actions_limit, 50), offset=0, newest=True)
+        actions = pack.get("actions") or []
+        # watermark：用稳定 id 列表长度语义 —— 传 actions_from 为已收条数时取 tail
+        if actions_from > 0 and len(actions) >= actions_from:
+            # newest 窗口是尾部；前端用 id 去重更稳，这里仍推窗口内全部供 merge
+            pass
+        out["actions"] = actions
+        out["actions_watermark"] = len(actions)
+        env = out.get("envelope")
+        if isinstance(env, dict):
+            arts = dict(env.get("artifacts") or {})
+            arts["actions_watermark"] = out["actions_watermark"]
+            arts["action_count"] = len(actions)
+            env = dict(env)
+            env["artifacts"] = arts
+            out["envelope"] = env
+    except Exception as e:
+        logger.debug(f"enrich actions skip: {e}")
+
+    return out
+
+
 @stream_bp.get("/decision/<decision_id>/events")
 def decision_events(decision_id: str):
-    """Decision / Run 推演进度 SSE。"""
+    """Decision / Run 推演进度 SSE（帧内含 ProgressEnvelope + 平台进度/动作增量）。"""
     hub = DecisionEventHub()
+    preferred_sim = (request.args.get("sim_id") or "").strip() or None
+    try:
+        actions_from = int(request.args.get("actions_from") or 0)
+    except (TypeError, ValueError):
+        actions_from = 0
 
     def generate():
         q = hub.subscribe(decision_id)
         last_heartbeat = time.time()
-        last_payload: Optional[str] = None
+        last_key: Optional[str] = None
         try:
             try:
-                snap = ScenarioRunner().get_status(decision_id)
-                last_payload = json.dumps(snap, ensure_ascii=False, default=str)
+                snap = _enrich_decision_run_snap(
+                    ScenarioRunner().get_status(decision_id),
+                    sim_id=preferred_sim,
+                    actions_from=actions_from,
+                )
+                last_key = _decision_dedupe_key(snap)
                 yield _sse_format("progress", snap)
                 status = str(snap.get("status") or "").lower()
-                if status in ("completed", "failed", "done", "success"):
+                runner = str(snap.get("runner_status") or "").lower()
+                if _decision_terminal(status) or (
+                    runner in ("completed", "stopped", "failed")
+                    and status != "preparing"
+                ):
                     yield _sse_format("done", snap)
                     return
             except Exception as e:
@@ -290,25 +621,44 @@ def decision_events(decision_id: str):
             while True:
                 try:
                     snap = q.get(timeout=POLL_WAIT_SEC)
-                    payload = json.dumps(snap, ensure_ascii=False, default=str)
-                    if payload != last_payload:
-                        last_payload = payload
+                    if "envelope" not in snap or preferred_sim:
+                        try:
+                            snap = ScenarioRunner().get_status(decision_id)
+                        except Exception:
+                            pass
+                    snap = _enrich_decision_run_snap(
+                        snap, sim_id=preferred_sim, actions_from=actions_from
+                    )
+                    key = _decision_dedupe_key(snap)
+                    if key != last_key:
+                        last_key = key
                         yield _sse_format("progress", snap)
                     status = str(snap.get("status") or "").lower()
-                    if status in ("completed", "failed", "done", "success"):
+                    runner = str(snap.get("runner_status") or "").lower()
+                    if _decision_terminal(status) or (
+                        runner in ("completed", "stopped", "failed")
+                        and status != "preparing"
+                    ):
                         yield _sse_format("done", snap)
                         return
                     last_heartbeat = time.time()
                 except queue.Empty:
-                    # 兜底轮询快照，保证无 publish 时也能推进
                     try:
-                        snap = ScenarioRunner().get_status(decision_id)
-                        payload = json.dumps(snap, ensure_ascii=False, default=str)
-                        if payload != last_payload:
-                            last_payload = payload
+                        snap = _enrich_decision_run_snap(
+                            ScenarioRunner().get_status(decision_id),
+                            sim_id=preferred_sim,
+                            actions_from=actions_from,
+                        )
+                        key = _decision_dedupe_key(snap)
+                        if key != last_key:
+                            last_key = key
                             yield _sse_format("progress", snap)
                         status = str(snap.get("status") or "").lower()
-                        if status in ("completed", "failed", "done", "success"):
+                        runner = str(snap.get("runner_status") or "").lower()
+                        if _decision_terminal(status) or (
+                            runner in ("completed", "stopped", "failed")
+                            and status != "preparing"
+                        ):
                             yield _sse_format("done", snap)
                             return
                     except Exception:

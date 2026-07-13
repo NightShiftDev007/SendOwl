@@ -18,6 +18,9 @@ from app.models.task import TaskManager, TaskStatus
 from app.utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from app.ontology.text_processor import TextProcessor
 from app.utils.locale import t, get_locale, set_locale
+from app.utils.logger import get_logger
+
+logger = get_logger("mirofish.graph_builder")
 
 
 @dataclass
@@ -106,9 +109,11 @@ class GraphBuilderService:
         chunk_size: int,
         chunk_overlap: int,
         batch_size: int,
-        locale: str = 'zh'
+        locale: str = 'zh',
+        *,
+        resume: bool = False,
     ):
-        """图谱构建工作线程"""
+        """图谱构建工作线程（支持 Phase C 断点续传）。"""
         set_locale(locale)
         try:
             self.task_manager.update_task(
@@ -117,23 +122,67 @@ class GraphBuilderService:
                 progress=5,
                 message=t('progress.startBuildingGraph')
             )
+
+            detail = {}
+            existing = self.task_manager.get_task(task_id)
+            if existing and isinstance(getattr(existing, "progress_detail", None), dict):
+                detail = dict(existing.progress_detail or {})
+            result0 = (getattr(existing, "result", None) or {}) if existing else {}
+
+            graph_id = None
+            start_chunk = 0
+            episode_uuids: List[str] = []
+            phase = "appending"
+
+            if resume:
+                graph_id = (
+                    detail.get("graph_id")
+                    or result0.get("graph_id")
+                )
+                phase = str(detail.get("phase") or "appending")
+                start_chunk = int(detail.get("next_chunk_index") or 0)
+                episode_uuids = list(detail.get("episode_uuids") or [])
+                if not graph_id:
+                    self.task_manager.fail_task(
+                        task_id,
+                        "recovery: 无 graph 检查点，请重新建图",
+                    )
+                    return
+                logger.info(
+                    f"resume graph: task={task_id} graph={graph_id} "
+                    f"phase={phase} next_chunk={start_chunk}"
+                )
             
-            # 1. 创建图谱（尽早写入 result，便于建图中 live 刷图）
-            graph_id = self.create_graph(graph_name)
-            self.task_manager.update_task(
-                task_id,
-                progress=10,
-                message=t('progress.graphCreated', graphId=graph_id),
-                result={"graph_id": graph_id},
-            )
-            
-            # 2. 设置本体
-            self.set_ontology(graph_id, ontology)
-            self.task_manager.update_task(
-                task_id,
-                progress=15,
-                message=t('progress.ontologySet')
-            )
+            # 1. 创建图谱（resume 复用）
+            if not graph_id:
+                graph_id = self.create_graph(graph_name)
+                self.task_manager.update_task(
+                    task_id,
+                    progress=10,
+                    message=t('progress.graphCreated', graphId=graph_id),
+                    result={"graph_id": graph_id},
+                    progress_detail={
+                        "graph_id": graph_id,
+                        "phase": "appending",
+                        "next_chunk_index": 0,
+                        "total_chunks": 0,
+                        "episode_uuids": [],
+                    },
+                )
+                # 2. 设置本体
+                self.set_ontology(graph_id, ontology)
+                self.task_manager.update_task(
+                    task_id,
+                    progress=15,
+                    message=t('progress.ontologySet')
+                )
+            else:
+                self.task_manager.update_task(
+                    task_id,
+                    progress=15,
+                    message=t('progress.graphCreated', graphId=graph_id),
+                    result={"graph_id": graph_id},
+                )
             
             # 3. 文本分块
             chunks = TextProcessor.split_text(text, chunk_size, chunk_overlap)
@@ -143,17 +192,39 @@ class GraphBuilderService:
                 progress=20,
                 message=t('progress.textSplit', count=total_chunks)
             )
-            
-            # 4. 分批发送数据
-            episode_uuids = self.add_text_batches(
-                graph_id, chunks, batch_size,
-                lambda msg, prog: self.task_manager.update_task(
+
+            def _save_checkpoint(cp: Dict[str, Any]):
+                self.task_manager.update_task(
                     task_id,
-                    progress=20 + int(prog * 0.4),  # 20-60%
-                    message=msg
+                    progress_detail=cp,
+                    result={"graph_id": cp.get("graph_id") or graph_id},
                 )
-            )
+
+            # 4. 分批发送（waiting 阶段 resume：跳过 append）
+            if phase != "waiting":
+                episode_uuids = self.add_text_batches(
+                    graph_id,
+                    chunks,
+                    batch_size,
+                    lambda msg, prog: self.task_manager.update_task(
+                        task_id,
+                        progress=20 + int(prog * 0.4),  # 20-60%
+                        message=msg
+                    ),
+                    start_chunk_index=start_chunk,
+                    existing_episode_uuids=episode_uuids,
+                    checkpoint_callback=_save_checkpoint,
+                )
             
+            # 进入 waiting 阶段检查点
+            _save_checkpoint({
+                "graph_id": graph_id,
+                "phase": "waiting",
+                "next_chunk_index": total_chunks,
+                "total_chunks": total_chunks,
+                "episode_uuids": list(episode_uuids),
+            })
+
             # 5. 等待Zep处理完成
             self.task_manager.update_task(
                 task_id,
@@ -190,6 +261,50 @@ class GraphBuilderService:
             import traceback
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
             self.task_manager.fail_task(task_id, error_msg)
+
+    def resume_graph_build(
+        self,
+        task_id: str,
+        text: str,
+        ontology: Dict[str, Any],
+        graph_name: str = "MiroFish Graph",
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+        batch_size: int = 3,
+    ) -> bool:
+        """Phase C：复用原 task_id，从检查点续传建图。"""
+        task = self.task_manager.get_task(task_id)
+        if not task:
+            return False
+        detail = getattr(task, "progress_detail", None) or {}
+        result = getattr(task, "result", None) or {}
+        if not (detail.get("graph_id") or result.get("graph_id")):
+            return False
+
+        self.task_manager.update_task(
+            task_id,
+            status=TaskStatus.PROCESSING,
+            message="recovery: 从断点续传建图",
+        )
+        current_locale = get_locale()
+        thread = threading.Thread(
+            target=self._build_graph_worker,
+            args=(
+                task_id,
+                text,
+                ontology,
+                graph_name,
+                chunk_size,
+                chunk_overlap,
+                batch_size,
+                current_locale,
+            ),
+            kwargs={"resume": True},
+            daemon=True,
+            name=f"resume-graph-{task_id}",
+        )
+        thread.start()
+        return True
     
     def create_graph(self, name: str) -> str:
         """创建Zep图谱（公开方法）"""
@@ -297,13 +412,21 @@ class GraphBuilderService:
         graph_id: str,
         chunks: List[str],
         batch_size: int = 3,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        *,
+        start_chunk_index: int = 0,
+        existing_episode_uuids: Optional[List[str]] = None,
+        checkpoint_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> List[str]:
-        """分批添加文本到图谱，返回所有 episode 的 uuid 列表"""
-        episode_uuids = []
+        """分批添加文本到图谱，返回所有 episode 的 uuid 列表。
+
+        Phase C：支持从 start_chunk_index 续传；每批后经 checkpoint_callback 落盘。
+        """
+        episode_uuids = list(existing_episode_uuids or [])
         total_chunks = len(chunks)
+        start_i = max(0, int(start_chunk_index or 0))
         
-        for i in range(0, total_chunks, batch_size):
+        for i in range(start_i, total_chunks, batch_size):
             batch_chunks = chunks[i:i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (total_chunks + batch_size - 1) // batch_size
@@ -335,6 +458,19 @@ class GraphBuilderService:
                         if ep_uuid:
                             episode_uuids.append(ep_uuid)
                 
+                next_index = i + len(batch_chunks)
+                if checkpoint_callback:
+                    try:
+                        checkpoint_callback({
+                            "graph_id": graph_id,
+                            "phase": "appending",
+                            "next_chunk_index": next_index,
+                            "total_chunks": total_chunks,
+                            "episode_uuids": list(episode_uuids),
+                        })
+                    except Exception as ce:
+                        logger.debug(f"graph checkpoint skip: {ce}")
+
                 # 避免请求过快
                 time.sleep(1)
                 
@@ -424,6 +560,47 @@ class GraphBuilderService:
             entity_types=list(entity_types)
         )
     
+    def _serialize_node(self, node) -> Dict[str, Any]:
+        created_at = getattr(node, "created_at", None)
+        return {
+            "uuid": node.uuid_,
+            "name": node.name,
+            "labels": node.labels or [],
+            "summary": node.summary or "",
+            "attributes": node.attributes or {},
+            "created_at": str(created_at) if created_at else None,
+        }
+
+    def _heal_missing_edge_endpoints(self, nodes: list, edges: list) -> list:
+        """Zep 列表分页常漏掉边两端节点；按边引用补拉，否则前端会滤掉几乎所有连线。"""
+        by_id = {n.uuid_: n for n in nodes if getattr(n, "uuid_", None)}
+        missing = set()
+        for edge in edges:
+            src = getattr(edge, "source_node_uuid", None)
+            tgt = getattr(edge, "target_node_uuid", None)
+            if src and src not in by_id:
+                missing.add(src)
+            if tgt and tgt not in by_id:
+                missing.add(tgt)
+        if not missing:
+            return nodes
+
+        healed = 0
+        for uid in missing:
+            try:
+                node = self.client.graph.node.get(uuid_=uid)
+                if node and getattr(node, "uuid_", None):
+                    by_id[node.uuid_] = node
+                    healed += 1
+            except Exception as e:
+                logger.debug(f"heal node {uid[:8]}… skip: {e}")
+        if healed:
+            logger.info(
+                f"图谱补全边端点节点: graph 列表 {len(nodes)} → {len(by_id)} "
+                f"(补拉 {healed}/{len(missing)})"
+            )
+        return list(by_id.values())
+
     def get_graph_data(self, graph_id: str) -> Dict[str, Any]:
         """
         获取完整图谱数据（包含详细信息）
@@ -436,27 +613,14 @@ class GraphBuilderService:
         """
         nodes = fetch_all_nodes(self.client, graph_id)
         edges = fetch_all_edges(self.client, graph_id)
+        nodes = self._heal_missing_edge_endpoints(nodes, edges)
 
         # 创建节点映射用于获取节点名称
         node_map = {}
         for node in nodes:
             node_map[node.uuid_] = node.name or ""
         
-        nodes_data = []
-        for node in nodes:
-            # 获取创建时间
-            created_at = getattr(node, 'created_at', None)
-            if created_at:
-                created_at = str(created_at)
-            
-            nodes_data.append({
-                "uuid": node.uuid_,
-                "name": node.name,
-                "labels": node.labels or [],
-                "summary": node.summary or "",
-                "attributes": node.attributes or {},
-                "created_at": created_at,
-            })
+        nodes_data = [self._serialize_node(node) for node in nodes]
         
         edges_data = []
         for edge in edges:

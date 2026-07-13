@@ -88,10 +88,20 @@
             <span class="action-bar-title">{{ $t('step5.interactiveTools') }}</span>
             <span class="action-bar-subtitle mono">{{ $t('step5.agentsAvailable', { count: profiles.length }) }}</span>
           </div>
+          <span
+            class="env-mode-badge"
+            :class="envAlive ? 'is-live' : 'is-offline'"
+            :title="envAlive ? $t('step5.modeLiveHint') : $t('step5.modeOfflineHint')"
+          >
+            {{ envAlive ? $t('step5.modeLive') : $t('step5.modeOffline') }}
+          </span>
         </div>
+          <div v-if="!envAlive" class="env-offline-banner">
+            {{ $t('step5.modeOfflineBanner') }}
+          </div>
           <div v-if="runOptions.length > 1" class="run-select-bar">
             <label class="mono">Run</label>
-            <select v-model="selectedSimId" @change="loadProfiles">
+            <select v-model="selectedSimId" @change="onSimChange">
               <option v-for="o in runOptions" :key="o.sim_id || o.run_id" :value="o.sim_id">
                 {{ o.label }} ({{ o.status }})
               </option>
@@ -276,6 +286,7 @@
                   <span class="sender-name">
                     {{ msg.role === 'user' ? 'You' : (chatTarget === 'report_agent' ? 'Report Agent' : (selectedAgent?.username || 'Agent')) }}
                   </span>
+                  <span v-if="msg.mode === 'offline'" class="msg-mode-tag">{{ $t('step5.modeOfflineTag') }}</span>
                   <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
                 </div>
                 <div class="message-text" v-html="renderMarkdown(msg.content)"></div>
@@ -399,6 +410,7 @@
                     <span class="result-name">{{ result.agent_name }}</span>
                     <span class="result-role">{{ result.profession || $t('step2.unknownProfession') }}</span>
                   </div>
+                  <span v-if="result.mode === 'offline'" class="msg-mode-tag">{{ $t('step5.modeOfflineTag') }}</span>
                 </div>
                 <div class="result-question">
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -422,7 +434,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { chatWithReport, getReport, getAgentLog } from '../api/report'
-import { interviewAgents, getSimulationProfilesRealtime } from '../api/simulation'
+import { interviewAgents, getSimulationProfilesRealtime, getEnvStatus } from '../api/simulation'
 import { getDecisionStatus } from '../api/decision'
 
 const { t } = useI18n()
@@ -446,6 +458,7 @@ const showFullProfile = ref(true)
 const showToolsDetail = ref(true)
 const runOptions = ref([])
 const selectedSimId = ref(null)
+const envAlive = ref(false)
 
 // Chat State
 const chatInput = ref('')
@@ -754,6 +767,8 @@ const sendToAgent = async (message) => {
     // 格式: {"twitter_0": {...}, "reddit_0": {...}} 或单平台 {"reddit_0": {...}}
     const resultData = res.data.result || res.data
     const resultsDict = resultData.results || resultData
+    const mode = res.mode || res.data.mode || 'live'
+    if (mode === 'offline') envAlive.value = false
     
     // 将对象字典转换为数组，优先获取 reddit 平台的回复
     let responseContent = null
@@ -776,6 +791,7 @@ const sendToAgent = async (message) => {
       chatHistory.value.push({
         role: 'assistant',
         content: responseContent,
+        mode,
         timestamp: new Date().toISOString()
       })
       addLog(t('log.agentReplied', { name: selectedAgent.value.username }))
@@ -839,6 +855,8 @@ const submitSurvey = async () => {
       // 格式: {"twitter_0": {...}, "reddit_0": {...}, "twitter_1": {...}, ...}
       const resultData = res.data.result || res.data
       const resultsDict = resultData.results || resultData
+      const mode = res.mode || res.data.mode || 'live'
+      if (mode === 'offline') envAlive.value = false
       
       // 将对象字典转换为数组格式
       const surveyResultsList = []
@@ -870,7 +888,8 @@ const submitSurvey = async () => {
           agent_name: agent?.username || `Agent ${agentIdx}`,
           profession: agent?.profession,
           question: surveyQuestion.value.trim(),
-          answer: responseContent
+          answer: responseContent,
+          mode,
         })
       }
       
@@ -929,6 +948,25 @@ const loadAgentLogs = async () => {
   }
 }
 
+const refreshEnvStatus = async () => {
+  const simId = selectedSimId.value || props.simulationId
+  if (!simId || String(simId).startsWith('dec_')) {
+    envAlive.value = false
+    return
+  }
+  try {
+    const res = await getEnvStatus({ simulation_id: simId, sim_id: simId })
+    envAlive.value = Boolean(res?.data?.env_alive ?? res?.data?.alive ?? res?.env_alive)
+  } catch (_) {
+    envAlive.value = false
+  }
+}
+
+const onSimChange = async () => {
+  await loadProfiles()
+  await refreshEnvStatus()
+}
+
 const loadProfiles = async () => {
   if (!props.simulationId) return
   
@@ -981,10 +1019,11 @@ const handleClickOutside = (e) => {
 }
 
 // Lifecycle
-onMounted(() => {
+onMounted(async () => {
   addLog(t('log.step5Init'))
   loadReportData()
-  loadProfiles()
+  await loadProfiles()
+  await refreshEnvStatus()
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -1384,6 +1423,51 @@ watch(() => props.simulationId, (newId) => {
   align-items: center;
   gap: 12px;
   min-width: 160px;
+  flex: 1;
+}
+
+.env-mode-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #555;
+  background: #f5f5f5;
+  white-space: nowrap;
+}
+
+.env-mode-badge.is-live {
+  border-color: rgba(34, 120, 80, 0.35);
+  color: #1f6b46;
+  background: rgba(34, 120, 80, 0.08);
+}
+
+.env-mode-badge.is-offline {
+  border-color: rgba(140, 100, 40, 0.35);
+  color: #7a5a20;
+  background: rgba(180, 140, 60, 0.1);
+}
+
+.env-offline-banner {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b5320;
+  background: rgba(180, 140, 60, 0.12);
+  border: 1px solid rgba(140, 100, 40, 0.22);
+}
+
+.msg-mode-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  border: 1px solid rgba(140, 100, 40, 0.35);
+  color: #7a5a20;
+  background: rgba(180, 140, 60, 0.1);
+  vertical-align: middle;
 }
 
 .action-bar-icon {

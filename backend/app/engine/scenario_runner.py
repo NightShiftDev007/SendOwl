@@ -34,6 +34,54 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _prepare_progress_path(decision_id: str) -> str:
+    return os.path.join(Config.DECISION_DIR, decision_id, "prepare_progress.json")
+
+
+def _write_prepare_progress(decision_id: str, **fields) -> Dict[str, Any]:
+    """写入 N>1 prepare 细进度（侧车 JSON，形状对齐 ProgressEnvelope 子集）。"""
+    path = _prepare_progress_path(decision_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {
+        "scope": "decision",
+        "id": decision_id,
+        "status": "running",
+        "stage": "preparing",
+        "progress": 0,
+        "message": "",
+        "profile_count": 0,
+        "updated_at": _utc_now(),
+    }
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload.update(json.load(f) or {})
+        except Exception:
+            pass
+    payload.update({k: v for k, v in fields.items() if v is not None})
+    payload["updated_at"] = _utc_now()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    try:
+        from app.api.stream import publish_decision_status
+
+        publish_decision_status(decision_id)
+    except Exception:
+        pass
+    return payload
+
+
+def _read_prepare_progress(decision_id: str) -> Optional[Dict[str, Any]]:
+    path = _prepare_progress_path(decision_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
 def _event_config_is_strong(event_config: Optional[Dict[str, Any]]) -> bool:
     """LLM 生成的初始激活通常 ≥2 帖 + ≥1 话题 + 叙事；干预 stub 往往只有 1 帖。"""
     if not isinstance(event_config, dict):
@@ -391,8 +439,13 @@ class ScenarioRunner:
         decision_id: str,
         intervention_text: str,
         use_llm_profiles: Optional[bool] = None,
+        force: bool = False,
     ) -> str:
-        """切片 + 人口 + 网络，写入 DECISION_DIR/{id}/shared。"""
+        """切片 + 人口 + 网络，写入 DECISION_DIR/{id}/shared。
+
+        Phase C：默认重入——已有 slice/profiles/base_config 则跳过；
+        仅 force=True 时清空 shared/ 重做。
+        """
         dec = registry.get_decision(decision_id)
         from app.models.store import connection
 
@@ -410,86 +463,217 @@ class ScenarioRunner:
             version = dict(row)
 
         snapshot = load_snapshot(version["snapshot_path"])
-        world_slice = slice_world(
-            snapshot,
-            intervention_text=intervention_text,
-            k=2,
-            use_llm_filter=False,
-        )
-
+        world_slice = None
         shared_dir = os.path.join(Config.DECISION_DIR, decision_id, "shared")
-        if os.path.exists(shared_dir):
+        slice_path = os.path.join(shared_dir, "slice.json")
+        profiles_path = os.path.join(shared_dir, "reddit_profiles.json")
+        base_cfg_path = os.path.join(shared_dir, "base_simulation_config.json")
+
+        if force and os.path.exists(shared_dir):
             shutil.rmtree(shared_dir)
         os.makedirs(shared_dir, exist_ok=True)
 
-        with open(
-            os.path.join(shared_dir, "slice.json"), "w", encoding="utf-8"
-        ) as f:
-            json.dump(world_slice, f, ensure_ascii=False, indent=2)
+        if os.path.isfile(slice_path) and not force:
+            try:
+                with open(slice_path, encoding="utf-8") as f:
+                    world_slice = json.load(f)
+                if not (world_slice or {}).get("nodes"):
+                    world_slice = None
+                else:
+                    logger.info(f"resume shared: 复用 slice.json decision={decision_id}")
+            except Exception:
+                world_slice = None
+
+        if world_slice is None:
+            _write_prepare_progress(
+                decision_id,
+                stage="slice",
+                progress=10,
+                message="正在切片世界图谱…",
+                status="running",
+            )
+            world_slice = slice_world(
+                snapshot,
+                intervention_text=intervention_text,
+                k=2,
+                use_llm_filter=False,
+            )
+            with open(slice_path, "w", encoding="utf-8") as f:
+                json.dump(world_slice, f, ensure_ascii=False, indent=2)
+        else:
+            _write_prepare_progress(
+                decision_id,
+                stage="slice",
+                progress=10,
+                message="复用已有世界切片…",
+                status="running",
+            )
+
+        node_count = len(world_slice.get("nodes") or [])
+        _write_prepare_progress(
+            decision_id,
+            stage="profiles",
+            progress=25,
+            message=f"切片完成（{node_count} 实体），正在生成 Agent 人设…",
+            profile_count=0,
+            status="running",
+        )
 
         if use_llm_profiles is None:
             use_llm_profiles = bool(Config.LLM_API_KEY)
 
-        # 第一次生成人设（可走 LLM）；第二次仅注入关注关系，复用结果避免 LLM 跑两遍
-        pop = generate_profiles_from_slice(
-            world_slice,
-            output_dir=shared_dir,
-            max_agents=30,
-            use_llm=use_llm_profiles,
-        )
-        network = write_network(
-            world_slice,
-            pop["entity_to_agent"],
-            os.path.join(shared_dir, "network.json"),
-        )
-        generate_profiles_from_slice(
-            world_slice,
-            output_dir=shared_dir,
-            max_agents=30,
-            use_llm=False,
-            network=network,
-            existing_profiles=pop.get("profiles"),
-            existing_entity_to_agent=pop.get("entity_to_agent"),
+        # resume：人设已达标则跳过 LLM
+        existing_profiles = None
+        if os.path.isfile(profiles_path) and not force:
+            try:
+                with open(profiles_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, list) and len(raw) > 0:
+                    existing_profiles = raw
+                elif isinstance(raw, dict):
+                    existing_profiles = raw.get("profiles") or []
+            except Exception:
+                existing_profiles = None
+
+        if existing_profiles and len(existing_profiles) >= max(1, min(5, max(node_count // 2, 1))):
+            pop = {
+                "profiles": existing_profiles,
+                "entity_to_agent": {},
+            }
+            eta_path = os.path.join(shared_dir, "entity_to_agent.json")
+            if os.path.isfile(eta_path):
+                try:
+                    with open(eta_path, encoding="utf-8") as f:
+                        pop["entity_to_agent"] = json.load(f) or {}
+                except Exception:
+                    pass
+            logger.info(
+                f"resume shared: 复用 {len(existing_profiles)} 人设 decision={decision_id}"
+            )
+            profile_count = len(existing_profiles)
+            _write_prepare_progress(
+                decision_id,
+                stage="profiles",
+                progress=70,
+                message=f"复用已有 {profile_count} 个人设，注入关注网络…",
+                profile_count=profile_count,
+                status="running",
+            )
+            network = write_network(
+                world_slice,
+                pop.get("entity_to_agent") or {},
+                os.path.join(shared_dir, "network.json"),
+            )
+            generate_profiles_from_slice(
+                world_slice,
+                output_dir=shared_dir,
+                max_agents=30,
+                use_llm=False,
+                network=network,
+                existing_profiles=pop.get("profiles"),
+                existing_entity_to_agent=pop.get("entity_to_agent"),
+            )
+        else:
+            pop = generate_profiles_from_slice(
+                world_slice,
+                output_dir=shared_dir,
+                max_agents=30,
+                use_llm=use_llm_profiles,
+            )
+            profile_count = len(pop.get("profiles") or [])
+            _write_prepare_progress(
+                decision_id,
+                stage="profiles",
+                progress=70,
+                message=f"已生成 {profile_count} 个人设，注入关注网络…",
+                profile_count=profile_count,
+                status="running",
+            )
+            network = write_network(
+                world_slice,
+                pop["entity_to_agent"],
+                os.path.join(shared_dir, "network.json"),
+            )
+            generate_profiles_from_slice(
+                world_slice,
+                output_dir=shared_dir,
+                max_agents=30,
+                use_llm=False,
+                network=network,
+                existing_profiles=pop.get("profiles"),
+                existing_entity_to_agent=pop.get("entity_to_agent"),
+            )
+
+        _write_prepare_progress(
+            decision_id,
+            stage="inject",
+            progress=85,
+            message="正在写入基础配置…",
+            profile_count=profile_count,
+            status="running",
         )
 
         from app.engine.contract import default_time_config
 
-        base_cfg = {
-            "time_config": default_time_config(
-                total_hours=int(dec.get("max_rounds") or 10),
-                minutes_per_round=60,
-                agents_per_hour_min=2,
-                agents_per_hour_max=12,
-            ),
-            "event_config": {"initial_posts": [], "hot_topics": [], "narrative_direction": ""},
-            "agent_configs": [],
-            "twitter_config": {
-                "platform": "twitter",
-                "recency_weight": 0.4,
-                "popularity_weight": 0.3,
-                "relevance_weight": 0.3,
-                "viral_threshold": 10,
-                "echo_chamber_strength": 0.5,
-            },
-            "reddit_config": {
-                "platform": "reddit",
-                "recency_weight": 0.3,
-                "popularity_weight": 0.4,
-                "relevance_weight": 0.3,
-                "viral_threshold": 15,
-                "echo_chamber_strength": 0.6,
-            },
-            "platform": "parallel",
-            "simulation_requirement": intervention_text or (dec.get("title") or ""),
-        }
-        with open(
-            os.path.join(shared_dir, "base_simulation_config.json"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            json.dump(base_cfg, f, ensure_ascii=False, indent=2)
+        base_cfg = None
+        if os.path.isfile(base_cfg_path) and not force:
+            try:
+                with open(base_cfg_path, encoding="utf-8") as f:
+                    base_cfg = json.load(f)
+                if not (base_cfg or {}).get("time_config"):
+                    base_cfg = None
+                else:
+                    logger.info(
+                        f"resume shared: 复用 base_simulation_config decision={decision_id}"
+                    )
+            except Exception:
+                base_cfg = None
+
+        if base_cfg is None:
+            base_cfg = {
+                "time_config": default_time_config(
+                    total_hours=int(dec.get("max_rounds") or 10),
+                    minutes_per_round=60,
+                    agents_per_hour_min=2,
+                    agents_per_hour_max=12,
+                ),
+                "event_config": {
+                    "initial_posts": [],
+                    "hot_topics": [],
+                    "narrative_direction": "",
+                },
+                "agent_configs": [],
+                "twitter_config": {
+                    "platform": "twitter",
+                    "recency_weight": 0.4,
+                    "popularity_weight": 0.3,
+                    "relevance_weight": 0.3,
+                    "viral_threshold": 10,
+                    "echo_chamber_strength": 0.5,
+                },
+                "reddit_config": {
+                    "platform": "reddit",
+                    "recency_weight": 0.3,
+                    "popularity_weight": 0.4,
+                    "relevance_weight": 0.3,
+                    "viral_threshold": 15,
+                    "echo_chamber_strength": 0.6,
+                },
+                "platform": "parallel",
+                "simulation_requirement": intervention_text or (dec.get("title") or ""),
+            }
+            with open(base_cfg_path, "w", encoding="utf-8") as f:
+                json.dump(base_cfg, f, ensure_ascii=False, indent=2)
 
         registry.update_decision(decision_id, shared_world_dir=shared_dir)
+        _write_prepare_progress(
+            decision_id,
+            stage="inject",
+            progress=90,
+            message="共享世界已就绪，注入各方案…",
+            profile_count=profile_count,
+            status="running",
+        )
         return shared_dir
 
     def _inject_shared_world_into_sim(
@@ -549,11 +733,12 @@ class ScenarioRunner:
         self.sim_manager.sync_prepare_to_registry(state)
         return run_dir
 
-    def prepare_decision(self, decision_id: str) -> Dict[str, Any]:
+    def prepare_decision(self, decision_id: str, force: bool = False) -> Dict[str, Any]:
         """
         准备推演环境。
         - N=1 M=1：走 SimulationManager.prepare_simulation（LLM 人设，MiroFish 原体验）
         - N>1 或 M>1：共享世界建一次，注入到各 sim
+        - force=True：N>1 清空 shared/ 重做
         """
         dec = registry.get_decision(decision_id)
         if not dec:
@@ -571,7 +756,11 @@ class ScenarioRunner:
         intervention_text = "\n".join(texts) or (dec.get("title") or decision_id)
 
         # 已准备且各 sim 配置齐全：直接返回，避免刷新冲掉 LLM event_config
-        if runs and all(r.get("sim_id") and _sim_dir_looks_prepared(r["sim_id"]) for r in runs):
+        if (
+            not force
+            and runs
+            and all(r.get("sim_id") and _sim_dir_looks_prepared(r["sim_id"]) for r in runs)
+        ):
             prefer = runs[0].get("sim_id") if len(runs) == 1 else None
             world = self.get_world_assets(decision_id, prefer_sim_id=prefer)
             logger.info(f"决策已准备，跳过重建: decision_id={decision_id}, sims={len(runs)}")
@@ -680,7 +869,16 @@ class ScenarioRunner:
             }
 
         # ---- N>1：共享世界 + 注入 ----
-        shared_dir = self._build_shared_world(decision_id, intervention_text)
+        _write_prepare_progress(
+            decision_id,
+            stage="slice",
+            progress=5,
+            message="开始构建共享世界…",
+            status="running",
+        )
+        shared_dir = self._build_shared_world(
+            decision_id, intervention_text, force=force
+        )
         with open(
             os.path.join(shared_dir, "base_simulation_config.json"),
             encoding="utf-8",
@@ -714,6 +912,14 @@ class ScenarioRunner:
 
         registry.update_decision(decision_id, status="prepared")
         world = self.get_world_assets(decision_id)
+        _write_prepare_progress(
+            decision_id,
+            stage="ready",
+            progress=100,
+            message="共享世界已准备完成",
+            profile_count=len(world.get("profiles") or []),
+            status="completed",
+        )
         return {
             "decision_id": decision_id,
             "status": "completed",
@@ -812,6 +1018,16 @@ class ScenarioRunner:
                 item["interested_topics"] = []
             normalized.append(item)
 
+        slice_node_count = 0
+        slice_path = os.path.join(shared_dir, "slice.json") if shared_dir else ""
+        if slice_path and os.path.isfile(slice_path):
+            try:
+                with open(slice_path, encoding="utf-8") as f:
+                    slice_data = json.load(f)
+                slice_node_count = len(slice_data.get("nodes") or [])
+            except Exception:
+                slice_node_count = 0
+
         return {
             "decision_id": decision_id,
             "sim_id": sim_id,
@@ -820,12 +1036,57 @@ class ScenarioRunner:
             "profiles": normalized,
             "config": config,
             "ready": bool(normalized or config),
+            "slice_node_count": slice_node_count,
+            "has_slice": bool(slice_node_count),
         }
 
-    def start_decision(self, decision_id: str, background: bool = True) -> Dict[str, Any]:
+    def start_decision(
+        self,
+        decision_id: str,
+        background: bool = True,
+        force: bool = False,
+        revive_worker: bool = False,
+    ) -> Dict[str, Any]:
+        """启动决策推演。
+
+        revive_worker=True（Phase C）：即便 status=running 也重起 worker 线程
+        （进程重启后 daemon 线程已丢；内部会 skip completed / attach 活 sim）。
+        N=1 旁路启动后 registry 已是 running：env 已死时 worker 会重启该 run——预期行为。
+        """
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
+
+        status = str(dec.get("status") or "").lower()
+
+        # 已在推演且非 force：默认 attach；revive 时继续往下起 worker
+        if status == "running" and not force and not revive_worker:
+            snap = self.get_status(decision_id)
+            snap["attached"] = True
+            snap["decision_id"] = decision_id
+            snap["message"] = "推演进行中，已附着现有运行"
+            return snap
+
+        # force：停掉仍在跑的 run / env，再重开
+        if force:
+            runs = registry.list_runs_for_decision(decision_id) or []
+            for run in runs:
+                sim_id = run.get("sim_id")
+                st = str(run.get("status") or "").lower()
+                if sim_id and st in ("running", "starting"):
+                    try:
+                        SimulationRunner.stop_simulation(sim_id)
+                    except Exception as e:
+                        logger.warning(f"force stop {sim_id}: {e}")
+                    try:
+                        SimulationRunner.close_simulation_env(sim_id)
+                    except Exception as e:
+                        logger.warning(f"force close-env {sim_id}: {e}")
+                    try:
+                        SimulationRunner.cleanup_simulation_logs(sim_id)
+                    except Exception as e:
+                        logger.warning(f"force cleanup logs {sim_id}: {e}")
+                    registry.update_run(run["id"], status="ready", error=None)
 
         registry.update_decision(decision_id, status="running")
         try:
@@ -842,7 +1103,12 @@ class ScenarioRunner:
                 daemon=True,
             )
             t.start()
-            return {"decision_id": decision_id, "status": "running"}
+            return {
+                "decision_id": decision_id,
+                "status": "running",
+                "force_restarted": bool(force),
+                "attached": False,
+            }
 
         return self._run_decision_worker(decision_id)
 
@@ -889,6 +1155,62 @@ class ScenarioRunner:
                             finished_at=_utc_now(),
                             error="缺少 sim_id",
                         )
+                        continue
+
+                    # 已在跑且 env 仍活：attach 并等待结束（Phase C revive 不能直接 skip）
+                    if st == "running" and SimulationRunner.check_env_alive(sim_id):
+                        logger.info(
+                            f"run 已在推演，附着等待: run={run['id']} sim={sim_id}"
+                        )
+                        last_alive_sim = sim_id
+                        # 确保 monitor/adopt 已挂上
+                        try:
+                            SimulationRunner.try_adopt(sim_id)
+                        except Exception:
+                            pass
+                        try:
+                            from app.api.stream import publish_decision_status
+
+                            publish_decision_status(decision_id)
+                        except Exception:
+                            pass
+                        result = wait_for_simulation(
+                            run_id=sim_id,
+                            max_rounds=max_rounds,
+                        )
+                        run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+                        metrics = None
+                        try:
+                            from app.decision.metrics_service import compute_run_metrics
+
+                            metrics = compute_run_metrics(
+                                run_dir,
+                                scenario_id=sc.get("kind") or sc["id"],
+                                scenario_name=sc.get("name") or "",
+                                color=sc.get("color") or "#333",
+                            )
+                        except Exception as me:
+                            logger.warning(f"指标计算失败: {me}")
+
+                        final_status = result.get("status") or "completed"
+                        # fall through to update_run below via duplicated logic — use shared path
+                        registry.update_run(
+                            run["id"],
+                            status=(
+                                "completed"
+                                if final_status in ("completed", "done", "success", "stopped")
+                                else "failed"
+                            ),
+                            finished_at=_utc_now(),
+                            metrics=metrics,
+                            error=result.get("error"),
+                        )
+                        try:
+                            from app.api.stream import publish_decision_status
+
+                            publish_decision_status(decision_id)
+                        except Exception:
+                            pass
                         continue
 
                     # 关闭上一个活跃 env（N>1 资源策略）
@@ -991,12 +1313,10 @@ class ScenarioRunner:
             leftover = []
             for sc in registry.list_scenarios(decision_id):
                 for run in registry.list_runs_for_scenario(sc["id"]):
-                    if (run.get("status") or "").lower() in (
-                        "pending",
-                        "running",
-                        "created",
-                        "ready",
-                    ):
+                    st = (run.get("status") or "").lower()
+                    # ready = 已准备未开跑；若 run_state 已终态则上面应已写成 completed
+                    # 勿把单纯 ready 当成「推演未完成」导致 decision 假 running
+                    if st in ("pending", "running", "created"):
                         leftover.append(run["id"])
             registry.update_decision(
                 decision_id,
@@ -1022,7 +1342,175 @@ class ScenarioRunner:
                 pass
             return failed
 
+    def reconcile_runs_with_run_state(self, decision_id: str) -> bool:
+        """用各 sim 的 run_state.json 校正 registry（N=1 旁路启动也会生效）。
+
+        Returns True 若有写入。
+        """
+        from app.engine.simulation_runner import SimulationRunner
+
+        changed = False
+        try:
+            scenarios = registry.list_scenarios(decision_id) or []
+        except Exception:
+            return False
+
+        any_running = False
+        any_incomplete = False
+        all_terminal = True
+        saw_run = False
+
+        for sc in scenarios:
+            for run in registry.list_runs_for_scenario(sc["id"]) or []:
+                saw_run = True
+                sim_id = run.get("sim_id")
+                st = (run.get("status") or "").lower()
+                if not sim_id:
+                    if st not in ("completed", "failed", "timeout", "stalled"):
+                        all_terminal = False
+                        any_incomplete = True
+                    continue
+
+                rs = SimulationRunner.get_run_state(sim_id)
+                if not rs:
+                    if st in ("pending", "running", "created"):
+                        any_incomplete = True
+                        all_terminal = False
+                    elif st == "ready":
+                        # 未开跑：不算推演进行中
+                        all_terminal = False
+                    continue
+
+                rv = (
+                    rs.runner_status.value
+                    if hasattr(rs.runner_status, "value")
+                    else str(rs.runner_status)
+                ).lower()
+
+                if rv == "running" or rv == "starting":
+                    any_running = True
+                    all_terminal = False
+                    if st != "running":
+                        try:
+                            registry.update_run(
+                                run["id"],
+                                status="running",
+                                started_at=run.get("started_at") or _utc_now(),
+                                error=None,
+                            )
+                            changed = True
+                        except Exception as e:
+                            logger.debug(f"reconcile running skip: {e}")
+                elif rv in ("completed", "stopped", "failed"):
+                    # ready 且从未 started：通常是上次推演残留；但 N=1 旁路可能没写 started_at
+                    if st == "ready" and not run.get("started_at"):
+                        rounds_done = int(getattr(rs, "current_round", 0) or 0)
+                        rounds_total = int(getattr(rs, "total_rounds", 0) or 0)
+                        if not (
+                            rv in ("completed", "stopped")
+                            and rounds_total > 0
+                            and rounds_done >= rounds_total
+                        ):
+                            all_terminal = False
+                            continue
+                    rounds_done = int(getattr(rs, "current_round", 0) or 0)
+                    rounds_total = int(getattr(rs, "total_rounds", 0) or 0)
+                    # 轮次跑满后的 stopped 视为 completed（用户停或进程收尾）
+                    if (
+                        rv == "stopped"
+                        and rounds_total > 0
+                        and rounds_done >= rounds_total
+                    ):
+                        mapped = "completed"
+                    else:
+                        mapped = {
+                            "completed": "completed",
+                            "stopped": "failed",
+                            "failed": "failed",
+                        }.get(rv, "completed")
+                    if st != mapped:
+                        try:
+                            registry.update_run(
+                                run["id"],
+                                status=mapped,
+                                finished_at=run.get("finished_at") or _utc_now(),
+                            )
+                            changed = True
+                        except Exception as e:
+                            logger.debug(f"reconcile terminal skip: {e}")
+                else:
+                    if st in ("pending", "running", "created"):
+                        any_incomplete = True
+                        all_terminal = False
+                    elif st == "ready":
+                        all_terminal = False
+
+        if not saw_run:
+            return changed
+
+        dec = registry.get_decision(decision_id) or {}
+        cur = str(dec.get("status") or "").lower()
+        want = None
+        if any_running:
+            want = "running"
+        elif all_terminal and not any_incomplete:
+            # 全部终态
+            want = "completed"
+        elif cur == "prepared" and any_running:
+            want = "running"
+
+        # 已 prepared 且所有 run_state completed → completed
+        if cur in ("prepared", "running", "ready") and all_terminal and not any_running:
+            # 确认每个有 sim 的 run 都终态
+            all_done = True
+            for sc in registry.list_scenarios(decision_id) or []:
+                for run in registry.list_runs_for_scenario(sc["id"]) or []:
+                    st = (run.get("status") or "").lower()
+                    if st in ("pending", "running", "created"):
+                        all_done = False
+                        break
+                    if st == "ready":
+                        sid = run.get("sim_id")
+                        rs = SimulationRunner.get_run_state(sid) if sid else None
+                        if rs and (
+                            (
+                                rs.runner_status.value
+                                if hasattr(rs.runner_status, "value")
+                                else str(rs.runner_status)
+                            ).lower()
+                            in ("completed", "stopped", "failed")
+                        ):
+                            continue
+                        # ready 且无终态 run_state：仍算未完成推演（未开跑）
+                        all_done = False
+                        break
+                if not all_done:
+                    break
+            if all_done:
+                want = "completed"
+
+        if want and want != cur:
+            try:
+                registry.update_decision(decision_id, status=want)
+                changed = True
+            except Exception as e:
+                logger.debug(f"reconcile decision status skip: {e}")
+
+        return changed
+
     def get_status(self, decision_id: str) -> Dict[str, Any]:
+        # 惰性回收僵尸 preparing
+        try:
+            from app.progress.janitor import maybe_reclaim_on_read
+
+            maybe_reclaim_on_read(decision_id)
+        except Exception:
+            pass
+        # 用 run_state 校正 registry（修复 N=1 旁路启动不回写）
+        try:
+            self.reconcile_runs_with_run_state(decision_id)
+        except Exception as e:
+            logger.debug(f"reconcile_runs_with_run_state: {e}")
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
@@ -1058,12 +1546,32 @@ class ScenarioRunner:
             for r in m["runs"]
             if r["status"] in ("completed", "stalled", "failed", "timeout")
         )
-        return {
+        out = {
             "decision": dec,
             "status": dec.get("status"),
             "matrix": matrix,
             "progress": {"done": done, "total": total},
         }
+        prep = _read_prepare_progress(decision_id)
+        if prep:
+            out["prepare_progress"] = prep
+            # 准备中时用细进度覆盖粗矩阵进度展示
+            if str(dec.get("status") or "").lower() == "preparing":
+                out["stage"] = prep.get("stage")
+                out["prepare_percent"] = prep.get("progress")
+                out["message"] = prep.get("message")
+                out["profile_count"] = prep.get("profile_count")
+        # 统一 ProgressEnvelope（含 preparing 时的 profiles_digest）
+        try:
+            from app.progress.envelope import build_decision_envelope
+
+            out["envelope"] = build_decision_envelope(decision_id, out)
+            env_art = (out["envelope"] or {}).get("artifacts") or {}
+            if out.get("profile_count") is None and env_art.get("profile_count"):
+                out["profile_count"] = env_art["profile_count"]
+        except Exception as e:
+            logger.debug(f"build_decision_envelope skip: {e}")
+        return out
 
     def get_decision_detail(self, decision_id: str) -> Dict[str, Any]:
         status = self.get_status(decision_id)

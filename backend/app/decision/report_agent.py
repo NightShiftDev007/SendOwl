@@ -109,6 +109,18 @@ class ReportLogger:
                 "message": t('report.taskStarted')
             }
         )
+
+    def log_resumed(self, from_section: int, total_sections: int):
+        """断点续跑分隔日志（Phase C）"""
+        self.log(
+            action="resumed",
+            stage="generating",
+            details={
+                "message": f"已从断点续跑：下一章 {from_section}/{total_sections}",
+                "from_section": from_section,
+                "total_sections": total_sections,
+            },
+        )
     
     def log_planning_start(self):
         """记录大纲规划开始"""
@@ -428,6 +440,22 @@ class ReportOutline:
             "summary": self.summary,
             "sections": [s.to_dict() for s in self.sections]
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ReportOutline":
+        sections = [
+            ReportSection(
+                title=str(s.get("title") or ""),
+                content=str(s.get("content") or ""),
+            )
+            for s in (data.get("sections") or [])
+            if isinstance(s, dict)
+        ]
+        return cls(
+            title=str(data.get("title") or ""),
+            summary=str(data.get("summary") or ""),
+            sections=sections,
+        )
     
     def to_markdown(self) -> str:
         """转换为Markdown格式"""
@@ -1532,7 +1560,8 @@ class ReportAgent:
     def generate_report(
         self, 
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
-        report_id: Optional[str] = None
+        report_id: Optional[str] = None,
+        resume: bool = False,
     ) -> Report:
         """
         生成完整报告（分章节实时输出）
@@ -1551,6 +1580,7 @@ class ReportAgent:
         Args:
             progress_callback: 进度回调函数 (stage, progress, message)
             report_id: 报告ID（可选，如果不传则自动生成）
+            resume: Phase C 断点续跑——复用 outline / 已完成章节
             
         Returns:
             Report: 完整报告
@@ -1580,11 +1610,15 @@ class ReportAgent:
             
             # 初始化日志记录器（结构化日志 agent_log.jsonl）
             self.report_logger = ReportLogger(report_id)
-            self.report_logger.log_start(
-                simulation_id=self.simulation_id,
-                graph_id=self.graph_id,
-                simulation_requirement=self.simulation_requirement
-            )
+            if resume:
+                # 不重复 report_start；由 log_resumed 分隔
+                pass
+            else:
+                self.report_logger.log_start(
+                    simulation_id=self.simulation_id,
+                    graph_id=self.graph_id,
+                    simulation_requirement=self.simulation_requirement
+                )
             
             # 初始化控制台日志记录器（console_log.txt）
             self.console_logger = ReportConsoleLogger(report_id)
@@ -1595,46 +1629,84 @@ class ReportAgent:
             )
             ReportManager.save_report(report)
             
-            # 阶段1: 规划大纲
-            report.status = ReportStatus.PLANNING
-            ReportManager.update_progress(
-                report_id, "planning", 5, t('progress.startPlanningOutline'),
-                completed_sections=[]
-            )
-            
-            # 记录规划开始日志
-            self.report_logger.log_planning_start()
-            
-            if progress_callback:
-                progress_callback("planning", 0, t('progress.startPlanningOutline'))
-            
-            outline = self.plan_outline(
-                progress_callback=lambda stage, prog, msg: 
-                    progress_callback(stage, prog // 5, msg) if progress_callback else None
-            )
-            report.outline = outline
-            
-            # 记录规划完成日志
-            self.report_logger.log_planning_complete(outline.to_dict())
-            
-            # 保存大纲到文件
-            ReportManager.save_outline(report_id, outline)
-            ReportManager.update_progress(
-                report_id, "planning", 15, t('progress.outlineDone', count=len(outline.sections)),
-                completed_sections=[]
-            )
-            ReportManager.save_report(report)
-            
-            logger.info(t('report.outlineSavedToFile', reportId=report_id))
+            # 阶段1: 规划大纲（resume 时若已有 outline 则跳过）
+            outline = None
+            if resume:
+                outline = ReportManager.load_outline(report_id)
+            if outline and outline.sections:
+                report.outline = outline
+                report.status = ReportStatus.GENERATING
+                ReportManager.update_progress(
+                    report_id, "planning", 15,
+                    t('progress.outlineDone', count=len(outline.sections)),
+                    completed_sections=[]
+                )
+                logger.info(f"resume: 复用已有大纲 report_id={report_id} sections={len(outline.sections)}")
+            else:
+                report.status = ReportStatus.PLANNING
+                ReportManager.update_progress(
+                    report_id, "planning", 5, t('progress.startPlanningOutline'),
+                    completed_sections=[]
+                )
+                
+                # 记录规划开始日志
+                self.report_logger.log_planning_start()
+                
+                if progress_callback:
+                    progress_callback("planning", 0, t('progress.startPlanningOutline'))
+                
+                outline = self.plan_outline(
+                    progress_callback=lambda stage, prog, msg: 
+                        progress_callback(stage, prog // 5, msg) if progress_callback else None
+                )
+                report.outline = outline
+                
+                # 记录规划完成日志
+                self.report_logger.log_planning_complete(outline.to_dict())
+                
+                # 保存大纲到文件
+                ReportManager.save_outline(report_id, outline)
+                ReportManager.update_progress(
+                    report_id, "planning", 15, t('progress.outlineDone', count=len(outline.sections)),
+                    completed_sections=[]
+                )
+                ReportManager.save_report(report)
+                
+                logger.info(t('report.outlineSavedToFile', reportId=report_id))
             
             # 阶段2: 逐章节生成（分章节保存）
             report.status = ReportStatus.GENERATING
             
             total_sections = len(outline.sections)
             generated_sections = []  # 保存内容用于上下文
+
+            # resume：预加载已完成章节
+            first_missing = 1
+            if resume:
+                for i, section in enumerate(outline.sections):
+                    section_num = i + 1
+                    existing = ReportManager.load_section_markdown(report_id, section_num)
+                    if existing:
+                        section.content = existing
+                        generated_sections.append(existing)
+                        completed_section_titles.append(section.title)
+                        first_missing = section_num + 1
+                    else:
+                        break
+                if first_missing <= total_sections:
+                    self.report_logger.log_resumed(first_missing, total_sections)
+                    if progress_callback:
+                        progress_callback(
+                            "generating",
+                            20 + int(((first_missing - 1) / max(total_sections, 1)) * 70),
+                            f"已从断点续跑：下一章 {first_missing}/{total_sections}",
+                        )
             
             for i, section in enumerate(outline.sections):
                 section_num = i + 1
+                if resume and section_num < first_missing:
+                    continue
+
                 base_progress = 20 + int((i / total_sections) * 70)
                 
                 # 更新进度
@@ -1920,6 +1992,135 @@ class ReportManager:
         return folder
     
     @classmethod
+    def _get_generate_task_path(cls, report_id: str) -> str:
+        """报告生成 task_id 侧车（刷新后可恢复 SSE）"""
+        return os.path.join(cls._get_report_folder(report_id), "generate_task.json")
+
+    @classmethod
+    def save_generate_task(
+        cls,
+        report_id: str,
+        task_id: str,
+        *,
+        simulation_id: Optional[str] = None,
+        decision_id: Optional[str] = None,
+    ) -> None:
+        cls._ensure_report_folder(report_id)
+        payload = {
+            "report_id": report_id,
+            "task_id": task_id,
+            "simulation_id": simulation_id,
+            "decision_id": decision_id,
+            "updated_at": datetime.now().isoformat(),
+        }
+        with open(cls._get_generate_task_path(report_id), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def get_generate_task_id(cls, report_id: str) -> Optional[str]:
+        path = cls._get_generate_task_path(report_id)
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            tid = data.get("task_id")
+            return tid if tid else None
+        except Exception:
+            return None
+
+    @classmethod
+    def get_generate_task_meta(cls, report_id: str) -> Optional[Dict[str, Any]]:
+        path = cls._get_generate_task_path(report_id)
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    @classmethod
+    def resume_generate_in_background(
+        cls,
+        report_id: str,
+        task_id: str,
+        *,
+        simulation_id: str,
+        graph_id: str,
+        simulation_requirement: str,
+    ) -> bool:
+        """Phase C：复用原 task_id，以 resume=True 重跑报告生成。"""
+        import threading
+        from app.models.task import TaskManager, TaskStatus
+        from app.utils.locale import get_locale, set_locale
+
+        if not report_id or not task_id or not graph_id:
+            return False
+
+        tm = TaskManager()
+        task = tm.get_task(task_id)
+        if not task:
+            return False
+
+        tm.update_task(
+            task_id,
+            status=TaskStatus.PROCESSING,
+            progress=max(int(getattr(task, "progress", 0) or 0), 1),
+            message="recovery: 从断点续跑报告生成",
+        )
+        cls.save_generate_task(
+            report_id, task_id, simulation_id=simulation_id
+        )
+
+        locale = get_locale()
+
+        def run_generate():
+            set_locale(locale)
+            try:
+                agent = ReportAgent(
+                    graph_id=graph_id,
+                    simulation_id=simulation_id,
+                    simulation_requirement=simulation_requirement or "",
+                )
+
+                def progress_callback(stage, progress, message):
+                    tm.update_task(
+                        task_id,
+                        progress=progress,
+                        message=f"[{stage}] {message}",
+                    )
+
+                report = agent.generate_report(
+                    progress_callback=progress_callback,
+                    report_id=report_id,
+                    resume=True,
+                )
+                cls.save_report(report)
+                if report.status == ReportStatus.COMPLETED:
+                    tm.complete_task(
+                        task_id,
+                        result={
+                            "report_id": report.report_id,
+                            "simulation_id": simulation_id,
+                            "status": "completed",
+                            "resumed": True,
+                        },
+                    )
+                else:
+                    tm.fail_task(task_id, report.error or "报告生成失败")
+            except Exception as e:
+                logger.error(f"resume 报告生成失败: {e}")
+                tm.fail_task(task_id, str(e))
+
+        threading.Thread(
+            target=run_generate, daemon=True, name=f"resume-report-{report_id}"
+        ).start()
+        logger.info(f"已启动报告断点续跑: report={report_id} task={task_id}")
+        return True
+
+    @classmethod
     def _get_report_path(cls, report_id: str) -> str:
         """获取报告元信息文件路径"""
         return os.path.join(cls._get_report_folder(report_id), "meta.json")
@@ -2090,6 +2291,35 @@ class ReportManager:
             json.dump(outline.to_dict(), f, ensure_ascii=False, indent=2)
         
         logger.info(t('report.outlineSaved', reportId=report_id))
+
+    @classmethod
+    def load_outline(cls, report_id: str) -> Optional[ReportOutline]:
+        """从磁盘加载大纲（Phase C resume）"""
+        path = cls._get_outline_path(report_id)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return None
+            return ReportOutline.from_dict(data)
+        except Exception as e:
+            logger.warning(f"load_outline failed {report_id}: {e}")
+            return None
+
+    @classmethod
+    def load_section_markdown(cls, report_id: str, section_index: int) -> Optional[str]:
+        """读取已保存章节全文（含标题），不存在返回 None"""
+        path = cls._get_section_path(report_id, section_index)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                text = f.read().strip()
+            return text or None
+        except Exception:
+            return None
     
     @classmethod
     def save_section(

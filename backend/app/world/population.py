@@ -187,20 +187,22 @@ def generate_profiles_from_slice(
         from app.world.oasis_profile_generator import OasisProfileGenerator
 
         # 不传 graph_id，跳过 Zep 二次检索；失败直接抛错，禁止回退规则空壳
+        # 增量写入 shared/reddit_profiles.json，供 Step2 realtime / SSE 预览
+        reddit_path = os.path.join(output_dir, "reddit_profiles.json")
+        twitter_path = os.path.join(output_dir, "twitter_profiles.csv")
         gen = OasisProfileGenerator(graph_id=None)
         oasis_profiles = gen.generate_profiles_from_entities(
             entities,
             use_llm=True,
             graph_id=None,
             parallel_count=3,
-            output_platform="twitter",
+            realtime_output_path=reddit_path,
+            output_platform="reddit",
         )
         for p in oasis_profiles:
             profiles_data.append(p.to_dict())
             if p.source_entity_uuid:
                 entity_to_agent[p.source_entity_uuid] = p.user_id
-        twitter_path = os.path.join(output_dir, "twitter_profiles.csv")
-        reddit_path = os.path.join(output_dir, "reddit_profiles.json")
         gen.save_profiles(oasis_profiles, twitter_path, platform="twitter")
         gen.save_profiles(oasis_profiles, reddit_path, platform="reddit")
     elif use_llm and not Config.LLM_API_KEY:

@@ -344,7 +344,13 @@
     "errorOccurred": "Sorry, an error occurred: {error}",
     "noResponse": "No response",
     "requestFailed": "Request failed",
-    "selectAgentFirst": "Please select a simulated individual first"
+    "selectAgentFirst": "Please select a simulated individual first",
+    "modeLive": "Live interview",
+    "modeOffline": "Replay mode",
+    "modeLiveHint": "OASIS env is alive; answers come from live agents",
+    "modeOfflineHint": "Env closed; answers are based on personas and action logs",
+    "modeOfflineBanner": "Simulation env is closed: deep interaction uses retrospective interview (persona + action logs), not live agents.",
+    "modeOfflineTag": "Replay"
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
@@ -374,7 +380,7 @@
     "step1Button": "Graph Build",
     "step2Button": "Env Setup",
     "step4Button": "Analysis Report",
-    "replayHint": "Step 3 'Run Simulation' and Step 5 'Deep Interaction' must be started during runtime and do not support history replay",
+    "replayHint": "Step 3 'Run Simulation' must be started during runtime. Step 5 'Deep Interaction' supports retrospective interview after the env closes (persona + action logs).",
     "notStarted": "Not started",
     "roundsProgress": "{current}/{total} rounds",
     "untitledSimulation": "Untitled simulation",

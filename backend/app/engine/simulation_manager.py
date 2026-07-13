@@ -74,6 +74,9 @@ class SimulationState:
     
     # 错误信息
     error: Optional[str] = None
+
+    # N=1 prepare 可恢复：刷新后续订 task SSE
+    prepare_task_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """完整状态字典（内部使用）"""
@@ -95,6 +98,7 @@ class SimulationState:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "error": self.error,
+            "prepare_task_id": self.prepare_task_id,
         }
     
     def to_simple_dict(self) -> Dict[str, Any]:
@@ -109,6 +113,7 @@ class SimulationState:
             "entity_types": self.entity_types,
             "config_generated": self.config_generated,
             "error": self.error,
+            "prepare_task_id": self.prepare_task_id,
         }
 
 
@@ -183,6 +188,7 @@ class SimulationManager:
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat()),
             error=data.get("error"),
+            prepare_task_id=data.get("prepare_task_id"),
         )
         
         self._simulations[simulation_id] = state
@@ -259,6 +265,43 @@ class SimulationManager:
             
             sim_dir = self._get_simulation_dir(simulation_id)
 
+            # Phase C：stage=all 时按磁盘产物细化跳过（有多少跳多少）
+            if stage == "all":
+                profiles_path = os.path.join(sim_dir, "reddit_profiles.json")
+                config_path_early = os.path.join(sim_dir, "simulation_config.json")
+                profiles_n = 0
+                if os.path.isfile(profiles_path):
+                    try:
+                        with open(profiles_path, encoding="utf-8") as f:
+                            raw = json.load(f)
+                        if isinstance(raw, list):
+                            profiles_n = len(raw)
+                    except Exception:
+                        profiles_n = 0
+                config_ready = False
+                if os.path.isfile(config_path_early):
+                    try:
+                        with open(config_path_early, encoding="utf-8") as f:
+                            cfg0 = json.load(f)
+                        config_ready = bool(
+                            cfg0.get("time_config") and (cfg0.get("agent_configs") or [])
+                        )
+                    except Exception:
+                        config_ready = False
+                if profiles_n > 0 and config_ready:
+                    logger.info(
+                        f"resume prepare: profiles+config 已齐，直接 finalize sim={simulation_id}"
+                    )
+                    if progress_callback:
+                        progress_callback("generating_config", 100, "复用已有配置", current=3, total=3)
+                    return self.finalize_prepare(simulation_id)
+                if profiles_n > 0 and not config_ready:
+                    logger.info(
+                        f"resume prepare: 人设已有({profiles_n})，仅生成配置 sim={simulation_id}"
+                    )
+                    # 下面仍走 all，但跳过 profiles 段
+                    stage = "all_skip_profiles"
+
             # 补全 graph_id（多方案 sim 的 state 常为空）
             graph_id = self._resolve_graph_id(state)
             if graph_id and not state.graph_id:
@@ -270,8 +313,8 @@ class SimulationManager:
                 progress_callback("reading", 0, t('progress.connectingZepGraph'))
 
             filtered = None
-            # 分阶段重试优先用本地实体，避免空 graph_id 打 Zep 导致 405
-            if stage in ("event_config", "platform_config"):
+            # 分阶段重试 / resume 跳过人设：优先本地实体，避免空 graph_id 打 Zep
+            if stage in ("event_config", "platform_config", "all_skip_profiles"):
                 local_entities = self._entities_from_local(simulation_id)
                 if local_entities:
                     types = {e.get_entity_type() or "Unknown" for e in local_entities}

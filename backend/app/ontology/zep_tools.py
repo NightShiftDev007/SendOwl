@@ -359,6 +359,8 @@ class InterviewResult:
     # 统计
     total_agents: int = 0
     interviewed_count: int = 0
+    # live | offline
+    mode: str = "live"
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -369,14 +371,21 @@ class InterviewResult:
             "selection_reasoning": self.selection_reasoning,
             "summary": self.summary,
             "total_agents": self.total_agents,
-            "interviewed_count": self.interviewed_count
+            "interviewed_count": self.interviewed_count,
+            "mode": self.mode,
         }
     
     def to_text(self) -> str:
         """转换为详细的文本格式，供LLM理解和报告引用"""
+        mode_note = (
+            "（回顾采访 · 基于人设与推演动作记录，非当场活环境）"
+            if self.mode == "offline"
+            else "（实时采访 · OASIS 环境）"
+        )
         text_parts = [
             "## 深度采访报告",
             f"**采访主题:** {self.interview_topic}",
+            f"**采访模式:** {mode_note}",
             f"**采访人数:** {self.interviewed_count} / {self.total_agents} 位模拟Agent",
             "\n### 采访对象选择理由",
             self.selection_reasoning or "（自动选择）",
@@ -1278,19 +1287,12 @@ class ZepToolsService:
         """
         【InterviewAgents - 深度采访】
         
-        调用真实的OASIS采访API，采访模拟中正在运行的Agent：
+        调用双轨采访（环境存活走 OASIS IPC；关闭后降级为人设+动作日志的 LLM 回顾）：
         1. 自动读取人设文件，了解所有模拟Agent
         2. 使用LLM分析采访需求，智能选择最相关的Agent
         3. 使用LLM生成采访问题
-        4. 调用 /api/simulation/interview/batch 接口进行真实采访（双平台同时采访）
+        4. interview_with_fallback 批量采访（双平台）
         5. 整合所有采访结果，生成采访报告
-        
-        【重要】此功能需要模拟环境处于运行状态（OASIS环境未关闭）
-        
-        【使用场景】
-        - 需要从不同角色视角了解事件看法
-        - 需要收集多方意见和观点
-        - 需要获取模拟Agent的真实回答（非LLM模拟）
         
         Args:
             simulation_id: 模拟ID（用于定位人设文件和调用采访API）
@@ -1302,7 +1304,7 @@ class ZepToolsService:
         Returns:
             InterviewResult: 采访结果
         """
-        from app.engine.simulation_runner import SimulationRunner
+        from app.engine.offline_interview import interview_with_fallback
         
         logger.info(t("console.interviewAgentsStart", requirement=interview_requirement[:50]))
         
@@ -1360,34 +1362,31 @@ class ZepToolsService:
         )
         optimized_prompt = f"{INTERVIEW_PROMPT_PREFIX}{combined_prompt}"
         
-        # Step 4: 调用真实的采访API（不指定platform，默认双平台同时采访）
+        # Step 4: 双轨采访（不指定platform，默认双平台）
         try:
-            # 构建批量采访列表（不指定platform，双平台采访）
             interviews_request = []
             for agent_idx in selected_indices:
                 interviews_request.append({
                     "agent_id": agent_idx,
-                    "prompt": optimized_prompt  # 使用优化后的prompt
-                    # 不指定platform，API会在twitter和reddit两个平台都采访
+                    "prompt": optimized_prompt
                 })
             
             logger.info(t("console.callingBatchInterviewApi", count=len(interviews_request)))
             
-            # 调用 SimulationRunner 的批量采访方法（不传platform，双平台采访）
-            api_result = SimulationRunner.interview_agents_batch(
+            api_result = interview_with_fallback(
                 simulation_id=simulation_id,
                 interviews=interviews_request,
-                platform=None,  # 不指定platform，双平台采访
-                timeout=180.0   # 双平台需要更长超时
+                platform=None,
+                timeout=180.0,
             )
+            result.mode = api_result.get("mode") or "offline"
             
             logger.info(t("console.interviewApiReturned", count=api_result.get('interviews_count', 0), success=api_result.get('success')))
             
-            # 检查API调用是否成功
             if not api_result.get("success", False):
                 error_msg = api_result.get("error", "未知错误")
                 logger.warning(t("console.interviewApiReturnedFailure", error=error_msg))
-                result.summary = f"采访API调用失败：{error_msg}。请检查OASIS模拟环境状态。"
+                result.summary = f"采访失败：{error_msg}"
                 return result
             
             # Step 5: 解析API返回结果，构建AgentInterview对象
@@ -1457,11 +1456,6 @@ class ZepToolsService:
             
             result.interviewed_count = len(result.interviews)
             
-        except ValueError as e:
-            # 模拟环境未运行
-            logger.warning(t("console.interviewApiCallFailed", error=e))
-            result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保OASIS环境正在运行。"
-            return result
         except Exception as e:
             logger.error(t("console.interviewApiCallException", error=e))
             import traceback
@@ -1475,6 +1469,11 @@ class ZepToolsService:
                 interviews=result.interviews,
                 interview_requirement=interview_requirement
             )
+            if result.mode == "offline":
+                result.summary = (
+                    "【回顾模式】以下内容基于人设与推演动作记录的离线采访，"
+                    "非 OASIS 当场活环境回答。\n\n" + (result.summary or "")
+                )
         
         logger.info(t("console.interviewAgentsComplete", count=result.interviewed_count))
         return result

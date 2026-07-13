@@ -75,6 +75,17 @@ class Config:
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
 
+    # 进度总线：memory（默认单进程）| redis（gunicorn 多 worker 时可选）
+    PROGRESS_BUS = os.environ.get('PROGRESS_BUS', 'memory').lower()
+    # 僵尸 TTL（秒）
+    PROGRESS_TTL_BUILDING_SEC = int(os.environ.get('PROGRESS_TTL_BUILDING_SEC', str(2 * 3600)))
+    PROGRESS_TTL_PREPARING_SEC = int(os.environ.get('PROGRESS_TTL_PREPARING_SEC', str(1 * 3600)))
+    PROGRESS_JANITOR_INTERVAL_SEC = int(os.environ.get('PROGRESS_JANITOR_INTERVAL_SEC', str(5 * 60)))
+    # Phase C：优雅退出时是否保留模拟子进程（kill -9 本就不跑 atexit，与此无关）
+    SIM_DETACH_ON_EXIT = os.environ.get('SIM_DETACH_ON_EXIT', 'false').lower() in (
+        '1', 'true', 'yes', 'on',
+    )
+
     @classmethod
     def validate(cls) -> list[str]:
         """验证必要配置"""

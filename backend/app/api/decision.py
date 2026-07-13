@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 
 from app.decision.metrics_service import build_compare_payload
 from app.decision.report_service import generate_report
-from app.engine.scenario_runner import ScenarioRunner
+from app.engine.scenario_runner import ScenarioRunner, _sim_dir_looks_prepared
 from app.ontology import registry
 from app.utils.logger import get_logger
 
@@ -112,13 +112,78 @@ def replace_decision_scenarios(decision_id: str):
 
 @decision_bp.post("/<decision_id>/prepare")
 def prepare_decision(decision_id: str):
-    """构建共享世界（切片/人口/网络），对应 MiroFish Step2 prepare。"""
+    """构建共享世界（切片/人口/网络），对应 MiroFish Step2 prepare。
+
+    N>1 LLM 人设可能超过前端 HTTP 超时，改为后台线程执行；
+    前端通过 decision.status=preparing + profiles/realtime（含 shared 回退）跟踪进度。
+    """
+    import threading
+
     registry.init_schema()
     try:
-        data = ScenarioRunner().prepare_decision(decision_id)
-        return jsonify({"success": True, "data": data})
+        body = request.get_json(silent=True) or {}
+        force = bool(body.get("force_regenerate"))
+
+        dec = registry.get_decision(decision_id)
+        if not dec:
+            return jsonify({"success": False, "error": f"决策不存在: {decision_id}"}), 404
+
+        status = str(dec.get("status") or "").lower()
+        if status == "preparing" and not force:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "decision_id": decision_id,
+                    "status": "preparing",
+                    "already_prepared": False,
+                    "message": "环境准备进行中",
+                },
+            })
+
+        runner = ScenarioRunner()
+        # 已完整准备：同步返回缓存，避免无意义后台任务
+        try:
+            runs = registry.list_runs_for_decision(decision_id) or []
+
+            if (
+                not force
+                and runs
+                and all(r.get("sim_id") and _sim_dir_looks_prepared(r["sim_id"]) for r in runs)
+            ):
+                data = runner.prepare_decision(decision_id, force=force)
+                return jsonify({"success": True, "data": data})
+        except Exception:
+            pass
+
+        registry.update_decision(decision_id, status="preparing")
+
+        def _worker():
+            try:
+                ScenarioRunner().prepare_decision(decision_id, force=force)
+            except Exception as exc:
+                logger.exception("prepare decision background failed: %s", exc)
+                try:
+                    registry.update_decision(decision_id, status="prepare_failed")
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True, name=f"prepare-{decision_id}").start()
+        return jsonify({
+            "success": True,
+            "data": {
+                "decision_id": decision_id,
+                "status": "preparing",
+                "already_prepared": False,
+                "progress": 0,
+                "message": "环境准备已在后台启动",
+            },
+        })
     except Exception as e:
         logger.exception("prepare decision failed")
+        try:
+            registry.update_decision(decision_id, status="prepare_failed")
+        except Exception:
+            pass
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -138,9 +203,12 @@ def start_decision(decision_id: str):
     registry.init_schema()
     body = request.get_json(silent=True) or {}
     background = body.get("background", True)
+    force = bool(body.get("force", False))
     try:
         data = ScenarioRunner().start_decision(
-            decision_id, background=bool(background)
+            decision_id,
+            background=bool(background),
+            force=force,
         )
         return jsonify({"success": True, "data": data})
     except Exception as e:

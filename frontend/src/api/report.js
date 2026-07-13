@@ -11,30 +11,45 @@ export const generateReport = async (data = {}) => {
   const scenarioCount =
     detail?.scenarios?.length || detail?.matrix?.length || 1
 
-  // N>1：同时触发生成叙事报告，并保留对比报告能力
+  // N>1：对比报告可同步返回，但叙事报告仍异步；勿伪称 completed
   if (scenarioCount > 1 && decisionId) {
-    // 异步启动首个 sim 的叙事报告（不阻塞）
-    requestWithRetry(
-      () =>
-        service.post('/api/report/generate', {
-          simulation_id: simId,
-          force_regenerate: data.force_regenerate ?? false,
-        }),
-      2,
-      1000,
-    ).catch(() => {})
+    let narrative = null
+    try {
+      narrative = await requestWithRetry(
+        () =>
+          service.post('/api/report/generate', {
+            simulation_id: simId,
+            force_regenerate: data.force_regenerate ?? false,
+          }),
+        2,
+        1000,
+      )
+    } catch (_) {
+      narrative = null
+    }
 
     const res = await getDecisionCompare(decisionId, { report: true })
     const payload = res.data || {}
+    const reportId =
+      narrative?.data?.report_id ||
+      narrative?.data?.id ||
+      null
+    const taskId =
+      narrative?.data?.task_id ||
+      narrative?.data?.report_task_id ||
+      null
     return {
       success: true,
       data: {
-        report_id: decisionId,
-        simulation_id: decisionId,
+        report_id: reportId || decisionId,
+        simulation_id: simId,
         decision_id: decisionId,
         sim_id: simId,
-        status: 'completed',
+        // 有叙事任务则 processing；仅对比则 completed
+        status: taskId || reportId ? 'processing' : 'completed',
         mode: 'compare',
+        task_id: taskId,
+        report_task_id: taskId,
         markdown: payload.report?.markdown || payload.narrative || '',
         title: payload.title || payload.decision?.title,
         compare: payload,

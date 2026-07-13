@@ -79,7 +79,7 @@ import {
 } from '../api/graph'
 import { createSimulation } from '../api/simulation'
 import { getDecision } from '../api/decision'
-import { subscribeTask, subscribeOntologyGraph } from '../api/sse'
+import { subscribeTask } from '../api/sse'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 import { touchWorkflowStep } from '../store/workflowContext'
 import { taskRoute } from '../utils/taskRoute'
@@ -111,9 +111,7 @@ const buildProgress = ref(null)
 const systemLogs = ref([])
 
 let pollTimer = null
-let graphPollTimer = null
 let taskSse = null
-let graphSse = null
 
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
@@ -311,9 +309,10 @@ const loadProject = async () => {
         await startBuildGraph()
       } else if (['building', 'graph_building'].includes(st)) {
         currentPhase.value = 1
-        startGraphSse()
-        // 无 task_id 时仍轮询本体状态
-        startPollingTask(res.data.graph_build_task_id || null)
+        // 唯一主通道：task SSE（帧内带 graph）
+        const buildTid =
+          res.data.build_task_id || res.data.graph_build_task_id || null
+        startPollingTask(buildTid)
       } else if (['ready', 'graph_completed'].includes(st) || res.data.graph_id) {
         currentPhase.value = 2
         await loadGraph()
@@ -363,11 +362,9 @@ const startBuildGraph = async () => {
     })
     if (res.success) {
       addLog(`Graph build task started. Task ID: ${res.data?.task_id || 'sync'}`)
-      startGraphSse()
       if (res.data?.task_id) {
         startPollingTask(res.data.task_id)
       } else {
-        stopGraphSse()
         currentPhase.value = 2
         await finalizeBuild()
       }
@@ -392,35 +389,6 @@ const applyGraphPayload = (data) => {
   addLog(`Graph data refreshed. Nodes: ${nodeCount}, Edges: ${edgeCount}`)
 }
 
-const startGraphSse = () => {
-  stopGraphSse()
-  if (!ontologyId.value) return
-  addLog('Started graph SSE...')
-  graphSse = subscribeOntologyGraph(ontologyId.value, {
-    onEvent: (data) => applyGraphPayload(data),
-    onDone: (data) => {
-      applyGraphPayload(data)
-      graphSse = null
-    },
-    onError: (err) => {
-      console.warn('[SandOwl] graph SSE error, fallback GET /graph', err)
-      if (graphSse) {
-        try {
-          graphSse.close()
-        } catch (_) {
-          /* ignore */
-        }
-        graphSse = null
-      }
-      // 低频降级：GET /graph，不再打 live
-      if (!graphPollTimer) {
-        fetchGraphData()
-        graphPollTimer = setInterval(fetchGraphData, 15000)
-      }
-    },
-  })
-}
-
 const fetchGraphData = async () => {
   try {
     const gRes = await getOntologyGraph(ontologyId.value)
@@ -434,10 +402,51 @@ const fetchGraphData = async () => {
 
 const startPollingTask = (taskId) => {
   stopPolling()
-  // 无真实 task_id：降级轮询本体状态
+  // 无真实 task_id：慢速探测本体状态（禁止 2s 狂刷 getOntology）
   if (!taskId || !String(taskId).startsWith('task_')) {
-    pollTimer = setInterval(() => pollTaskStatus(null), 2000)
-    pollTaskStatus(null)
+    let stallTicks = 0
+    const tick = async () => {
+      try {
+        const projRes = await getProject(ontologyId.value)
+        const data = projRes.data || {}
+        const st = String(data.status || '').toLowerCase()
+        // 中途补到 build_task_id：切到 task SSE，停掉本体轮询
+        const tid = data.build_task_id || data.graph_build_task_id
+        if (tid && String(tid).startsWith('task_')) {
+          stopPolling()
+          startPollingTask(tid)
+          return
+        }
+        if (['ready', 'graph_completed'].includes(st) || data.graph_id) {
+          stopPolling()
+          currentPhase.value = 2
+          await finalizeBuild()
+          return
+        }
+        if (['failed', 'error'].includes(st)) {
+          stopPolling()
+          error.value = '建图失败'
+          addLog('Graph build failed (ontology status)')
+          currentPhase.value = 1
+          return
+        }
+        buildProgress.value = {
+          progress: buildProgress.value?.progress || 50,
+          message: st || 'building',
+        }
+        stallTicks += 1
+        // ~2 分钟仍无终态 / 无 task：停表，避免无限刷 /api/ontology/:id
+        if (stallTicks >= 24) {
+          stopPolling()
+          addLog('建图进度停滞且无 task_id，已停止轮询。可刷新重试或重新建图。')
+          error.value = '建图任务句柄丢失，请刷新或重新建图'
+        }
+      } catch (e) {
+        console.error(e)
+      }
+    }
+    tick()
+    pollTimer = setInterval(tick, 5000)
     return
   }
 
@@ -456,19 +465,20 @@ const startPollingTask = (taskId) => {
       addLog(task.message)
     }
     buildProgress.value = { progress: task.progress || 0, message: task.message }
-    // 图谱更新由 /graph/events 负责，此处只更新进度文案
+    // 同帧图谱增量
+    if (task.graph) {
+      applyGraphPayload(task.graph)
+    }
 
     if (['completed', 'success', 'ready'].includes(task.status)) {
       settled = true
       addLog('Graph build task completed.')
       stopPolling()
-      stopGraphSse()
       currentPhase.value = 2
       await finalizeBuild()
     } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
       settled = true
       stopPolling()
-      stopGraphSse()
       error.value = task.error || '建图失败'
       addLog(`Graph build failed: ${error.value}`)
       currentPhase.value = 1
@@ -520,12 +530,10 @@ const pollTaskStatus = async (taskId) => {
     if (['completed', 'success', 'ready'].includes(task.status)) {
       addLog('Graph build task completed.')
       stopPolling()
-      stopGraphSse()
       currentPhase.value = 2
       await finalizeBuild()
     } else if (['failed', 'error'].includes(task.status) || task.task_lost) {
       stopPolling()
-      stopGraphSse()
       error.value = task.error || '建图失败'
       addLog(`Graph build failed: ${error.value}`)
       currentPhase.value = 1
@@ -536,7 +544,6 @@ const pollTaskStatus = async (taskId) => {
 }
 
 async function finalizeBuild() {
-  stopGraphSse()
   // 先落快照，再读图；失败则短重试避免竞态
   for (let i = 0; i < 5; i++) {
     try {
@@ -593,24 +600,6 @@ const stopPolling = () => {
   }
 }
 
-const stopGraphSse = () => {
-  if (graphPollTimer) {
-    clearInterval(graphPollTimer)
-    graphPollTimer = null
-  }
-  if (graphSse) {
-    try {
-      graphSse.close()
-    } catch (_) {
-      /* ignore */
-    }
-    graphSse = null
-  }
-}
-
-// 兼容旧名
-const stopGraphPolling = stopGraphSse
-
 onMounted(() => {
   initProject()
 })
@@ -629,7 +618,6 @@ watch(
 
 onUnmounted(() => {
   stopPolling()
-  stopGraphPolling()
 })
 </script>
 

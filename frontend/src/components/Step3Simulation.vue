@@ -101,10 +101,18 @@
         <button
           v-if="phase === 1"
           class="action-btn danger"
-          :disabled="isStopping"
+          :disabled="isStopping || isStarting"
           @click="handleStopSimulation"
         >
           {{ isStopping ? $t('step3.stoppingBtn') : $t('step3.stopSimBtn') }}
+        </button>
+        <button
+          v-if="phase === 2 || phase === 0"
+          class="action-btn secondary"
+          :disabled="isStarting || isStopping"
+          @click="handleRestartSimulation"
+        >
+          {{ isStarting ? '启动中…' : '重新推演' }}
         </button>
         <button 
           class="action-btn primary"
@@ -304,10 +312,12 @@ import {
   startSimulation,
   stopSimulation,
   getRunStatus,
-  getRunStatusDetail
+  getRunStatusDetail,
+  getEnvStatus,
 } from '../api/simulation'
+import { getDecision } from '../api/decision'
 import { generateReport } from '../api/report'
-import { subscribeDecision, subscribeSimulationActions } from '../api/sse'
+import { subscribeDecision } from '../api/sse'
 import RunMatrixPanel from './RunMatrixPanel.vue'
 import { touchWorkflowStep } from '../store/workflowContext'
 import { taskRoute } from '../utils/taskRoute'
@@ -392,7 +402,7 @@ const addLog = (msg) => {
   emit('add-log', msg)
 }
 
-// 重置所有状态（用于重新启动模拟）
+// 重置所有状态（用于强制重新启动模拟）
 const resetAllState = () => {
   phase.value = 0
   runStatus.value = {}
@@ -407,27 +417,46 @@ const resetAllState = () => {
   stopPolling()  // 停止之前可能存在的轮询
 }
 
-// 启动模拟
-const doStartSimulation = async () => {
+/** 附着已有推演：不 reset、不 force，只拉状态并订 SSE */
+const attachRunningSimulation = async ({ completed = false } = {}) => {
+  if (!workflowId.value) return
+  addLog(completed ? '检测到推演已结束，加载结果…' : '检测到推演进行中，附着进度（不重开）…')
+  emit('update-status', completed ? 'completed' : 'processing')
+  phase.value = completed ? 2 : 1
+  await fetchRunStatus()
+  await fetchRunStatusDetail()
+  startStatusPolling()
+  startDetailPolling()
+  if (completed || isRunTerminal(runStatus.value)) {
+    phase.value = 2
+    emit('update-status', 'completed')
+  }
+}
+
+/** 启动推演；force=true 才清日志重开 */
+const doStartSimulation = async ({ force = false } = {}) => {
   if (!workflowId.value) {
     addLog(t('log.errorMissingSimId'))
     return
   }
 
-  // 先重置所有状态，确保不会受到上一次模拟的影响
-  resetAllState()
+  if (force) {
+    resetAllState()
+  } else {
+    stopPolling()
+  }
   
   isStarting.value = true
   startError.value = null
-  addLog(t('log.startingDualSim'))
+  addLog(force ? '强制重新推演…' : t('log.startingDualSim'))
   emit('update-status', 'processing')
   
   try {
     const params = {
       simulation_id: workflowId.value,
       platform: 'parallel',
-      force: true,  // 强制重新开始
-      enable_graph_memory_update: true  // 开启动态图谱更新
+      force: Boolean(force),
+      enable_graph_memory_update: true
     }
     
     if (props.maxRounds) {
@@ -440,6 +469,11 @@ const doStartSimulation = async () => {
     const res = await startSimulation(params)
     
     if (res.success && res.data) {
+      if (res.data.attached) {
+        addLog('服务端已在推演，改为附着现有运行')
+        await attachRunningSimulation()
+        return
+      }
       if (res.data.force_restarted) {
         addLog(t('log.oldSimCleared'))
       }
@@ -457,12 +491,29 @@ const doStartSimulation = async () => {
       emit('update-status', 'error')
     }
   } catch (err) {
+    // 若服务端仍在 running，附着而非报死
+    try {
+      const detail = await getDecision(workflowId.value).catch(() => null)
+      const st = String(detail?.data?.status || detail?.data?.decision?.status || '').toLowerCase()
+      if (st === 'running') {
+        addLog('启动请求异常，但任务仍在推演，改为附着…')
+        await attachRunningSimulation()
+        return
+      }
+    } catch (_) {
+      /* fall through */
+    }
     startError.value = err.message
     addLog(t('log.startException', { error: err.message }))
     emit('update-status', 'error')
   } finally {
     isStarting.value = false
   }
+}
+
+const handleRestartSimulation = async () => {
+  if (isStarting.value || isStopping.value) return
+  await doStartSimulation({ force: true })
 }
 
 // 停止模拟
@@ -490,16 +541,24 @@ const handleStopSimulation = async () => {
   }
 }
 
-// 轮询状态
+// 轮询状态（降级用）；正常路径仅一条 decision SSE
 let statusTimer = null
 let detailTimer = null
 let decisionSse = null
-let actionsSse = null
 
 const isRunTerminal = (data) => {
   if (!data) return false
   const st = String(data.runner_status || data.status || '').toLowerCase()
   return ['completed', 'stopped', 'failed', 'done', 'success'].includes(st)
+}
+
+const applyDecisionProgressFrame = (data) => {
+  if (!data) return
+  applyRunStatus(data)
+  const list = data.actions || data.artifacts?.actions || []
+  if (Array.isArray(list) && list.length) {
+    mergeActions(list)
+  }
 }
 
 const startStatusPolling = () => {
@@ -508,49 +567,50 @@ const startStatusPolling = () => {
     clearInterval(statusTimer)
     statusTimer = null
   }
+  if (detailTimer) {
+    clearInterval(detailTimer)
+    detailTimer = null
+  }
 
   const id = workflowId.value
   if (!id) return
 
-  // 优先 SSE；失败再降级轮询
-  decisionSse = subscribeDecision(id, {
-    onOpen: () => {
-      fetchRunStatus()
+  // 唯一主通道：decision SSE 同帧带平台进度 + actions
+  decisionSse = subscribeDecision(
+    id,
+    {
+      onOpen: () => {
+        if (statusTimer) {
+          clearInterval(statusTimer)
+          statusTimer = null
+        }
+        fetchRunStatus()
+      },
+      onEvent: (data) => {
+        applyDecisionProgressFrame(data)
+      },
+      onDone: async (data) => {
+        applyDecisionProgressFrame(data)
+        decisionSse = null
+        if (!isRunTerminal(runStatus.value) && phase.value === 1 && !statusTimer) {
+          statusTimer = setInterval(fetchRunStatus, 3000)
+        }
+      },
+      onError: (err) => {
+        console.warn('[SandOwl] decision SSE error, fallback poll', err)
+        if (!statusTimer && phase.value === 1) {
+          statusTimer = setInterval(async () => {
+            await fetchRunStatus()
+            await fetchRunStatusDetail()
+          }, 3000)
+        }
+      },
     },
-    onEvent: () => {
-      // SSE 推送触发一次富化状态拉取（含平台轮次），避免双轨字段不一致
-      fetchRunStatus()
-      // selectedSimId 尚未确定时兜底拉一次 detail
-      if (!selectedSimId.value && !actionsSse && !detailTimer) {
-        fetchRunStatusDetail()
-      }
+    {
+      simId: selectedSimId.value || undefined,
+      actionsFrom: allActions.value.length,
     },
-    onDone: async () => {
-      await fetchRunStatus()
-      decisionSse = null
-      // 若本地尚未终态，降级轮询继续跟进度
-      if (!isRunTerminal(runStatus.value) && phase.value === 1 && !statusTimer) {
-        statusTimer = setInterval(fetchRunStatus, 3000)
-      }
-    },
-    onError: (err) => {
-      console.warn('[SandOwl] decision SSE error, fallback poll', err)
-      if (!statusTimer) {
-        statusTimer = setInterval(fetchRunStatus, 3000)
-      }
-    },
-  })
-}
-
-const stopActionsSse = () => {
-  if (actionsSse) {
-    try {
-      actionsSse.close()
-    } catch (_) {
-      /* ignore */
-    }
-    actionsSse = null
-  }
+  )
 }
 
 const mergeActions = (serverActions = []) => {
@@ -583,47 +643,10 @@ const mergeActions = (serverActions = []) => {
   return newActionsAdded
 }
 
+/** 兼容旧调用：详情走同通道降级拉取，不再开第二条 SSE */
 const startDetailPolling = () => {
-  // 优先按 selectedSimId 订阅 actions SSE
-  startActionsSse()
-}
-
-const startActionsSse = () => {
-  stopActionsSse()
-  if (detailTimer) {
-    clearInterval(detailTimer)
-    detailTimer = null
-  }
-
-  const sid = selectedSimId.value
-  if (!sid || String(sid).startsWith('dec_')) {
-    // 尚无具体 sim：先拉一次聚合 detail，等 selectedSimId 确定后再开 SSE
-    fetchRunStatusDetail()
-    return
-  }
-
-  actionsSse = subscribeSimulationActions(sid, {
-    onEvent: (data) => {
-      const list = data?.actions || []
-      if (list.length) mergeActions(list)
-    },
-    onDone: (data) => {
-      const list = data?.actions || []
-      if (list.length) mergeActions(list)
-      actionsSse = null
-      // 推演未完成时继续轮询动作，避免空闲 done 后时间线停更
-      if (!isRunTerminal(runStatus.value) && phase.value === 1 && !detailTimer) {
-        detailTimer = setInterval(fetchRunStatusDetail, 3000)
-      }
-    },
-    onError: (err) => {
-      console.warn('[SandOwl] actions SSE error, fallback poll', err)
-      stopActionsSse()
-      if (!detailTimer) {
-        detailTimer = setInterval(fetchRunStatusDetail, 3000)
-      }
-    },
-  })
+  // 首包补齐动作；后续由 decision SSE 同帧推送
+  fetchRunStatusDetail()
 }
 
 const stopStatusSse = () => {
@@ -647,7 +670,6 @@ const stopPolling = () => {
     detailTimer = null
   }
   stopStatusSse()
-  stopActionsSse()
 }
 
 // 追踪各平台的上一次轮次，用于检测变化并输出日志
@@ -661,7 +683,12 @@ const onSelectRun = (row) => {
   allActions.value = []
   actionIds.value = new Set()
   addLog(`切换到 Run ${row.run_id} / ${row.sim_id || ''}`)
-  startActionsSse()
+  if (phase.value === 1) {
+    startStatusPolling()
+  } else {
+    fetchRunStatus()
+    fetchRunStatusDetail()
+  }
 }
 
 const applyRunStatus = (data) => {
@@ -685,9 +712,21 @@ const applyRunStatus = (data) => {
 
   runStatus.value = data
 
-  // selectedSimId 首次确定时启动 actions SSE
-  if (selectedSimId.value && selectedSimId.value !== prevSim && !actionsSse && !detailTimer) {
-    startActionsSse()
+  // 卡片 ACTS 与时间线同源：若 run_state 计数为 0 但已有动作，用本地计数回填
+  if (allActions.value.length > 0) {
+    const tw = allActions.value.filter((a) => a.platform !== 'reddit').length
+    const rd = allActions.value.filter((a) => a.platform === 'reddit').length
+    if (!(data.twitter_actions_count > 0) && tw > 0) {
+      runStatus.value = { ...runStatus.value, twitter_actions_count: tw }
+    }
+    if (!(data.reddit_actions_count > 0) && rd > 0) {
+      runStatus.value = { ...runStatus.value, reddit_actions_count: rd }
+    }
+  }
+
+  // selectedSimId 首次确定：重订同 URL（带 sim_id），仍是一条 SSE
+  if (!prevSim && selectedSimId.value && phase.value === 1) {
+    startStatusPolling()
   }
 
   if (data.twitter_current_round > prevTwitterRound.value) {
@@ -722,7 +761,9 @@ const fetchRunStatus = async () => {
   if (!workflowId.value) return
   
   try {
-    const res = await getRunStatus(workflowId.value)
+    const res = await getRunStatus(workflowId.value, {
+      selectedSimId: selectedSimId.value || undefined,
+    })
     
     if (res.success && res.data) {
       applyRunStatus(res.data)
@@ -895,10 +936,50 @@ watch(
   },
 )
 
-onMounted(() => {
+onMounted(async () => {
   addLog(t('log.step3Init'))
-  if (workflowId.value) {
-    doStartSimulation()
+  if (!workflowId.value) return
+
+  try {
+    const detail = await getDecision(workflowId.value).catch(() => null)
+    const payload = detail?.data || {}
+    const status = String(payload.status || payload.decision?.status || '').toLowerCase()
+
+    if (['completed', 'done', 'success'].includes(status)) {
+      await attachRunningSimulation({ completed: true })
+      return
+    }
+    if (['failed', 'stopped', 'error'].includes(status)) {
+      await attachRunningSimulation({ completed: true })
+      addLog(`任务状态 ${status}，可点「重新推演」重开`)
+      return
+    }
+    if (status === 'running') {
+      // 若 env 仍活或矩阵有 running run → attach；否则视为僵尸，允许非 force 启动
+      let envAlive = false
+      try {
+        const env = await getEnvStatus({ simulation_id: workflowId.value })
+        envAlive = Boolean(env?.data?.env_alive)
+      } catch (_) {
+        /* ignore */
+      }
+      const hasRunningRun = (payload.matrix || []).some((m) =>
+        (m.runs || []).some((r) => String(r.status || '').toLowerCase() === 'running'),
+      )
+      if (envAlive || hasRunningRun) {
+        await attachRunningSimulation()
+        return
+      }
+      addLog('决策标记 running 但进程未存活，重新启动推演…')
+      await doStartSimulation({ force: false })
+      return
+    }
+
+    // prepared / created / 其它：首次进入，非 force 启动
+    await doStartSimulation({ force: false })
+  } catch (err) {
+    addLog(`初始化推演页失败: ${err.message || err}`)
+    await doStartSimulation({ force: false })
   }
 })
 
@@ -1125,6 +1206,17 @@ onUnmounted(() => {
 .action-btn.danger:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.action-btn.secondary {
+  background: #fff;
+  color: #333;
+  border: 1px solid #ccc;
+  white-space: nowrap;
+}
+
+.action-btn.secondary:hover:not(:disabled) {
+  background: #f5f5f5;
 }
 
 .action-btn.primary {

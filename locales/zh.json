@@ -344,7 +344,13 @@
     "errorOccurred": "抱歉，发生了错误: {error}",
     "noResponse": "无响应",
     "requestFailed": "请求失败",
-    "selectAgentFirst": "请先选择一个模拟个体"
+    "selectAgentFirst": "请先选择一个模拟个体",
+    "modeLive": "实时采访",
+    "modeOffline": "回顾模式",
+    "modeLiveHint": "OASIS 环境存活，回答来自当场 Agent",
+    "modeOfflineHint": "环境已关闭，回答基于人设与推演动作记录",
+    "modeOfflineBanner": "模拟环境已关闭：深度互动已切换为回顾采访（基于人设与动作日志），非当场活 Agent。",
+    "modeOfflineTag": "回顾"
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
@@ -374,7 +380,7 @@
     "step1Button": "图谱构建",
     "step2Button": "环境搭建",
     "step4Button": "分析报告",
-    "replayHint": "Step3「开始模拟」与 Step5「深度互动」需在运行中启动，不支持历史回放",
+    "replayHint": "Step3「开始模拟」需在运行中启动。Step5「深度互动」在环境关闭后可走回顾采访（基于人设与动作日志）。",
     "notStarted": "未开始",
     "roundsProgress": "{current}/{total} 轮",
     "untitledSimulation": "未命名模拟",

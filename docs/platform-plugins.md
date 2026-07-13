@@ -1,7 +1,7 @@
 # 真·多平台插件计划
 
 > 状态：规划稿（未开工）  
-> 关联：[design.md](./design.md) §4.4 干预 DSL / §5 两档引擎 / §6 引擎契约 / §7 场景模板  
+> 关联：[design.md](./design.md)（§4.4 干预 / §5 两档引擎 / §7 场景模板）、[mirofish-integration.md](./mirofish-integration.md)、[README.md](./README.md)  
 > 日期：2026-07-10
 
 ---

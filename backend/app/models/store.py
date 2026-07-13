@@ -43,3 +43,31 @@ def connection(db_path: str | None = None) -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
+
+
+def init_tasks_schema(db_path: str | None = None) -> None:
+    """TaskManager 持久化表（撑过进程重启）。"""
+    with connection(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+              id TEXT PRIMARY KEY,
+              type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              progress INTEGER NOT NULL DEFAULT 0,
+              message TEXT,
+              detail_json TEXT,
+              result_json TEXT,
+              error TEXT,
+              metadata_json TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_type_status ON tasks(type, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_updated ON tasks(updated_at)"
+        )

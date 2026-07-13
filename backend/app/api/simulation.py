@@ -329,7 +329,11 @@ def _config_file_looks_complete(config: dict | None) -> bool:
 
 
 def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict:
-    """读取 profiles 实时快照（HTTP 与 SSE 共用）。不存在目录时返回 file_exists=False。"""
+    """读取 profiles 实时快照（HTTP 与 SSE 共用）。不存在目录时返回 file_exists=False。
+
+    N>1 共享世界准备期间，人设先写入 decisions/{dec}/shared/，再注入各 sim。
+    若 sim 目录尚无人设，回退读取 shared，避免 Step2 一直显示「等待」。
+    """
     import json
     import csv
     from datetime import datetime
@@ -374,6 +378,7 @@ def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict
 
     is_generating = False
     total_expected = None
+    project_id = None
     state_file = os.path.join(sim_dir, "state.json")
     if os.path.exists(state_file):
         try:
@@ -382,6 +387,51 @@ def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict
                 status = state_data.get("status", "")
                 is_generating = status == "preparing"
                 total_expected = state_data.get("entities_count") or state_data.get("profiles_count")
+                project_id = state_data.get("project_id")
+        except Exception:
+            pass
+
+    # sim 尚无人设时，回退 decision shared（N>1 准备中）
+    if (not profiles) and project_id and str(project_id).startswith("dec_"):
+        shared_dir = os.path.join(Config.DECISION_DIR, project_id, "shared")
+        if platform == "reddit":
+            shared_file = os.path.join(shared_dir, "reddit_profiles.json")
+        else:
+            shared_file = os.path.join(shared_dir, "twitter_profiles.csv")
+        if os.path.isfile(shared_file):
+            try:
+                file_stat = os.stat(shared_file)
+                file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                file_exists = True
+                if platform == "reddit":
+                    with open(shared_file, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                    if isinstance(raw, list):
+                        profiles = raw
+                    elif isinstance(raw, dict):
+                        profiles = raw.get("profiles") or raw.get("agents") or []
+                else:
+                    with open(shared_file, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        profiles = list(reader)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"读取 shared profiles 失败: {e}")
+
+        # decision 级 preparing：即使 shared 尚未写出，也标为生成中
+        try:
+            from app.ontology import registry as ont_registry
+
+            ont_registry.init_schema()
+            dec = ont_registry.get_decision(project_id) or {}
+            if str(dec.get("status") or "").lower() == "preparing":
+                is_generating = True
+            slice_path = os.path.join(shared_dir, "slice.json")
+            if is_generating and not total_expected and os.path.isfile(slice_path):
+                with open(slice_path, "r", encoding="utf-8") as f:
+                    slice_data = json.load(f)
+                nodes = slice_data.get("nodes") or []
+                if nodes:
+                    total_expected = min(len(nodes), 30)
         except Exception:
             pass
 
@@ -439,6 +489,7 @@ def read_config_realtime(simulation_id: str) -> dict:
     is_generating = False
     generation_stage = None
     config_generated = False
+    project_id = None
     state_file = os.path.join(sim_dir, "state.json")
     if os.path.exists(state_file):
         try:
@@ -447,6 +498,7 @@ def read_config_realtime(simulation_id: str) -> dict:
                 status = state_data.get("status", "")
                 is_generating = status == "preparing"
                 config_generated = state_data.get("config_generated", False)
+                project_id = state_data.get("project_id")
                 if is_generating:
                     if state_data.get("profiles_generated", False):
                         generation_stage = "generating_config"
@@ -454,6 +506,35 @@ def read_config_realtime(simulation_id: str) -> dict:
                         generation_stage = "generating_profiles"
                 elif status == "ready":
                     generation_stage = "completed"
+        except Exception:
+            pass
+
+    # N>1：sim 仅有 stub config 时，回退 shared/base_simulation_config.json
+    if (not _config_file_looks_complete(config)) and project_id and str(project_id).startswith("dec_"):
+        shared_cfg = os.path.join(
+            Config.DECISION_DIR, project_id, "shared", "base_simulation_config.json"
+        )
+        if os.path.isfile(shared_cfg):
+            try:
+                with open(shared_cfg, "r", encoding="utf-8") as f:
+                    shared_config = json.load(f)
+                if _config_file_looks_complete(shared_config):
+                    config = shared_config
+                    file_exists = True
+                    file_modified_at = datetime.fromtimestamp(
+                        os.stat(shared_cfg).st_mtime
+                    ).isoformat()
+            except Exception as e:
+                logger.warning(f"读取 shared config 失败: {e}")
+        try:
+            from app.ontology import registry as ont_registry
+
+            ont_registry.init_schema()
+            dec = ont_registry.get_decision(project_id) or {}
+            if str(dec.get("status") or "").lower() == "preparing":
+                is_generating = True
+                if generation_stage is None:
+                    generation_stage = "generating_profiles"
         except Exception:
             pass
 
@@ -843,9 +924,21 @@ def prepare_simulation():
             }
         )
         
-        # 更新模拟状态（包含预先获取的实体数量）
+        # 更新模拟状态（包含预先获取的实体数量）+ 持久化 task_id 供刷新续订
         state.status = SimulationStatus.PREPARING
+        state.prepare_task_id = task_id
         manager._save_simulation_state(state)
+
+        # 关联 decision：标记 preparing，刷新后 Step2 可续听
+        try:
+            project_id = state.project_id or ""
+            if str(project_id).startswith("dec_"):
+                from app.ontology import registry as ont_registry
+
+                ont_registry.init_schema()
+                ont_registry.update_decision(project_id, status="preparing")
+        except Exception as e:
+            logger.warning(f"同步 decision preparing 失败: {e}")
         
         # Capture locale before spawning background thread
         current_locale = get_locale()
@@ -942,6 +1035,19 @@ def prepare_simulation():
                     manager.sync_prepare_to_registry(result_state)
                 except Exception as sync_err:
                     logger.warning(f"sync_prepare_to_registry 失败: {sync_err}")
+
+                # 清 prepare_task_id；decision → prepared
+                try:
+                    result_state.prepare_task_id = None
+                    manager._save_simulation_state(result_state)
+                    pid = result_state.project_id or state.project_id or ""
+                    if str(pid).startswith("dec_"):
+                        from app.ontology import registry as ont_registry
+
+                        ont_registry.init_schema()
+                        ont_registry.update_decision(pid, status="prepared")
+                except Exception as e:
+                    logger.warning(f"prepare 完成后清 task_id/status 失败: {e}")
                 
                 # 任务完成
                 task_manager.complete_task(
@@ -958,7 +1064,17 @@ def prepare_simulation():
                 if state:
                     state.status = SimulationStatus.FAILED
                     state.error = str(e)
+                    state.prepare_task_id = None
                     manager._save_simulation_state(state)
+                try:
+                    pid = (state.project_id if state else "") or ""
+                    if str(pid).startswith("dec_"):
+                        from app.ontology import registry as ont_registry
+
+                        ont_registry.init_schema()
+                        ont_registry.update_decision(pid, status="prepare_failed")
+                except Exception:
+                    pass
         
         # 启动后台线程
         thread = threading.Thread(target=run_prepare, daemon=True)
@@ -1819,6 +1935,34 @@ def start_simulation():
         # 更新模拟状态
         state.status = SimulationStatus.RUNNING
         manager._save_simulation_state(state)
+
+        # N=1 旁路启动：回写 decision/run registry，避免 UI 卡在 prepared/ready
+        try:
+            project_id = getattr(state, "project_id", None) or ""
+            if str(project_id).startswith("dec_"):
+                from app.ontology import registry as ont_registry
+                from datetime import datetime, timezone
+
+                ont_registry.init_schema()
+                now = datetime.now(timezone.utc).isoformat()
+                runs = ont_registry.list_runs_for_decision(project_id) or []
+                for r in runs:
+                    if (r or {}).get("sim_id") == simulation_id:
+                        ont_registry.update_run(
+                            r["id"],
+                            status="running",
+                            started_at=r.get("started_at") or now,
+                            error=None,
+                        )
+                ont_registry.update_decision(project_id, status="running")
+                try:
+                    from app.api.stream import publish_decision_status
+
+                    publish_decision_status(project_id)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"同步 decision running 失败: {e}")
         
         response_data = run_state.to_dict()
         if max_rounds:
@@ -2421,27 +2565,24 @@ def interview_agent():
                 "error": t('api.invalidInterviewPlatform')
             }), 400
         
-        # 检查环境状态
-        if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
-        
-        # 优化prompt，添加前缀避免Agent调用工具
+        # 优化prompt，添加前缀避免Agent调用工具；环境关闭时自动降级 offline
+        from app.engine.offline_interview import interview_agent_with_fallback
+
         optimized_prompt = optimize_interview_prompt(prompt)
-        
-        result = SimulationRunner.interview_agent(
+
+        result = interview_agent_with_fallback(
             simulation_id=simulation_id,
             agent_id=agent_id,
             prompt=optimized_prompt,
             platform=platform,
-            timeout=timeout
+            timeout=timeout,
         )
+        mode = result.get("mode", "live")
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "mode": mode,
+            "data": result,
         })
         
     except ValueError as e:
@@ -2556,30 +2697,27 @@ def interview_agents_batch():
                     "error": t('api.interviewListInvalidPlatform', index=i+1)
                 }), 400
 
-        # 检查环境状态
-        if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
+        from app.engine.offline_interview import interview_with_fallback
 
-        # 优化每个采访项的prompt，添加前缀避免Agent调用工具
+        # 优化每个采访项的prompt；环境关闭时自动降级 offline
         optimized_interviews = []
         for interview in interviews:
             optimized_interview = interview.copy()
             optimized_interview['prompt'] = optimize_interview_prompt(interview.get('prompt', ''))
             optimized_interviews.append(optimized_interview)
 
-        result = SimulationRunner.interview_agents_batch(
+        result = interview_with_fallback(
             simulation_id=simulation_id,
             interviews=optimized_interviews,
             platform=platform,
-            timeout=timeout
+            timeout=timeout,
         )
+        mode = result.get("mode", "live")
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "mode": mode,
+            "data": result,
         })
 
     except ValueError as e:
@@ -2663,26 +2801,22 @@ def interview_all_agents():
                 "error": t('api.invalidInterviewPlatform')
             }), 400
 
-        # 检查环境状态
-        if not SimulationRunner.check_env_alive(simulation_id):
-            return jsonify({
-                "success": False,
-                "error": t('api.envNotRunning')
-            }), 400
+        from app.engine.offline_interview import interview_all_with_fallback
 
-        # 优化prompt，添加前缀避免Agent调用工具
         optimized_prompt = optimize_interview_prompt(prompt)
 
-        result = SimulationRunner.interview_all_agents(
+        result = interview_all_with_fallback(
             simulation_id=simulation_id,
             prompt=optimized_prompt,
             platform=platform,
-            timeout=timeout
+            timeout=timeout,
         )
+        mode = result.get("mode", "live")
 
         return jsonify({
             "success": result.get("success", False),
-            "data": result
+            "mode": mode,
+            "data": result,
         })
 
     except ValueError as e:

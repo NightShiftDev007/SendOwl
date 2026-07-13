@@ -13,6 +13,31 @@ import {
 } from './decision'
 
 const simIdCache = new Map()
+/** decisionId -> { simId, cachedAt }；命中后默认不再回源 getDecision */
+const SIM_ID_CACHE_TTL_MS = 30_000
+
+/** 换方案 / 重建 sims 后清缓存，避免订到旧 sim */
+export function clearSimIdCache(decisionId = null) {
+  if (decisionId) {
+    simIdCache.delete(String(decisionId))
+    return
+  }
+  simIdCache.clear()
+}
+
+function cacheGet(decisionId) {
+  const hit = simIdCache.get(String(decisionId))
+  if (!hit) return null
+  if (typeof hit === 'string') {
+    // 兼容旧缓存形态
+    return { simId: hit, cachedAt: 0 }
+  }
+  return hit
+}
+
+function cacheSet(decisionId, simId) {
+  simIdCache.set(String(decisionId), { simId, cachedAt: Date.now() })
+}
 
 /** 默认单方案（N=1） */
 const defaultScenarios = (title) => [
@@ -51,7 +76,7 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
   if (preferredSimId || (typeof idOrObj === 'object' && idOrObj?.sim_id)) {
     const simId = preferredSimId || idOrObj.sim_id
     const decisionId = raw.startsWith('dec_') ? raw : idOrObj?.decision_id || null
-    if (decisionId) simIdCache.set(decisionId, simId)
+    if (decisionId) cacheSet(decisionId, simId)
     return { decisionId, simId }
   }
 
@@ -59,8 +84,14 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
     return { decisionId: null, simId: raw }
   }
 
-  if (simIdCache.has(raw)) {
-    // 缓存命中时仍拉一次 detail，并用服务端最新 sim_id 刷新（原地换方案后旧缓存会失效）
+  const cached = cacheGet(raw)
+  if (cached?.simId) {
+    const age = Date.now() - (cached.cachedAt || 0)
+    // TTL 内直接返回，不再每拍回源 getDecision（消除双 dec_* 请求）
+    if (age < SIM_ID_CACHE_TTL_MS) {
+      return { decisionId: raw, simId: cached.simId }
+    }
+    // TTL 过期：回源刷新；失败则沿用缓存
     try {
       const res = await getDecision(raw)
       const detail = res.data || {}
@@ -74,13 +105,13 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
         runs.find((r) => r.sim_id)?.sim_id ||
         null
       if (fresh) {
-        simIdCache.set(raw, fresh)
+        cacheSet(raw, fresh)
         return { decisionId: raw, simId: fresh, detail }
       }
       // 方案已替换但 sim 尚未就绪：清掉失效缓存，走下方补建逻辑
       simIdCache.delete(raw)
     } catch (_) {
-      return { decisionId: raw, simId: simIdCache.get(raw) }
+      return { decisionId: raw, simId: cached.simId }
     }
   }
 
@@ -111,7 +142,7 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
         eruns.find((r) => r.sim_id)?.sim_id ||
         null
       if (simId) {
-        simIdCache.set(raw, simId)
+        cacheSet(raw, simId)
         return { decisionId: raw, simId, detail: { ...detail, ...ed } }
       }
     } catch (_) {
@@ -124,7 +155,7 @@ export async function resolveSimContext(idOrObj, preferredSimId = null) {
       '该决策尚未关联 simulation（图谱可能仍在构建）。请等建图完成后再进入环境搭建。',
     )
   }
-  simIdCache.set(raw, simId)
+  cacheSet(raw, simId)
   return { decisionId: raw, simId, detail }
 }
 
@@ -307,10 +338,16 @@ export const prepareSimulation = async (data = {}) => {
     )
   }
 
-  // N>1 全量准备：走决策共享世界 prepare（同步完成，无 TaskManager task_id）
+  // N>1 全量准备：走决策共享世界 prepare（后台线程，status=preparing）
   if (scenarioCount > 1 && decisionId) {
     const { prepareDecision } = await import('./decision')
-    const res = await prepareDecision(decisionId, data)
+    const res = await prepareDecision(decisionId, {
+      ...data,
+      force_regenerate: data.force_regenerate ?? false,
+    })
+    const payload = res?.data || {}
+    const status = String(payload.status || '').toLowerCase()
+    const done = status === 'completed' || status === 'ready' || payload.already_prepared
     return {
       success: true,
       data: {
@@ -318,10 +355,10 @@ export const prepareSimulation = async (data = {}) => {
         task_id: null,
         simulation_id: simId,
         decision_id: decisionId,
-        status: 'completed',
-        progress: 100,
-        already_prepared: true,
-        ...(res.data || {}),
+        status: done ? 'completed' : status || 'preparing',
+        progress: done ? 100 : Number(payload.progress) || 0,
+        already_prepared: Boolean(done),
+        ...payload,
       },
     }
   }
@@ -446,7 +483,7 @@ export const closeSimulationEnv = async (data = {}) => {
   return service.post('/api/simulation/close-env', { ...data, simulation_id: simId })
 }
 
-export const getRunStatus = async (id) => {
+export const getRunStatus = async (id, options = {}) => {
   const raw = pickId(id) || id
   // 决策级：返回矩阵 + 兼容 Step3 单时间线字段
   if (raw && String(raw).startsWith('dec_')) {
@@ -454,38 +491,58 @@ export const getRunStatus = async (id) => {
     const data = st.data || {}
     const progress = data.progress || { done: 0, total: 0 }
     const status = data.status || data.decision?.status
-    const completed = ['completed', 'done', 'success'].includes(status)
-    const running = status === 'running'
+    const completed = ['completed', 'done', 'success'].includes(String(status || '').toLowerCase())
+    const running = String(status || '').toLowerCase() === 'running'
     const totalRounds = data.decision?.max_rounds || 10
-    const pct = progress.total ? progress.done / progress.total : completed ? 1 : 0
-    const currentRound = Math.round(pct * totalRounds)
 
-    // 若 N=1，叠加真 sim run-status
+    // 优先选中 sim，禁止死取 matrix[0]
+    const preferred =
+      options.simId ||
+      options.sim_id ||
+      options.selectedSimId ||
+      null
     const firstSim =
-      data.matrix?.[0]?.runs?.[0]?.sim_id || simIdCache.get(raw)
+      preferred ||
+      data.matrix?.[0]?.runs?.[0]?.sim_id ||
+      cacheGet(raw)?.simId ||
+      null
     let simStatus = null
     if (firstSim) {
       try {
-        simStatus = (await service.get(`/api/simulation/${firstSim}/run-status`)).data
+        const res = await service.get(`/api/simulation/${firstSim}/run-status`)
+        simStatus = res?.data || null
       } catch (_) {
         /* ignore */
       }
     }
+
+    const runner = String(simStatus?.runner_status || '').toLowerCase()
+    const simCompleted =
+      completed ||
+      runner === 'completed' ||
+      runner === 'stopped' ||
+      (simStatus?.twitter_completed && simStatus?.reddit_completed)
 
     return {
       success: true,
       data: {
         ...data,
         ...(simStatus || {}),
-        status,
+        // decision.status 保留；完成态另用 runner_status / *_completed
+        status: simCompleted ? 'completed' : status,
         total_rounds: simStatus?.total_rounds || totalRounds,
-        twitter_running: simStatus?.twitter_running ?? running,
-        reddit_running: simStatus?.reddit_running ?? false,
-        twitter_completed: simStatus?.twitter_completed ?? completed,
-        reddit_completed: simStatus?.reddit_completed ?? completed,
-        twitter_current_round: simStatus?.twitter_current_round ?? currentRound,
-        reddit_current_round: simStatus?.reddit_current_round ?? currentRound,
+        twitter_running: simStatus?.twitter_running ?? (running && !simCompleted),
+        reddit_running: simStatus?.reddit_running ?? (running && !simCompleted),
+        twitter_completed: simStatus?.twitter_completed ?? simCompleted,
+        reddit_completed: simStatus?.reddit_completed ?? simCompleted,
+        // 禁止用矩阵 done/total 伪造 ROUND
+        twitter_current_round: simStatus?.twitter_current_round ?? 0,
+        reddit_current_round: simStatus?.reddit_current_round ?? 0,
+        twitter_actions_count: simStatus?.twitter_actions_count ?? 0,
+        reddit_actions_count: simStatus?.reddit_actions_count ?? 0,
+        runner_status: simStatus?.runner_status || (simCompleted ? 'completed' : running ? 'running' : 'idle'),
         matrix: data.matrix,
+        progress,
         decision_id: raw,
         sim_id: firstSim,
       },

@@ -151,6 +151,14 @@ def generate_report():
                 "report_id": report_id
             }
         )
+        try:
+            ReportManager.save_generate_task(
+                report_id,
+                task_id,
+                simulation_id=simulation_id,
+            )
+        except Exception as e:
+            logger.warning(f"保存 report generate_task 失败: {e}")
         
         # Capture locale before spawning background thread
         current_locale = get_locale()
@@ -333,9 +341,28 @@ def get_report(report_id: str):
                 "error": t('api.reportNotFound', id=report_id)
             }), 404
         
+        data = report.to_dict()
+        tid = ReportManager.get_generate_task_id(report_id)
+        if not tid:
+            # 回退：从 TaskManager 按 report_id 找回
+            try:
+                from app.models.task import TaskManager
+                hit = TaskManager().find_latest_by_metadata(
+                    task_type="report_generate",
+                    metadata_key="report_id",
+                    metadata_value=report_id,
+                )
+                if hit:
+                    tid = hit.get("task_id")
+            except Exception:
+                tid = None
+        if tid:
+            data["report_task_id"] = tid
+            data["task_id"] = tid
+        
         return jsonify({
             "success": True,
-            "data": report.to_dict()
+            "data": data
         })
         
     except Exception as e:
@@ -371,9 +398,27 @@ def get_report_by_simulation(simulation_id: str):
                 "has_report": False
             }), 404
         
+        data = report.to_dict()
+        tid = ReportManager.get_generate_task_id(report.report_id)
+        if not tid:
+            try:
+                from app.models.task import TaskManager
+                hit = TaskManager().find_latest_by_metadata(
+                    task_type="report_generate",
+                    metadata_key="simulation_id",
+                    metadata_value=simulation_id,
+                )
+                if hit:
+                    tid = hit.get("task_id")
+            except Exception:
+                tid = None
+        if tid:
+            data["report_task_id"] = tid
+            data["task_id"] = tid
+        
         return jsonify({
             "success": True,
-            "data": report.to_dict(),
+            "data": data,
             "has_report": True
         })
         

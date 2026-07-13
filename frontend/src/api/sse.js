@@ -144,10 +144,18 @@ export function subscribeTask(taskId, handlers = {}) {
   return subscribeStream(url, handlers, ['progress'])
 }
 
-/** 订阅 Decision 推演进度 */
-export function subscribeDecision(decisionId, handlers = {}) {
+/** 订阅 Decision 推演进度（可带 sim_id / actions_from 同帧推动作） */
+export function subscribeDecision(decisionId, handlers = {}, opts = {}) {
   if (!decisionId) throw new Error('缺少 decision_id')
-  const url = buildUrl(`/api/decision/${encodeURIComponent(decisionId)}/events`)
+  const q = new URLSearchParams()
+  if (opts.simId || opts.sim_id) q.set('sim_id', opts.simId || opts.sim_id)
+  if (opts.actionsFrom != null || opts.actions_from != null) {
+    q.set('actions_from', String(opts.actionsFrom ?? opts.actions_from))
+  }
+  const qs = q.toString()
+  const url = buildUrl(
+    `/api/decision/${encodeURIComponent(decisionId)}/events${qs ? `?${qs}` : ''}`,
+  )
   return subscribeStream(url, handlers, ['progress'])
 }
 
@@ -205,6 +213,10 @@ export function subscribePreparePreview(simOrDecId, handlers = {}, platform = 'r
 /** Step3 动作增量 */
 export function subscribeSimulationActions(simId, handlers = {}, limit = 200) {
   if (!simId) throw new Error('缺少 simulation_id')
+  if (String(simId).startsWith('dec_')) {
+    handlers.onError?.(new Error('actions SSE 需要具体 sim_id，不能传 dec_'))
+    return { close: () => {}, get es() { return null } }
+  }
   const url = buildUrl(
     `/api/simulation/${encodeURIComponent(simId)}/actions/events?limit=${encodeURIComponent(limit)}`,
   )

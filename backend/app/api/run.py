@@ -364,7 +364,14 @@ def _actions_from_oasis_db(
             user = users.get(int(r["user_id"]), {})
             agent_id = user.get("agent_id", r["user_id"])
             agent_name = user.get("name") or f"Agent_{agent_id}"
-            round_num = int(r["created_at"] or 0)
+            # OASIS 两种写法：轮次计数（int）或墙钟时间（datetime 字符串）
+            created_raw = str(r["created_at"] or "").strip()
+            round_num = None
+            action_ts = None
+            try:
+                round_num = int(created_raw or 0)
+            except ValueError:
+                action_ts = created_raw
             rowid = int(r["_rowid"])
             content = ""
             post_id = info.get("post_id") or info.get("new_post_id")
@@ -438,7 +445,7 @@ def _actions_from_oasis_db(
                     "content": content,
                     "post_id": post_id,
                     "parent_post_id": parent_id,
-                    "timestamp": None,
+                    "timestamp": action_ts,
                     "success": True,
                     # rowid 跨轮询稳定；枚举下标 i 仅作兜底
                     "_rowid": rowid,
@@ -554,56 +561,50 @@ def get_actions(run_id: str):
 
 @run_bp.post("/<run_id>/interview")
 def interview(run_id: str):
-    """代理到 SimulationRunner.interview（按 sim_id）；环境不可用时返回 stub。"""
+    """代理到双轨采访：live IPC 优先，环境不可用时 LLM offline。"""
     run, sim_id, run_dir = _resolve_run_context(run_id)
     body = request.get_json(silent=True) or {}
     agent_id = body.get("agent_id")
     prompt = body.get("prompt") or body.get("question") or "你怎么看当前政策？"
 
-    try:
-        from app.engine.simulation_runner import SimulationRunner
-
-        state = SimulationRunner.get_run_state(sim_id)
-        status = getattr(getattr(state, "runner_status", None), "value", None) or (
-            str(getattr(state, "runner_status", "")) if state else ""
-        )
-        # 也检查 env alive
-        alive = False
-        try:
-            alive = bool(SimulationRunner.check_env_alive(sim_id))
-        except Exception:
-            alive = False
-        if state and (status in ("running", "completed", "paused", "alive") or alive):
-            if agent_id is not None:
-                result = SimulationRunner.interview_agent(
-                    simulation_id=sim_id,
-                    agent_id=int(agent_id),
-                    prompt=prompt,
-                )
-            else:
-                max_agents = int(body.get("max_agents") or 3)
-                interviews = [
-                    {"agent_id": i, "prompt": prompt} for i in range(max_agents)
-                ]
-                result = SimulationRunner.interview_agents_batch(
-                    simulation_id=sim_id,
-                    interviews=interviews,
-                )
-            return jsonify(
-                {"success": True, "data": result, "mode": "live", "sim_id": sim_id}
-            )
-    except Exception as e:
-        logger.warning(f"interview live failed: {e}")
-
-    return jsonify(
-        {
-            "success": True,
-            "mode": "stub",
-            "data": {
-                "reply": f"[stub] Agent {agent_id}：关于「{prompt}」，我需要更多上下文才能判断。",
-                "agent_id": agent_id,
-                "run_id": run_id,
-                "sim_id": sim_id,
-            },
-        }
+    from app.engine.offline_interview import (
+        interview_agent_with_fallback,
+        interview_with_fallback,
     )
+
+    try:
+        if agent_id is not None:
+            result = interview_agent_with_fallback(
+                simulation_id=sim_id,
+                agent_id=int(agent_id),
+                prompt=prompt,
+            )
+        else:
+            max_agents = int(body.get("max_agents") or 3)
+            interviews = [
+                {"agent_id": i, "prompt": prompt} for i in range(max_agents)
+            ]
+            result = interview_with_fallback(
+                simulation_id=sim_id,
+                interviews=interviews,
+            )
+        mode = result.get("mode", "offline")
+        return jsonify(
+            {
+                "success": bool(result.get("success", True)),
+                "data": result,
+                "mode": mode,
+                "sim_id": sim_id,
+            }
+        )
+    except Exception as e:
+        logger.warning(f"interview fallback failed: {e}")
+        return jsonify(
+            {
+                "success": False,
+                "mode": "offline",
+                "error": str(e),
+                "sim_id": sim_id,
+                "run_id": run_id,
+            }
+        ), 500

@@ -33,6 +33,76 @@ _cleanup_registered = False
 IS_WINDOWS = sys.platform == 'win32'
 
 
+class PidProcess:
+    """无 Popen 句柄时的进程替身（Phase C adopt）。
+
+    提供与 subprocess.Popen 兼容的 poll/terminate/kill/wait/pid，
+    供 stop_simulation / get_running_simulations / monitor / cleanup 使用。
+    """
+
+    def __init__(self, pid: int):
+        self.pid = int(pid)
+        self.returncode: Optional[int] = None
+
+    def poll(self) -> Optional[int]:
+        if self.returncode is not None:
+            return self.returncode
+        try:
+            os.kill(self.pid, 0)
+            return None
+        except ProcessLookupError:
+            self.returncode = 0
+            return 0
+        except PermissionError:
+            # 进程存在但无权发信号——视为仍在跑
+            return None
+        except OSError:
+            self.returncode = -1
+            return -1
+
+    def terminate(self) -> None:
+        if self.poll() is not None:
+            return
+        try:
+            if not IS_WINDOWS:
+                try:
+                    os.killpg(self.pid, signal.SIGTERM)
+                    return
+                except OSError:
+                    pass
+            os.kill(self.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            self.returncode = 0
+        except OSError as e:
+            logger.debug(f"PidProcess.terminate {self.pid}: {e}")
+
+    def kill(self) -> None:
+        if self.poll() is not None:
+            return
+        try:
+            if not IS_WINDOWS:
+                try:
+                    os.killpg(self.pid, signal.SIGKILL)
+                    return
+                except OSError:
+                    pass
+            os.kill(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            self.returncode = 0
+        except OSError as e:
+            logger.debug(f"PidProcess.kill {self.pid}: {e}")
+
+    def wait(self, timeout: Optional[float] = None) -> int:
+        deadline = None if timeout is None else (time.time() + float(timeout))
+        while True:
+            code = self.poll()
+            if code is not None:
+                return code
+            if deadline is not None and time.time() >= deadline:
+                raise subprocess.TimeoutExpired(f"pid:{self.pid}", timeout)
+            time.sleep(0.2)
+
+
 class RunnerStatus(str, Enum):
     """运行器状态"""
     IDLE = "idle"
@@ -214,7 +284,7 @@ class SimulationRunner:
     
     # 内存中的运行状态
     _run_states: Dict[str, SimulationRunState] = {}
-    _processes: Dict[str, subprocess.Popen] = {}
+    _processes: Dict[str, Any] = {}  # Popen | PidProcess
     _action_queues: Dict[str, Queue] = {}
     _monitor_threads: Dict[str, threading.Thread] = {}
     _stdout_files: Dict[str, Any] = {}  # 存储 stdout 文件句柄
@@ -222,6 +292,84 @@ class SimulationRunner:
     
     # 图谱记忆更新配置
     _graph_memory_enabled: Dict[str, bool] = {}  # simulation_id -> enabled
+
+    @classmethod
+    def _env_heartbeat_fresh(
+        cls, simulation_id: str, *, max_age_sec: float = 120.0
+    ) -> bool:
+        """env_status.json 心跳是否新鲜（比单纯 status==alive 更可靠）。"""
+        detail = cls.get_env_status_detail(simulation_id)
+        if str(detail.get("status") or "").lower() not in ("alive", "running", "ready"):
+            # 仍允许 check_env_alive 兜底
+            if not cls.check_env_alive(simulation_id):
+                return False
+        ts = detail.get("timestamp")
+        if not ts:
+            return cls.check_env_alive(simulation_id)
+        try:
+            s = str(ts).strip()
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            age = time.time() - datetime.fromisoformat(s).timestamp()
+            return age <= max_age_sec
+        except Exception:
+            return cls.check_env_alive(simulation_id)
+
+    @classmethod
+    def try_adopt(cls, simulation_id: str) -> Optional[SimulationRunState]:
+        """Phase C：收养仍存活的模拟子进程，重建 monitor，登记 PidProcess 替身。
+
+        Returns:
+            收养成功后的 SimulationRunState；失败返回 None。
+        """
+        state = cls.get_run_state(simulation_id)
+        if not state:
+            return None
+        pid = state.process_pid
+        if not pid:
+            return None
+        # 已有活句柄
+        existing = cls._processes.get(simulation_id)
+        if existing is not None and existing.poll() is None:
+            return state
+
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return None
+        except PermissionError:
+            pass
+        except OSError:
+            return None
+
+        if not cls._env_heartbeat_fresh(simulation_id):
+            logger.info(f"try_adopt: pid 活但 env 心跳过期 sim={simulation_id}")
+            return None
+
+        shim = PidProcess(int(pid))
+        cls._processes[simulation_id] = shim
+        if simulation_id not in cls._action_queues:
+            cls._action_queues[simulation_id] = Queue()
+
+        state.runner_status = RunnerStatus.RUNNING
+        cls._save_run_state(state)
+        cls._run_states[simulation_id] = state
+
+        # 重建 monitor（仅文件 watch，不依赖 Popen）
+        mon = cls._monitor_threads.get(simulation_id)
+        if mon is None or not mon.is_alive():
+            current_locale = get_locale()
+            monitor_thread = threading.Thread(
+                target=cls._monitor_simulation,
+                args=(simulation_id, current_locale),
+                daemon=True,
+                name=f"adopt-monitor-{simulation_id}",
+            )
+            monitor_thread.start()
+            cls._monitor_threads[simulation_id] = monitor_thread
+
+        logger.info(f"已收养模拟子进程: sim={simulation_id} pid={pid}")
+        return state
     
     @classmethod
     def get_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
@@ -363,10 +511,23 @@ class SimulationRunner:
         Returns:
             SimulationRunState
         """
-        # 检查是否已在运行
+        # 检查是否已在运行：先尝试 adopt，失败再清理后重启
         existing = cls.get_run_state(simulation_id)
         if existing and existing.runner_status in [RunnerStatus.RUNNING, RunnerStatus.STARTING]:
-            raise ValueError(f"模拟已在运行中: {simulation_id}")
+            adopted = cls.try_adopt(simulation_id)
+            if adopted:
+                logger.info(f"start_simulation: 已收养运行中的进程 sim={simulation_id}")
+                return adopted
+            # 死进程：清理状态后继续启动
+            logger.warning(
+                f"start_simulation: registry 标 running 但进程不可收养，清理后重启 sim={simulation_id}"
+            )
+            existing.runner_status = RunnerStatus.STOPPED
+            existing.error = existing.error or "进程已死，准备重启"
+            existing.twitter_running = False
+            existing.reddit_running = False
+            cls._save_run_state(existing)
+            cls._processes.pop(simulation_id, None)
         
         # 加载模拟配置
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
@@ -1264,6 +1425,20 @@ class SimulationRunner:
         if cls._cleanup_done:
             return
         cls._cleanup_done = True
+
+        # Phase C：优雅退出时可选择不杀子进程（kill -9 本就不跑此路径）
+        if Config.SIM_DETACH_ON_EXIT:
+            logger.info(
+                "SIM_DETACH_ON_EXIT=true：跳过终止模拟子进程，重启后将尝试 adopt"
+            )
+            cls._processes.clear()
+            cls._monitor_threads.clear()
+            try:
+                ZepGraphMemoryManager.stop_all()
+            except Exception as e:
+                logger.error(f"停止图谱记忆更新器失败: {e}")
+            cls._graph_memory_enabled.clear()
+            return
         
         # 检查是否有内容需要清理（避免空进程的进程打印无用日志）
         has_processes = bool(cls._processes)

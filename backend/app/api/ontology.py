@@ -171,10 +171,42 @@ def resolve_ontology_graph_id(ontology_id: str) -> str | None:
 def read_ontology_graph(ontology_id: str) -> dict | None:
     """读图谱数据（对齐 MiroFish /api/graph/data/{graph_id}）。
 
-    优先 Zep live；无 graph_id 时回退最新快照。都没有返回 None。
+    优先 Zep live；无 graph_id 或 live 连线率过低时回退最新快照。
     """
     registry.init_schema()
     graph_id = resolve_ontology_graph_id(ontology_id)
+
+    def _from_snapshot():
+        latest = registry.get_latest_version(ontology_id)
+        if latest and latest.get("snapshot_path"):
+            try:
+                snap = load_snapshot(latest["snapshot_path"])
+                nodes = snap.get("nodes") or []
+                edges = snap.get("edges") or []
+                return {
+                    "version": latest,
+                    "graph_id": snap.get("graph_id") or latest.get("graph_id"),
+                    "nodes": nodes,
+                    "edges": edges,
+                    "node_count": len(nodes),
+                    "edge_count": len(edges),
+                    "source": "snapshot",
+                }
+            except Exception as e:
+                logger.warning(f"read snapshot graph failed for {ontology_id}: {e}")
+        return None
+
+    def _match_rate(nodes, edges) -> float:
+        if not edges:
+            return 1.0
+        ids = {n.get("uuid") for n in nodes if n.get("uuid")}
+        ok = sum(
+            1
+            for e in edges
+            if e.get("source_node_uuid") in ids and e.get("target_node_uuid") in ids
+        )
+        return ok / max(len(edges), 1)
+
     if graph_id:
         try:
             from app.config import Config
@@ -184,7 +216,7 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
             data = builder.get_graph_data(graph_id)
             nodes = data.get("nodes") or []
             edges = data.get("edges") or []
-            return {
+            live = {
                 "graph_id": graph_id,
                 "nodes": nodes,
                 "edges": edges,
@@ -192,28 +224,23 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
                 "edge_count": data.get("edge_count") or len(edges),
                 "source": "zep",
             }
+            # 推演写入后 Zep 列表常漏节点；补拉后若仍几乎无连线，用快照保底
+            if edges and _match_rate(nodes, edges) < 0.25:
+                snap = _from_snapshot()
+                if snap and _match_rate(snap["nodes"], snap["edges"]) > _match_rate(
+                    nodes, edges
+                ):
+                    logger.warning(
+                        f"live graph connectivity low for {ontology_id}, "
+                        f"fallback to snapshot (live={_match_rate(nodes, edges):.0%} "
+                        f"snap={_match_rate(snap['nodes'], snap['edges']):.0%})"
+                    )
+                    return snap
+            return live
         except Exception as e:
             logger.warning(f"read zep graph failed for {ontology_id}: {e}")
 
-    latest = registry.get_latest_version(ontology_id)
-    if latest and latest.get("snapshot_path"):
-        try:
-            snap = load_snapshot(latest["snapshot_path"])
-            nodes = snap.get("nodes") or []
-            edges = snap.get("edges") or []
-            return {
-                "version": latest,
-                "graph_id": snap.get("graph_id") or latest.get("graph_id"),
-                "nodes": nodes,
-                "edges": edges,
-                "node_count": len(nodes),
-                "edge_count": len(edges),
-                "source": "snapshot",
-            }
-        except Exception as e:
-            logger.warning(f"read snapshot graph failed for {ontology_id}: {e}")
-    return None
-
+    return _from_snapshot()
 
 @ontology_bp.get("/<ontology_id>/graph")
 def graph(ontology_id: str):

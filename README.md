@@ -8,7 +8,7 @@
 
 | 阶段 | 说明 |
 |------|------|
-| 方案设计 | [docs/design.md](./docs/design.md) |
+| 方案设计 | [docs/](./docs/)（入口 [README](./docs/README.md)） |
 | Demo 原型 | [prototype/](./prototype/) — 已跑通「同世界多方案对比」 |
 | **P1 MVP** | `backend/` + `frontend/` — 常驻本体、世界切片、Scenario Runner、指标对比面板 |
 
@@ -85,7 +85,8 @@ python3 -m http.server 8765
 
 | 文档 | 内容 |
 |------|------|
-| [docs/design.md](./docs/design.md) | 完整方案设计 |
+| [docs/README.md](./docs/README.md) | 文档索引（产品 / 运行时 / 规划） |
+| [docs/design.md](./docs/design.md) | 产品与架构总览 |
 | [prototype/README.md](./prototype/README.md) | Demo 原型用法 |
 | [NOTICE](./NOTICE) | MiroFish 来源与商业授权 |
 

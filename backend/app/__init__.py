@@ -36,9 +36,33 @@ def create_app(config_class=Config):
         # 启动时不阻断；API 路由也会再 init
         pass
 
+    try:
+        from app.models.store import init_tasks_schema
+        init_tasks_schema()
+    except Exception:
+        pass
+
     is_reloader_process = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
     debug_mode = app.config.get('DEBUG', False)
     should_log_startup = not debug_mode or is_reloader_process
+
+    # 进度僵尸回收（debug reloader 仅主进程）
+    try:
+        from app.progress.janitor import start_progress_janitor
+
+        if start_progress_janitor() and should_log_startup:
+            logger.info("已启动 progress_janitor")
+    except Exception:
+        pass
+
+    # Phase C：崩溃透明恢复（延迟后台扫描，不阻塞启动）
+    try:
+        from app.progress.recovery import start_crash_recovery
+
+        if start_crash_recovery() and should_log_startup:
+            logger.info("已调度 crash recovery 扫描")
+    except Exception:
+        pass
 
     if should_log_startup:
         logger.info("=" * 50)

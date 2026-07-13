@@ -383,7 +383,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog, getReportStatus } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportStatus, getReport } from '../api/report'
 import { getDecisionCompare } from '../api/decision'
 import CompareChapter from './CompareChapter.vue'
 import { touchWorkflowStep } from '../store/workflowContext'
@@ -2047,7 +2047,7 @@ const stopLogsSse = () => {
   }
 }
 
-const startReportTaskSse = () => {
+const startReportTaskSse = async () => {
   stopReportSse()
   const rid = props.reportId
   const decisionId = props.decisionId
@@ -2060,7 +2060,25 @@ const startReportTaskSse = () => {
   } catch (_) {
     tid = null
   }
+  // sessionStorage 丢失时从服务端找回（generate_task.json / TaskManager）
+  if (!tid || !String(tid).startsWith('task_')) {
+    try {
+      if (rid) {
+        const res = await getReport(rid)
+        tid = res?.data?.report_task_id || res?.data?.task_id || null
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
   if (!tid || !String(tid).startsWith('task_')) return
+
+  try {
+    if (rid) sessionStorage.setItem(`adc_report_task_${rid}`, tid)
+    if (decisionId) sessionStorage.setItem(`adc_report_task_${decisionId}`, tid)
+  } catch (_) {
+    /* ignore */
+  }
 
   reportSse = subscribeTask(tid, {
     onOpen: () => {
@@ -2068,8 +2086,20 @@ const startReportTaskSse = () => {
     },
     onEvent: (data) => {
       if (data?.message) addLog(data.message)
-      if (data?.progress != null) {
-        /* progress available via logs / UI sections */
+      // 同帧日志增量（不再依赖第二条 logs SSE）
+      if (data?.agent_logs?.length || data?.console_logs?.length) {
+        applyLogsPayload({
+          agent: {
+            logs: data.agent_logs || [],
+            from_line: 0,
+            next_line: data.agent_log_line,
+          },
+          console: {
+            logs: data.console_logs || [],
+            from_line: 0,
+            next_line: data.console_log_line,
+          },
+        })
       }
       if (data?.status === 'failed') {
         emit('update-status', 'error')
@@ -2081,9 +2111,29 @@ const startReportTaskSse = () => {
         emit('update-status', 'error')
         return
       }
-      isComplete.value = true
-      emit('update-status', 'completed')
-      addLog('报告生成任务完成')
+      // 勿仅凭 task completed 提前解锁；等 report_complete / 章节齐套
+      if (data?.agent_logs?.length || data?.console_logs?.length) {
+        applyLogsPayload({
+          agent: {
+            logs: data.agent_logs || [],
+            from_line: 0,
+            next_line: data.agent_log_line,
+          },
+          console: {
+            logs: data.console_logs || [],
+            from_line: 0,
+            next_line: data.console_log_line,
+          },
+        })
+      }
+      if (!isComplete.value) {
+        addLog('报告任务结束，等待章节落盘确认…')
+        // 兜底：若已有章节则标记完成
+        if (Object.keys(generatedSections.value || {}).length > 0) {
+          isComplete.value = true
+          emit('update-status', 'completed')
+        }
+      }
       try {
         sessionStorage.removeItem(`adc_report_task_${rid}`)
       } catch (_) {
@@ -2092,6 +2142,8 @@ const startReportTaskSse = () => {
     },
     onError: (err) => {
       console.warn('[SandOwl] report SSE error', err)
+      // 降级：仅此时开 logs SSE
+      if (!logsSse) startLogsSse()
     },
   })
 }
@@ -2107,6 +2159,15 @@ const applyAgentLogEntries = (newLogs = []) => {
 
     if (log.action === 'section_start') {
       currentSectionIndex.value = log.section_index
+    }
+
+    // section_content：预填左栏，section_complete 再定稿
+    if (log.action === 'section_content') {
+      const content = log.details?.content || log.details?.full_content
+      if (content && log.section_index != null) {
+        generatedSections.value[log.section_index] = content
+        expandedContent.value.add(log.section_index - 1)
+      }
     }
 
     if (log.action === 'section_complete') {
@@ -2152,8 +2213,22 @@ const applyLogsPayload = (data) => {
   if (!data) return
   const agentPart = data.agent || {}
   const consolePart = data.console || {}
-  const agentNew = agentPart.logs || []
-  const consoleNew = consolePart.logs || []
+  let agentNew = agentPart.logs || []
+  let consoleNew = consolePart.logs || []
+  // 若服务端推的是 from_line=0 的全量窗口，只取本地水位之后的增量
+  const agentFrom = Number(agentPart.from_line)
+  if (Number.isFinite(agentFrom) && agentFrom === 0 && agentLogLine.value > 0 && agentNew.length >= agentLogLine.value) {
+    agentNew = agentNew.slice(agentLogLine.value)
+  }
+  const consoleFrom = Number(consolePart.from_line)
+  if (
+    Number.isFinite(consoleFrom) &&
+    consoleFrom === 0 &&
+    consoleLogLine.value > 0 &&
+    consoleNew.length >= consoleLogLine.value
+  ) {
+    consoleNew = consoleNew.slice(consoleLogLine.value)
+  }
   if (agentNew.length) {
     applyAgentLogEntries(agentNew)
     if (agentPart.next_line != null) agentLogLine.value = agentPart.next_line
@@ -2286,9 +2361,9 @@ const fetchConsoleLog = async () => {
 }
 
 const startPolling = () => {
-  if (logsSse || agentLogTimer || consoleLogTimer) return
+  if (reportSse || logsSse || agentLogTimer || consoleLogTimer) return
 
-  startLogsSse()
+  // 唯一主通道：task SSE（帧内带日志）；logs SSE 仅在 task 失败时降级
   startReportTaskSse()
 }
 
