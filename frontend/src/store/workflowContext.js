@@ -7,7 +7,7 @@
 import { reactive } from 'vue'
 import { taskRoute } from '../utils/taskRoute'
 import { getDecision } from '../api/decision'
-import { resolveReportId } from '../api/report'
+import { getReport, resolveReportId } from '../api/report'
 
 const STORAGE_KEY = 'adc_workflow_ctx'
 
@@ -195,8 +195,25 @@ export async function syncWorkflowFromServer(decisionId) {
       let hasReport = false
       try {
         const rid = await resolveReportId(id)
-        hasReport = Boolean(rid && String(rid).startsWith('report_'))
-        if (hasReport) state.reportId = rid
+        if (rid && String(rid).startsWith('report_')) {
+          hasReport = true
+          state.reportId = rid
+        } else {
+          // 无独立 report_* 时：对比/叙事正文也算「有报告」，可进互动
+          const rep = await getReport(id)
+          const d = rep?.data || {}
+          const md =
+            d.markdown_content ||
+            d.report?.markdown ||
+            d.markdown ||
+            ''
+          if (String(md).trim().length > 40) {
+            hasReport = true
+            if (d.report_id && String(d.report_id).startsWith('report_')) {
+              state.reportId = d.report_id
+            }
+          }
+        }
       } catch (_) {
         /* ignore */
       }

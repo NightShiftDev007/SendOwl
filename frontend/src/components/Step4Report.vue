@@ -4,7 +4,7 @@
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
       <div class="left-panel report-style" ref="leftPanel">
-        <div v-if="reportOutline" class="report-content-wrapper" ref="reportExportRoot">
+        <div v-if="reportOutline" class="report-content-wrapper">
           <!-- Report Header -->
           <div class="report-header-block">
             <div class="report-meta">
@@ -462,7 +462,7 @@ import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog, getReportStatus, getReport } from '../api/report'
 import { getDecisionCompare } from '../api/decision'
 import CompareChapter from './CompareChapter.vue'
-import { touchWorkflowStep } from '../store/workflowContext'
+import { touchWorkflowStep, syncWorkflowFromServer } from '../store/workflowContext'
 import { taskRoute } from '../utils/taskRoute'
 import { subscribeTask, subscribeReportLogs } from '../api/sse'
 import { exportReportPdfDocument } from '../utils/exportPdf'
@@ -480,7 +480,6 @@ const props = defineProps({
 
 const emit = defineEmits(['add-log', 'update-status'])
 
-const reportExportRoot = ref(null)
 const compareChapterRef = ref(null)
 const exportingPdf = ref(false)
 const exportingMd = ref(false)
@@ -517,9 +516,13 @@ function exportSafeId() {
 }
 
 async function collectExportPayload() {
+  // 确保对比章节与图表已加载
+  if (!comparePayload.value) {
+    await loadCompareIfNeeded()
+  }
   await nextTick()
   window.dispatchEvent(new Event('resize'))
-  await new Promise((r) => setTimeout(r, 200))
+  await new Promise((r) => setTimeout(r, 280))
 
   let images = []
   if (compareChapterRef.value?.getExportImages) {
@@ -2577,7 +2580,17 @@ const stopPolling = () => {
   stopReportSse()
 }
 
-// Lifecycle
+watch(
+  () => isComplete.value,
+  (done) => {
+    if (!done) return
+    const id = props.decisionId || (
+      String(props.reportId || '').startsWith('dec_') ? props.reportId : ''
+    )
+    if (id && String(id).startsWith('dec_')) syncWorkflowFromServer(id)
+  },
+)
+
 const loadCompareIfNeeded = async () => {
   const id = props.decisionId || props.simulationId || props.reportId
   if (!id || !String(id).startsWith('dec_')) return
@@ -2900,150 +2913,6 @@ watch(() => props.reportId, (newId) => {
   font-size: 14px;
   background: #FFFFFF;
   color: #1F2937;
-}
-
-.report-content-wrapper.is-exporting-pdf .export-dropdown {
-  display: none !important;
-}
-
-/* PDF 导出：紧凑排版（屏幕用大字号，导出要接近文档阅读尺寸） */
-.report-content-wrapper.is-exporting-pdf {
-  max-width: 720px !important;
-  width: 720px !important;
-  padding: 8px 12px 24px !important;
-  font-size: 12px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-.report-content-wrapper.is-exporting-pdf .report-header-block {
-  margin-bottom: 16px;
-}
-
-.report-content-wrapper.is-exporting-pdf .report-meta {
-  margin-bottom: 10px;
-  gap: 8px;
-}
-
-.report-content-wrapper.is-exporting-pdf .report-tag {
-  font-size: 9px;
-  padding: 2px 6px;
-}
-
-.report-content-wrapper.is-exporting-pdf .report-id {
-  font-size: 10px;
-}
-
-.report-content-wrapper.is-exporting-pdf .main-title {
-  font-size: 18px !important;
-  line-height: 1.35 !important;
-  margin: 0 0 8px !important;
-  letter-spacing: -0.01em;
-}
-
-.report-content-wrapper.is-exporting-pdf .sub-title {
-  font-size: 11.5px !important;
-  line-height: 1.55 !important;
-  font-weight: 400 !important;
-  font-style: normal !important;
-  margin: 0 0 10px !important;
-  color: #4B5563 !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .header-divider {
-  margin: 10px 0 0;
-}
-
-.report-content-wrapper.is-exporting-pdf .section-title {
-  font-size: 14px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .section-number {
-  font-size: 12px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .collapse-icon {
-  display: none !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .generated-content {
-  font-size: 11.5px !important;
-  line-height: 1.6 !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h2) {
-  font-size: 14px !important;
-  margin: 14px 0 8px !important;
-  padding-bottom: 4px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h3) {
-  font-size: 13px !important;
-  margin: 12px 0 6px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h4) {
-  font-size: 12px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf .generated-content :deep(p),
-.report-content-wrapper.is-exporting-pdf .generated-content :deep(li) {
-  font-size: 11.5px !important;
-  line-height: 1.6 !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.compare-chapter) {
-  margin: 8px 0 12px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.chapter-head) {
-  padding: 6px 10px !important;
-  font-size: 11px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.verdict-body strong) {
-  font-size: 13px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.verdict-meta),
-.report-content-wrapper.is-exporting-pdf :deep(.verdict-delta) {
-  font-size: 10px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.kpi-head) {
-  font-size: 11px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.kpi-grid .val) {
-  font-size: 13px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.kpi-grid .muted),
-.report-content-wrapper.is-exporting-pdf :deep(.narrative) {
-  font-size: 10px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.chart-card h3),
-.report-content-wrapper.is-exporting-pdf :deep(.geo-title h3) {
-  font-size: 11px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.chart) {
-  height: 200px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.chart.tall) {
-  height: 220px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.geo-map .chart) {
-  height: 260px !important;
-}
-
-.report-content-wrapper.is-exporting-pdf :deep(.md.markdown-body) {
-  font-size: 11.5px !important;
-  line-height: 1.55 !important;
-  padding: 8px 10px !important;
 }
 
 .report-tag {

@@ -195,19 +195,51 @@ async function getExportImages(pixelRatio = 1.5) {
   for (const c of charts) c.resize()
   await new Promise((r) => setTimeout(r, 120))
   const images = []
+  // 柱状图临时略加高再截，PDF 里更清晰
+  const bump = async (el, chart, h) => {
+    if (!el || !chart) return () => {}
+    const prev = el.style.height
+    el.style.height = h
+    chart.resize()
+    await new Promise((r) => setTimeout(r, 60))
+    return () => {
+      el.style.height = prev
+      chart.resize()
+    }
+  }
+
+  const restoreBar = await bump(barEl.value, barChart, '240px')
   const bar = chartToPng(barChart, pixelRatio)
+  restoreBar()
   if (bar) images.push({ key: 'chart-spread', title: '传播规模', kind: 'chart', dataUrl: bar })
+
+  const restoreStance = await bump(stanceEl.value, stanceChart, '240px')
   const stance = chartToPng(stanceChart, pixelRatio)
+  restoreStance()
   if (stance) images.push({ key: 'chart-stance', title: '观点结构', kind: 'chart', dataUrl: stance })
+
+  // 曲线图临时加高再截，避免 PDF 里又扁又小
+  let prevCurveH = ''
+  if (curveEl.value && curveChart) {
+    prevCurveH = curveEl.value.style.height
+    curveEl.value.style.height = '320px'
+    curveChart.resize()
+    await new Promise((r) => setTimeout(r, 80))
+  }
   const curve = chartToPng(curveChart, pixelRatio)
-  if (curve) images.push({ key: 'chart-curve', title: '传播曲线叠加', kind: 'chart', dataUrl: curve })
+  if (curve) images.push({ key: 'chart-curve', title: '传播曲线叠加', kind: 'curve', dataUrl: curve })
+  if (curveEl.value && curveChart) {
+    curveEl.value.style.height = prevCurveH
+    curveChart.resize()
+  }
+
   if (geoMapRef.value?.captureAllMaps) {
     const maps = await geoMapRef.value.captureAllMaps(pixelRatio)
+    const multi = scenarios.value.length > 1
     for (const m of maps) {
-      const name = String(m.name || `方案${m.index + 1}`).slice(0, 24)
       images.push({
-        key: `map-${m.index + 1}`,
-        title: `地域传播飞线 · ${name}`,
+        key: 'map-overlay',
+        title: multi ? '地域传播飞线（全方案叠加）' : '地域传播飞线',
         kind: 'map',
         dataUrl: m.dataUrl,
       })

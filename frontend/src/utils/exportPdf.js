@@ -113,7 +113,8 @@ function buildCompareHtml(compare, images) {
 
   for (const img of rest) {
     if (!img?.dataUrl) continue
-    const cls = img.kind === 'map' ? 'chart chart--map' : 'chart'
+    const cls =
+      img.kind === 'map' ? 'chart chart--map' : img.kind === 'curve' || img.key === 'chart-curve' ? 'chart chart--curve' : 'chart'
     parts.push(
       `<figure class="${cls}"><figcaption>${escapeHtml(img.title)}</figcaption><img src="${img.dataUrl}" alt="${escapeHtml(img.title)}" /></figure>`,
     )
@@ -163,8 +164,8 @@ function downscaleDataUrl(dataUrl, maxWidth = 880, quality = 0.82) {
 async function prepareImages(images) {
   const out = []
   for (const img of images || []) {
-    const maxW = img.kind === 'map' ? 860 : 720
-    const dataUrl = await downscaleDataUrl(img.dataUrl, maxW, 0.84)
+    const maxW = img.kind === 'map' ? 860 : img.kind === 'curve' ? 900 : 720
+    const dataUrl = await downscaleDataUrl(img.dataUrl, maxW, img.kind === 'curve' ? 0.9 : 0.84)
     if (!dataUrl) continue
     out.push({ ...img, dataUrl })
   }
@@ -299,10 +300,17 @@ function buildPrintHtml(opts) {
       border: 1px solid #eee;
     }
     figure.chart--sm img {
-      max-height: 42mm;
+      max-height: 58mm;
+      width: 100%;
+    }
+    figure.chart--curve img {
+      width: 100%;
+      max-width: 100%;
+      max-height: 95mm;
+      min-height: 70mm;
     }
     figure.chart--map img {
-      max-height: 68mm;
+      max-height: 72mm;
       max-width: 92%;
     }
     .md { font-size: 10.5pt; }

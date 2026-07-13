@@ -319,7 +319,7 @@ import { getDecision } from '../api/decision'
 import { generateReport } from '../api/report'
 import { subscribeDecision } from '../api/sse'
 import RunMatrixPanel from './RunMatrixPanel.vue'
-import { touchWorkflowStep } from '../store/workflowContext'
+import { touchWorkflowStep, syncWorkflowFromServer } from '../store/workflowContext'
 import { taskRoute } from '../utils/taskRoute'
 
 const { t } = useI18n()
@@ -754,6 +754,12 @@ const applyRunStatus = (data) => {
     phase.value = 2
     stopPolling()
     emit('update-status', 'completed')
+    const decId = props.decisionId || (
+      String(props.simulationId || '').startsWith('dec_') ? props.simulationId : ''
+    )
+    if (decId && String(decId).startsWith('dec_')) {
+      syncWorkflowFromServer(decId)
+    }
   }
 }
 

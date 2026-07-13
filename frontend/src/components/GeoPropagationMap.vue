@@ -3,20 +3,17 @@
     <div class="geo-head">
       <div class="geo-title">
         <h3 class="mono">地域传播飞线</h3>
-        <span class="note">{{ mappingNote || '真实地理：adcode 主键' }}</span>
+        <span class="note">{{ mappingNote || '真实地理：adcode 主键 · 多方案同图叠加' }}</span>
       </div>
-      <div class="scenario-tabs" v-if="scenarios.length">
-        <button
+      <div class="scenario-legend" v-if="scenarios.length > 1">
+        <span
           v-for="(s, i) in scenarios"
           :key="s.scenario_id || i"
-          type="button"
-          class="tab"
-          :class="{ active: i === activeIndex }"
-          :style="i === activeIndex ? { borderColor: s.color || 'var(--brand)', color: s.color || 'var(--brand)' } : {}"
-          @click="activeIndex = i"
+          class="legend-item"
         >
-          {{ shortName(s) }}
-        </button>
+          <i class="swatch" :style="{ background: scenarioColor(s, i) }"></i>
+          {{ shortName(s, i) }}
+        </span>
       </div>
     </div>
 
@@ -50,13 +47,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 
 const MUNICIPALITIES = new Set(['110000', '120000', '310000', '500000', '810000', '820000'])
+const FALLBACK_COLORS = ['#FF4500', '#2563EB', '#059669', '#D97706', '#7C3AED', '#DB2777']
 
 const props = defineProps({
   scenarios: { type: Array, default: () => [] },
 })
 
 const chartEl = ref(null)
-const activeIndex = ref(0)
 /** @type {import('vue').Ref<Array<{adcode:string,name:string,level:string}>>} */
 const stack = ref([])
 let chart = null
@@ -64,13 +61,26 @@ const mapCache = new Map()
 /** name → adcode for current registered map */
 let nameToAdcode = {}
 
-const active = computed(() => props.scenarios[activeIndex.value] || null)
-const geo = computed(() => active.value?.geo_propagation || {})
-const mappingNote = computed(() => geo.value.mapping_note || '')
-const rawNodes = computed(() => {
-  const g = geo.value
+function scenarioColor(s, i = 0) {
+  return s?.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length]
+}
+
+function shortName(s, i = 0) {
+  const kind = String(s?.scenario_id || s?.kind || '').trim()
+  if (kind && !/^(default|custom|scn_)/i.test(kind) && kind.length <= 16) return kind
+  const name = String(s?.scenario_name || s?.name || '').trim()
+  const head = name.split(/[·•|/｜]/)[0].trim()
+  if (!head || head.length > 18) return `方案${i + 1}`
+  return head.length > 14 ? `${head.slice(0, 13)}…` : head
+}
+
+function geoOf(s) {
+  return s?.geo_propagation || {}
+}
+
+function rawNodesOf(s) {
+  const g = geoOf(s)
   if (Array.isArray(g.nodes) && g.nodes.length) return g.nodes
-  // 兼容旧 cities
   return (g.cities || []).map((c) => ({
     adcode: c.adcode || '',
     name: c.name,
@@ -80,16 +90,23 @@ const rawNodes = computed(() => {
     city_adcode: c.adcode || '',
     province_adcode: c.adcode ? String(c.adcode).slice(0, 2) + '0000' : '',
   }))
-})
-const rawLines = computed(() => geo.value.lines || [])
-const hasData = computed(() => {
-  return rawLines.value.length > 0 || rawNodes.value.length > 0
+}
+
+function rawLinesOf(s) {
+  return geoOf(s).lines || []
+}
+
+const mappingNote = computed(() => {
+  for (const s of props.scenarios) {
+    const note = geoOf(s).mapping_note
+    if (note) return note
+  }
+  return ''
 })
 
-function shortName(s) {
-  const name = String(s.scenario_name || s.name || '')
-  return name.split(/[·•]/)[0].trim() || name
-}
+const hasData = computed(() =>
+  props.scenarios.some((s) => rawLinesOf(s).length > 0 || rawNodesOf(s).length > 0),
+)
 
 function provinceOf(code) {
   const c = String(code || '')
@@ -134,7 +151,6 @@ function ensureMeta(adcode, nodeIndex, metaAcc) {
     metaAcc.set(c, m)
     return m
   }
-  // 从子节点上卷：找任意同 city/province 的节点坐标
   for (const n of nodeIndex.values()) {
     if (cityOf(n.adcode, nodeIndex) === c || provinceOf(n.adcode) === c) {
       const m = {
@@ -151,9 +167,8 @@ function ensureMeta(adcode, nodeIndex, metaAcc) {
   return null
 }
 
-function viewLinesAndNodes() {
-  const nodes = rawNodes.value
-  const lines = rawLines.value
+/** 单方案在当前下钻视野下的线/点 */
+function viewLinesAndNodes(nodes, lines) {
   const nodeIndex = buildNodeIndex(nodes)
   const depth = stack.value.length
   const focus = depth ? stack.value[depth - 1].adcode : ''
@@ -164,7 +179,6 @@ function viewLinesAndNodes() {
     let a = String(line.from || '')
     let b = String(line.to || '')
     if (!a || !b) continue
-    // 旧数据：名称主键无法下钻，尽量跳过非数字
     if (!/^\d{6}$/.test(a) || !/^\d{6}$/.test(b)) continue
 
     const span = line.span || (sameCity(a, b, nodeIndex) ? 'intra_city' : 'cross_city')
@@ -175,26 +189,20 @@ function viewLinesAndNodes() {
       a = cityOf(a, nodeIndex)
       b = cityOf(b, nodeIndex)
     } else if (stack.value[0] && MUNICIPALITIES.has(stack.value[0].adcode) && depth === 1) {
-      // 直辖：区内飞线用 leaf
       const pac = stack.value[0].adcode
       if (provinceOf(a) !== pac && provinceOf(b) !== pac) continue
       if (!sameCity(a, b, nodeIndex)) {
-        // 跨出本市的边：仍显示，端点上卷
         a = cityOf(a, nodeIndex)
         b = cityOf(b, nodeIndex)
       }
     } else if (depth === 1) {
-      // 省视图
       const pac = focus
       if (provinceOf(a) !== pac && provinceOf(b) !== pac) continue
-      if (span === 'intra_city') {
-        // keep leaf
-      } else {
+      if (span !== 'intra_city') {
         a = cityOf(a, nodeIndex)
         b = cityOf(b, nodeIndex)
       }
     } else {
-      // 市视图
       const cac = focus
       if (!sameCity(a, cac, nodeIndex) || !sameCity(b, cac, nodeIndex)) continue
     }
@@ -216,7 +224,6 @@ function viewLinesAndNodes() {
     used.add(b)
   }
 
-  // 活跃点：当前视野相关 nodes
   const outNodes = []
   for (const n of nodes) {
     const code = String(n.adcode || '')
@@ -232,8 +239,6 @@ function viewLinesAndNodes() {
         }
         continue
       }
-    } else if (depth === 1 && MUNICIPALITIES.has(focus)) {
-      include = provinceOf(code) === focus
     } else if (depth === 1) {
       include = provinceOf(code) === focus
     } else {
@@ -250,7 +255,6 @@ function viewLinesAndNodes() {
     }
   }
 
-  // 补齐线端点
   for (const code of used) {
     if (!outNodes.find((x) => x.adcode === code)) {
       const m = ensureMeta(code, nodeIndex, metaAcc)
@@ -305,7 +309,6 @@ function currentMapSpec() {
       zoom: 1.05,
     }
   }
-  // city
   const pac = top.adcode
   const cac = cur.adcode
   return {
@@ -345,30 +348,80 @@ function render() {
     chart.on('click', onMapClick)
   }
 
-  const color = active.value?.color || '#FF4500'
-  const { lines, nodes } = viewLinesAndNodes()
-  const maxCity = Math.max(...nodes.map((c) => c.value || 1), 1)
-  const maxLine = Math.max(...lines.map((l) => l.count || 1), 1)
+  const series = []
+  let globalMaxCity = 1
+  let globalMaxLine = 1
+  const layers = props.scenarios.map((s, i) => {
+    const { lines, nodes } = viewLinesAndNodes(rawNodesOf(s), rawLinesOf(s))
+    globalMaxCity = Math.max(globalMaxCity, ...nodes.map((c) => c.value || 1), 1)
+    globalMaxLine = Math.max(globalMaxLine, ...lines.map((l) => l.count || 1), 1)
+    return { s, i, lines, nodes, color: scenarioColor(s, i), label: shortName(s, i) }
+  })
 
-  const scatterData = nodes.map((c) => ({
-    name: c.name,
-    adcode: c.adcode,
-    value: [...(c.coord || [0, 0]), c.value || 1],
-  }))
+  for (const layer of layers) {
+    if (!layer.lines.length && !layer.nodes.length) continue
+    const curve = 0.18 + (layer.i % 5) * 0.06
+    const lineData = layer.lines
+      .map((l) => {
+        const from = layer.nodes.find((c) => c.adcode === l.from)
+        const to = layer.nodes.find((c) => c.adcode === l.to)
+        if (!from?.coord || !to?.coord) return null
+        return {
+          fromName: l.fromName || from.name,
+          toName: l.toName || to.name,
+          count: l.count,
+          scenario: layer.label,
+          coords: [from.coord, to.coord],
+        }
+      })
+      .filter(Boolean)
 
-  const lineData = lines
-    .map((l) => {
-      const from = nodes.find((c) => c.adcode === l.from)
-      const to = nodes.find((c) => c.adcode === l.to)
-      if (!from?.coord || !to?.coord) return null
-      return {
-        fromName: l.fromName || from.name,
-        toName: l.toName || to.name,
-        count: l.count,
-        coords: [from.coord, to.coord],
-      }
+    series.push({
+      name: layer.label,
+      type: 'lines',
+      coordinateSystem: 'geo',
+      zlevel: 2 + layer.i,
+      effect: {
+        show: true,
+        period: 4 + layer.i * 0.4,
+        trailLength: 0.3,
+        symbol: 'arrow',
+        symbolSize: 4,
+      },
+      lineStyle: {
+        color: layer.color,
+        width: 1.2,
+        opacity: 0.7,
+        curveness: curve,
+      },
+      data: lineData.map((d) => ({
+        ...d,
+        lineStyle: {
+          width: 1 + (2.5 * (d.count || 1)) / globalMaxLine,
+          color: layer.color,
+          opacity: 0.5 + (0.35 * (d.count || 1)) / globalMaxLine,
+          curveness: curve,
+        },
+      })),
     })
-    .filter(Boolean)
+
+    series.push({
+      name: `${layer.label}·点`,
+      type: 'effectScatter',
+      coordinateSystem: 'geo',
+      zlevel: 20 + layer.i,
+      legendHoverLink: false,
+      rippleEffect: { brushType: 'stroke', scale: 2.5 },
+      symbolSize: (val) => 6 + (14 * (val[2] || 1)) / globalMaxCity,
+      itemStyle: { color: layer.color, shadowBlur: 6, shadowColor: layer.color },
+      data: layer.nodes.map((c) => ({
+        name: c.name,
+        adcode: c.adcode,
+        scenario: layer.label,
+        value: [...(c.coord || [0, 0]), c.value || 1],
+      })),
+    })
+  }
 
   const spec = currentMapSpec()
   const geoOpt = {
@@ -391,61 +444,27 @@ function render() {
   chart.setOption(
     {
       backgroundColor: 'transparent',
+      legend: {
+        show: false,
+      },
       tooltip: {
         trigger: 'item',
         formatter: (p) => {
           if (p.seriesType === 'lines') {
             const d = p.data || {}
-            return `${d.fromName || ''} → ${d.toName || ''}<br/>传播 ${d.count || 1} 次`
+            const sc = d.scenario ? `<br/><span style="color:#666">${d.scenario}</span>` : ''
+            return `${d.fromName || ''} → ${d.toName || ''}<br/>传播 ${d.count || 1} 次${sc}`
           }
           if (p.seriesType === 'effectScatter' || p.seriesType === 'scatter') {
             const v = Array.isArray(p.value) ? p.value[2] : p.value
-            return `${p.name}<br/>活跃 ${v || 0}`
+            const sc = p.data?.scenario ? `<br/><span style="color:#666">${p.data.scenario}</span>` : ''
+            return `${p.name}<br/>活跃 ${v || 0}${sc}`
           }
           return p.name
         },
       },
       geo: geoOpt,
-      series: [
-        {
-          name: '传播飞线',
-          type: 'lines',
-          coordinateSystem: 'geo',
-          zlevel: 2,
-          effect: {
-            show: true,
-            period: 4,
-            trailLength: 0.35,
-            symbol: 'arrow',
-            symbolSize: 5,
-          },
-          lineStyle: {
-            color,
-            width: 1.2,
-            opacity: 0.65,
-            curveness: 0.25,
-          },
-          data: lineData.map((d) => ({
-            ...d,
-            lineStyle: {
-              width: 1 + (3 * (d.count || 1)) / maxLine,
-              color,
-              opacity: 0.55 + (0.35 * (d.count || 1)) / maxLine,
-              curveness: 0.25,
-            },
-          })),
-        },
-        {
-          name: '地域活跃',
-          type: 'effectScatter',
-          coordinateSystem: 'geo',
-          zlevel: 3,
-          rippleEffect: { brushType: 'stroke', scale: 3 },
-          symbolSize: (val) => 8 + (18 * (val[2] || 1)) / maxCity,
-          itemStyle: { color, shadowBlur: 8, shadowColor: color },
-          data: scatterData,
-        },
-      ],
+      series,
     },
     true,
   )
@@ -490,25 +509,19 @@ function resize() {
 }
 
 watch(
-  () => [props.scenarios, activeIndex.value],
+  () => props.scenarios,
   async () => {
-    if (activeIndex.value >= props.scenarios.length) activeIndex.value = 0
     stack.value = []
     const spec = await ensureMap()
+    await nextTick()
     if (spec) render()
   },
   { deep: true },
 )
 
-watch(
-  stack,
-  async () => {
-    // stack changes handled in click/go*
-  },
-)
-
 onMounted(async () => {
   const spec = await ensureMap()
+  await nextTick()
   if (spec) render()
   window.addEventListener('resize', resize)
 })
@@ -524,21 +537,16 @@ function wait(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-/** 依次切换方案并截取地图（全国视图） */
+/** 导出：全国叠加视图截一张即可 */
 async function captureAllMaps(pixelRatio = 2) {
-  const results = []
-  if (!props.scenarios.length) return results
-  const prevIndex = activeIndex.value
   const prevStack = [...stack.value]
-
-  for (let i = 0; i < props.scenarios.length; i++) {
-    activeIndex.value = i
-    stack.value = []
-    await nextTick()
-    const spec = await ensureMap()
-    if (spec) render()
-    await wait(350)
-    if (!chart || !hasData.value) continue
+  stack.value = []
+  await nextTick()
+  const spec = await ensureMap()
+  if (spec) render()
+  await wait(280)
+  const results = []
+  if (chart && hasData.value) {
     try {
       chart.resize()
       const dataUrl = chart.getDataURL({
@@ -548,8 +556,8 @@ async function captureAllMaps(pixelRatio = 2) {
       })
       if (dataUrl) {
         results.push({
-          index: i,
-          name: shortName(props.scenarios[i]),
+          index: 0,
+          name: props.scenarios.length > 1 ? '全方案叠加' : shortName(props.scenarios[0], 0),
           dataUrl,
         })
       }
@@ -557,12 +565,10 @@ async function captureAllMaps(pixelRatio = 2) {
       console.warn('[geo-map] capture failed', e)
     }
   }
-
-  activeIndex.value = prevIndex
   stack.value = prevStack
   await nextTick()
-  const spec = await ensureMap()
-  if (spec) render()
+  const spec2 = await ensureMap()
+  if (spec2) render()
   return results
 }
 
@@ -582,24 +588,43 @@ defineExpose({ captureAllMaps })
   gap: 10px 16px;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 6px;
 }
 .geo-title h3 {
-  margin: 0 0 4px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  margin: 0;
+  font-size: 13px;
 }
 .note {
+  display: block;
+  margin-top: 2px;
   font-size: 11px;
   color: var(--ink-muted);
-  line-height: 1.4;
+}
+.scenario-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 .breadcrumb {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin: 8px 0 4px;
   font-size: 12px;
 }
 .crumb {
@@ -607,8 +632,7 @@ defineExpose({ captureAllMaps })
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
-  padding: 2px 4px;
-  font-family: var(--font-mono);
+  padding: 0 2px;
   font-size: 12px;
 }
 .crumb.active {
@@ -626,24 +650,6 @@ defineExpose({ captureAllMaps })
   margin-left: 8px;
   color: var(--ink-muted);
   font-size: 11px;
-}
-.scenario-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.tab {
-  border: 1px solid var(--border);
-  background: var(--surface, #fff);
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-.tab.active {
-  font-weight: 700;
-  background: var(--bg-muted, #f7f7f7);
 }
 .chart {
   height: 360px;
