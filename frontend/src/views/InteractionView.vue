@@ -64,7 +64,7 @@ import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step5Interaction from '../components/Step5Interaction.vue'
 import StepNav from '../components/StepNav.vue'
-import { getProject, getOntologyGraph } from '../api/graph'
+import { getProject, getOntologyGraph, snapshotOntology } from '../api/graph'
 import { getSimulation, resolveSimContext } from '../api/simulation'
 import { getReport, resolveReportId } from '../api/report'
 import { touchWorkflowStep } from '../store/workflowContext'
@@ -211,9 +211,16 @@ const loadGraph = async (_graphId) => {
   }
 }
 
-const refreshGraph = () => {
-  if (projectData.value?.id || projectData.value?.project_id || projectData.value?.graph_id) {
-    loadGraph(projectData.value.graph_id)
+const refreshGraph = async () => {
+  const ontologyId = projectData.value?.id || projectData.value?.project_id || projectData.value?.ontology_id
+  if (!ontologyId) return
+  addLog(t('log.graphSyncRefresh'))
+  graphLoading.value = true
+  try {
+    await snapshotOntology(ontologyId).catch(() => null)
+    await loadGraph()
+  } finally {
+    graphLoading.value = false
   }
 }
 

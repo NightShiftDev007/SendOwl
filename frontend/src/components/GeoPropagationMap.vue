@@ -46,7 +46,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 
 const MUNICIPALITIES = new Set(['110000', '120000', '310000', '500000', '810000', '820000'])
@@ -335,6 +335,11 @@ async function ensureMap() {
 
 function render() {
   if (!chartEl.value || !hasData.value) return
+  if (chart && chart.getDom() !== chartEl.value) {
+    chart.off('click', onMapClick)
+    chart.dispose()
+    chart = null
+  }
   if (!chart) {
     chart = echarts.init(chartEl.value)
     chart.on('click', onMapClick)
@@ -514,6 +519,54 @@ onUnmounted(() => {
   chart?.dispose()
   chart = null
 })
+
+function wait(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** 依次切换方案并截取地图（全国视图） */
+async function captureAllMaps(pixelRatio = 2) {
+  const results = []
+  if (!props.scenarios.length) return results
+  const prevIndex = activeIndex.value
+  const prevStack = [...stack.value]
+
+  for (let i = 0; i < props.scenarios.length; i++) {
+    activeIndex.value = i
+    stack.value = []
+    await nextTick()
+    const spec = await ensureMap()
+    if (spec) render()
+    await wait(350)
+    if (!chart || !hasData.value) continue
+    try {
+      chart.resize()
+      const dataUrl = chart.getDataURL({
+        type: 'png',
+        pixelRatio,
+        backgroundColor: '#ffffff',
+      })
+      if (dataUrl) {
+        results.push({
+          index: i,
+          name: shortName(props.scenarios[i]),
+          dataUrl,
+        })
+      }
+    } catch (e) {
+      console.warn('[geo-map] capture failed', e)
+    }
+  }
+
+  activeIndex.value = prevIndex
+  stack.value = prevStack
+  await nextTick()
+  const spec = await ensureMap()
+  if (spec) render()
+  return results
+}
+
+defineExpose({ captureAllMaps })
 </script>
 
 <style scoped>

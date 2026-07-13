@@ -16,6 +16,7 @@
 | [progress-sse.md](./progress-sse.md) | 一阶段一 SSE、Envelope、刷新契约、Task 持久化与 TTL |
 | [crash-recovery.md](./crash-recovery.md) | Phase C 崩溃透明恢复、adopt、检查点、验收 |
 | [interview-dual-track.md](./interview-dual-track.md) | Interview live / offline 双轨、回顾采访数据依赖 |
+| [graph-snapshot.md](./graph-snapshot.md) | 图谱本地快照为展示 SoT、Refresh=同步 Zep |
 
 ## 规划中
 
@@ -29,5 +30,6 @@
 2. 改进度条 / SSE / 前端 Step → `progress-sse.md`
 3. 改启动恢复 / 子进程 / 建图断点 → `crash-recovery.md`
 4. 改 Step5 采访 / 环境关闭后回顾 → `interview-dual-track.md`
-5. 动 MiroFish 遗留模块 → `mirofish-integration.md`
-6. 扩社媒渠道 → `platform-plugins.md`
+5. 改图谱读路径 / 快照同步 → `graph-snapshot.md`
+6. 动 MiroFish 遗留模块 → `mirofish-integration.md`
+7. 扩社媒渠道 → `platform-plugins.md`

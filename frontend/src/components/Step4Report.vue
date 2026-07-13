@@ -4,19 +4,57 @@
     <div class="main-split-layout">
       <!-- LEFT PANEL: Report Style -->
       <div class="left-panel report-style" ref="leftPanel">
-        <div v-if="reportOutline" class="report-content-wrapper">
+        <div v-if="reportOutline" class="report-content-wrapper" ref="reportExportRoot">
           <!-- Report Header -->
           <div class="report-header-block">
             <div class="report-meta">
               <span class="report-tag">{{ $t('step4.predictionReportTag') }}</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
+              <div class="export-dropdown" data-export-dropdown>
+                <button
+                  class="export-trigger"
+                  type="button"
+                  :disabled="isExporting || !reportOutline || !isComplete"
+                  :aria-expanded="exportMenuOpen === 'header'"
+                  @click.stop="toggleExportMenu('header')"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                  </svg>
+                  <span>{{ isExporting ? $t('step4.exporting') : $t('step4.export') }}</span>
+                  <svg
+                    class="export-chevron"
+                    :class="{ open: exportMenuOpen === 'header' }"
+                    viewBox="0 0 24 24"
+                    width="12"
+                    height="12"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+                <div v-if="exportMenuOpen === 'header'" class="export-menu" role="menu">
+                  <button type="button" class="export-menu-item" role="menuitem" :disabled="isExporting" @click="chooseExport('pdf')">
+                    <span class="export-menu-title">{{ $t('step4.exportPdf') }}</span>
+                    <span class="export-menu-hint">{{ $t('step4.exportPdfHint') }}</span>
+                  </button>
+                  <button type="button" class="export-menu-item" role="menuitem" :disabled="isExporting" @click="chooseExport('md')">
+                    <span class="export-menu-title">{{ $t('step4.exportMd') }}</span>
+                    <span class="export-menu-hint">{{ $t('step4.exportMdHint') }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
             <div class="header-divider"></div>
           </div>
 
-          <CompareChapter :compare="comparePayload" />
+          <CompareChapter ref="compareChapterRef" :compare="comparePayload" />
 
           <!-- Sections List -->
           <div class="sections-list">
@@ -130,6 +168,44 @@
           </div>
 
           <!-- Next Step Button - 在完成后显示 -->
+          <div v-if="isComplete" class="export-dropdown export-dropdown--block" data-export-dropdown>
+            <button
+              class="export-trigger export-trigger--block"
+              type="button"
+              :disabled="isExporting"
+              :aria-expanded="exportMenuOpen === 'sidebar'"
+              @click.stop="toggleExportMenu('sidebar')"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <span>{{ isExporting ? $t('step4.exporting') : $t('step4.export') }}</span>
+              <svg
+                class="export-chevron"
+                :class="{ open: exportMenuOpen === 'sidebar' }"
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div v-if="exportMenuOpen === 'sidebar'" class="export-menu export-menu--up" role="menu">
+              <button type="button" class="export-menu-item" role="menuitem" :disabled="isExporting" @click="chooseExport('pdf')">
+                <span class="export-menu-title">{{ $t('step4.exportPdf') }}</span>
+                <span class="export-menu-hint">{{ $t('step4.exportPdfHint') }}</span>
+              </button>
+              <button type="button" class="export-menu-item" role="menuitem" :disabled="isExporting" @click="chooseExport('md')">
+                <span class="export-menu-title">{{ $t('step4.exportMd') }}</span>
+                <span class="export-menu-hint">{{ $t('step4.exportMdHint') }}</span>
+              </button>
+            </div>
+          </div>
           <button v-if="isComplete" class="next-step-btn" @click="goToInteraction">
             <span>{{ $t('step4.goToInteraction') }}</span>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
@@ -389,6 +465,8 @@ import CompareChapter from './CompareChapter.vue'
 import { touchWorkflowStep } from '../store/workflowContext'
 import { taskRoute } from '../utils/taskRoute'
 import { subscribeTask, subscribeReportLogs } from '../api/sse'
+import { exportReportPdfDocument } from '../utils/exportPdf'
+import { exportReportMarkdown } from '../utils/exportMd'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -401,6 +479,125 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['add-log', 'update-status'])
+
+const reportExportRoot = ref(null)
+const compareChapterRef = ref(null)
+const exportingPdf = ref(false)
+const exportingMd = ref(false)
+/** @type {import('vue').Ref<'header'|'sidebar'|null>} */
+const exportMenuOpen = ref(null)
+
+const isExporting = computed(() => exportingPdf.value || exportingMd.value)
+
+function toggleExportMenu(which) {
+  if (isExporting.value) return
+  exportMenuOpen.value = exportMenuOpen.value === which ? null : which
+}
+
+function closeExportMenu() {
+  exportMenuOpen.value = null
+}
+
+function onExportOutsideClick(e) {
+  if (!exportMenuOpen.value) return
+  const el = e.target
+  if (el?.closest?.('[data-export-dropdown]')) return
+  closeExportMenu()
+}
+
+function chooseExport(kind) {
+  closeExportMenu()
+  if (kind === 'pdf') exportReportPdf()
+  else if (kind === 'md') exportReportMd()
+}
+
+function exportSafeId() {
+  const id = props.reportId || props.decisionId || 'report'
+  return String(id).replace(/[^\w.-]+/g, '_')
+}
+
+async function collectExportPayload() {
+  await nextTick()
+  window.dispatchEvent(new Event('resize'))
+  await new Promise((r) => setTimeout(r, 200))
+
+  let images = []
+  if (compareChapterRef.value?.getExportImages) {
+    images = await compareChapterRef.value.getExportImages(1.5)
+  }
+
+  const sections = (reportOutline.value?.sections || []).map((sec, idx) => ({
+    title: sec.title || `章节 ${idx + 1}`,
+    content: generatedSections.value[idx + 1] || '',
+  }))
+
+  return {
+    title: reportOutline.value?.title || t('step4.predictionReportTag'),
+    summary: reportOutline.value?.summary || '',
+    reportId: props.reportId || props.decisionId || '',
+    compare: comparePayload.value,
+    sections,
+    images,
+  }
+}
+
+async function exportReportPdf() {
+  if (exportingPdf.value || exportingMd.value || !reportOutline.value) return
+  // 必须在用户手势内同步开窗，否则截图异步后会被浏览器拦截
+  const previewWin = window.open('', '_blank', 'width=960,height=820')
+  if (!previewWin) {
+    emit('add-log', t('step4.exportPdfPopupBlocked'))
+    return
+  }
+  try {
+    previewWin.document.open()
+    previewWin.document.write(
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>导出中…</title></head>' +
+        '<body style="font:14px/1.5 sans-serif;padding:24px;color:#374151">正在生成预测报告 PDF，请稍候…</body></html>',
+    )
+    previewWin.document.close()
+  } catch (_) {
+    /* ignore */
+  }
+
+  exportingPdf.value = true
+  try {
+    const payload = await collectExportPayload()
+    await exportReportPdfDocument(payload, previewWin)
+  } catch (err) {
+    console.error('[exportPdf]', err)
+    try {
+      previewWin.close()
+    } catch (_) {
+      /* ignore */
+    }
+    if (String(err?.message || err) === 'popup_blocked') {
+      emit('add-log', t('step4.exportPdfPopupBlocked'))
+    } else {
+      emit('add-log', t('step4.exportPdfFailed'))
+    }
+  } finally {
+    exportingPdf.value = false
+  }
+}
+
+async function exportReportMd() {
+  if (exportingPdf.value || exportingMd.value || !reportOutline.value) return
+  exportingMd.value = true
+  try {
+    const payload = await collectExportPayload()
+    const safe = exportSafeId()
+    await exportReportMarkdown({
+      ...payload,
+      filenameBase: `预测报告_${safe}`,
+    })
+  } catch (err) {
+    console.error('[exportMd]', err)
+    emit('add-log', t('step4.exportMdFailed'))
+  } finally {
+    exportingMd.value = false
+  }
+}
 
 // Navigation
 const goToInteraction = () => {
@@ -2393,6 +2590,7 @@ const loadCompareIfNeeded = async () => {
 }
 
 onMounted(() => {
+  document.addEventListener('click', onExportOutsideClick)
   if (props.reportId || props.decisionId) {
     addLog(`Report Agent initialized: ${props.reportId || props.decisionId}`)
     startPolling()
@@ -2401,6 +2599,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', onExportOutsideClick)
   stopPolling()
 })
 
@@ -2590,6 +2789,261 @@ watch(() => props.reportId, (newId) => {
   align-items: center;
   gap: 12px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.export-dropdown {
+  position: relative;
+  margin-left: auto;
+}
+
+.export-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1F2937;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.export-trigger:hover:not(:disabled) {
+  background: #E5E7EB;
+  border-color: #D1D5DB;
+}
+
+.export-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.export-chevron {
+  opacity: 0.65;
+  transition: transform 0.15s ease;
+}
+
+.export-chevron.open {
+  transform: rotate(180deg);
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: 4px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.export-menu--up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.export-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: #111827;
+}
+
+.export-menu-item:hover:not(:disabled) {
+  background: #F3F4F6;
+}
+
+.export-menu-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.export-menu-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.export-menu-hint {
+  font-size: 11px;
+  color: #6B7280;
+  font-weight: 400;
+}
+
+.export-dropdown--block {
+  width: calc(100% - 40px);
+  margin: 12px 20px 0 20px;
+}
+
+.export-trigger--block {
+  justify-content: center;
+  width: 100%;
+  padding: 12px 20px;
+  font-size: 14px;
+  background: #FFFFFF;
+  color: #1F2937;
+}
+
+.report-content-wrapper.is-exporting-pdf .export-dropdown {
+  display: none !important;
+}
+
+/* PDF 导出：紧凑排版（屏幕用大字号，导出要接近文档阅读尺寸） */
+.report-content-wrapper.is-exporting-pdf {
+  max-width: 720px !important;
+  width: 720px !important;
+  padding: 8px 12px 24px !important;
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.report-content-wrapper.is-exporting-pdf .report-header-block {
+  margin-bottom: 16px;
+}
+
+.report-content-wrapper.is-exporting-pdf .report-meta {
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.report-content-wrapper.is-exporting-pdf .report-tag {
+  font-size: 9px;
+  padding: 2px 6px;
+}
+
+.report-content-wrapper.is-exporting-pdf .report-id {
+  font-size: 10px;
+}
+
+.report-content-wrapper.is-exporting-pdf .main-title {
+  font-size: 18px !important;
+  line-height: 1.35 !important;
+  margin: 0 0 8px !important;
+  letter-spacing: -0.01em;
+}
+
+.report-content-wrapper.is-exporting-pdf .sub-title {
+  font-size: 11.5px !important;
+  line-height: 1.55 !important;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  margin: 0 0 10px !important;
+  color: #4B5563 !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .header-divider {
+  margin: 10px 0 0;
+}
+
+.report-content-wrapper.is-exporting-pdf .section-title {
+  font-size: 14px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .section-number {
+  font-size: 12px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .collapse-icon {
+  display: none !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .generated-content {
+  font-size: 11.5px !important;
+  line-height: 1.6 !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h2) {
+  font-size: 14px !important;
+  margin: 14px 0 8px !important;
+  padding-bottom: 4px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h3) {
+  font-size: 13px !important;
+  margin: 12px 0 6px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .generated-content :deep(.md-h4) {
+  font-size: 12px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf .generated-content :deep(p),
+.report-content-wrapper.is-exporting-pdf .generated-content :deep(li) {
+  font-size: 11.5px !important;
+  line-height: 1.6 !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.compare-chapter) {
+  margin: 8px 0 12px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.chapter-head) {
+  padding: 6px 10px !important;
+  font-size: 11px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.verdict-body strong) {
+  font-size: 13px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.verdict-meta),
+.report-content-wrapper.is-exporting-pdf :deep(.verdict-delta) {
+  font-size: 10px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.kpi-head) {
+  font-size: 11px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.kpi-grid .val) {
+  font-size: 13px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.kpi-grid .muted),
+.report-content-wrapper.is-exporting-pdf :deep(.narrative) {
+  font-size: 10px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.chart-card h3),
+.report-content-wrapper.is-exporting-pdf :deep(.geo-title h3) {
+  font-size: 11px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.chart) {
+  height: 200px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.chart.tall) {
+  height: 220px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.geo-map .chart) {
+  height: 260px !important;
+}
+
+.report-content-wrapper.is-exporting-pdf :deep(.md.markdown-body) {
+  font-size: 11.5px !important;
+  line-height: 1.55 !important;
+  padding: 8px 10px !important;
 }
 
 .report-tag {

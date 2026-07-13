@@ -15,10 +15,10 @@
     </div>
 
     <div class="kpi-row" v-if="scenarios.length">
-      <div class="kpi-card" v-for="s in scenarios" :key="s.scenario_id || s.name">
+      <div class="kpi-card" v-for="(s, idx) in scenarios" :key="s.scenario_id || s.name || idx">
         <div class="kpi-head">
           <span class="dot" :style="{ background: s.color || 'var(--brand)' }"></span>
-          <strong>{{ s.scenario_name || s.name }}</strong>
+          <strong :title="s.scenario_name || s.name">{{ shortScenarioTitle(s, idx) }}</strong>
         </div>
         <div class="kpi-grid">
           <div>
@@ -58,7 +58,7 @@
       <div ref="curveEl" class="chart tall"></div>
     </div>
 
-    <GeoPropagationMap v-if="scenarios.length" :scenarios="scenarios" />
+    <GeoPropagationMap ref="geoMapRef" v-if="scenarios.length" :scenarios="scenarios" />
 
     <div class="md markdown-body" v-if="markdown" v-html="renderedMd"></div>
     <p v-else class="muted pad">暂无对比报告正文</p>
@@ -78,7 +78,11 @@ const props = defineProps({
 const barEl = ref(null)
 const stanceEl = ref(null)
 const curveEl = ref(null)
+const geoMapRef = ref(null)
 let charts = []
+let barChart = null
+let stanceChart = null
+let curveChart = null
 
 const markdown = computed(
   () =>
@@ -91,6 +95,10 @@ const markdown = computed(
 const renderedMd = computed(() => renderMarkdown(markdown.value))
 
 const scenarios = computed(() => props.compare?.scenarios || props.compare?.items || [])
+
+function shortScenarioTitle(s, idx = 0) {
+  return scenarioLabel(s, idx)
+}
 
 const hasCurves = computed(() =>
   scenarios.value.some((s) => (s.activity_curve || []).length > 1),
@@ -134,8 +142,9 @@ function pctWithStd(v) {
 const verdict = computed(() => {
   if (!scenarios.value.length) return null
   const ranked = [...scenarios.value]
-    .map((s) => ({
-      name: s.scenario_name || s.name,
+    .map((s, i) => ({
+      name: scenarioLabel(s, i),
+      fullName: s.scenario_name || s.name,
       color: s.color || '#FF4500',
       opposing: num(s.summary?.stance_share?.opposing),
       actions: num(s.summary?.total_actions),
@@ -163,17 +172,75 @@ const verdict = computed(() => {
 function disposeCharts() {
   for (const c of charts) c.dispose()
   charts = []
+  barChart = null
+  stanceChart = null
+  curveChart = null
 }
 
-function scenarioLabel(s) {
-  const name = String(s.scenario_name || s.name || '')
-  // 轴上用短名，完整名留给 tooltip
-  const head = name.split(/[·•]/)[0].trim()
-  return head || name
+function chartToPng(chart, pixelRatio = 2) {
+  if (!chart) return null
+  try {
+    return chart.getDataURL({
+      type: 'png',
+      pixelRatio,
+      backgroundColor: '#ffffff',
+    })
+  } catch {
+    return null
+  }
+}
+
+/** 导出用：ECharts + 地图截图 */
+async function getExportImages(pixelRatio = 1.5) {
+  for (const c of charts) c.resize()
+  await new Promise((r) => setTimeout(r, 120))
+  const images = []
+  const bar = chartToPng(barChart, pixelRatio)
+  if (bar) images.push({ key: 'chart-spread', title: '传播规模', kind: 'chart', dataUrl: bar })
+  const stance = chartToPng(stanceChart, pixelRatio)
+  if (stance) images.push({ key: 'chart-stance', title: '观点结构', kind: 'chart', dataUrl: stance })
+  const curve = chartToPng(curveChart, pixelRatio)
+  if (curve) images.push({ key: 'chart-curve', title: '传播曲线叠加', kind: 'chart', dataUrl: curve })
+  if (geoMapRef.value?.captureAllMaps) {
+    const maps = await geoMapRef.value.captureAllMaps(pixelRatio)
+    for (const m of maps) {
+      const name = String(m.name || `方案${m.index + 1}`).slice(0, 24)
+      images.push({
+        key: `map-${m.index + 1}`,
+        title: `地域传播飞线 · ${name}`,
+        kind: 'map',
+        dataUrl: m.dataUrl,
+      })
+    }
+  }
+  return images
+}
+
+defineExpose({ getExportImages })
+
+function truncateLabel(text, maxLen = 12) {
+  const s = String(text || '').trim()
+  if (!s) return '方案'
+  if (s.length <= maxLen) return s
+  return `${s.slice(0, maxLen - 1)}…`
+}
+
+function scenarioLabel(s, index = 0) {
+  const kind = String(s.scenario_id || s.kind || '').trim()
+  // 模板 kind（A_hard / B_soft / Baseline）优先
+  if (kind && !/^(default|custom|scn_)/i.test(kind) && kind.length <= 16) {
+    return kind
+  }
+  const name = String(s.scenario_name || s.name || '').trim()
+  const head = name.split(/[·•|/｜]/)[0].trim()
+  // 名称过长（常为模拟需求整段）→ 用「方案N」
+  if (!head || head.length > 18) {
+    return `方案${index + 1}`
+  }
+  return truncateLabel(head, 12)
 }
 
 function categoryAxis(names) {
-  const long = names.some((n) => String(n).length > 6)
   return {
     type: 'category',
     data: names,
@@ -181,11 +248,22 @@ function categoryAxis(names) {
       color: '#666',
       interval: 0,
       hideOverlap: true,
-      rotate: long ? 28 : 0,
+      rotate: names.length > 3 ? 20 : 0,
       fontSize: 11,
-      margin: 10,
+      margin: 6,
     },
     axisTick: { alignWithLabel: true },
+  }
+}
+
+/** containLabel 时 left/bottom 只留缝，别再叠 48px，否则绘图区被挤小 */
+function tightGrid({ top = 28, legend = false } = {}) {
+  return {
+    left: 8,
+    right: 10,
+    top: legend ? 40 : top,
+    bottom: 8,
+    containLabel: true,
   }
 }
 
@@ -194,10 +272,14 @@ function renderCharts() {
   if (!scenarios.value.length) return
 
   const fullNames = scenarios.value.map((s) => s.scenario_name || s.name || '')
-  const shortNames = scenarios.value.map(scenarioLabel)
+  const shortNames = scenarios.value.map((s, i) => scenarioLabel(s, i))
+  const n = scenarios.value.length
+  // 单方案时加宽柱，避免中间一根细条两侧大片空白
+  const barWidth = n <= 1 ? '36%' : n <= 3 ? '42%' : undefined
 
   if (barEl.value) {
     const chart = echarts.init(barEl.value)
+    barChart = chart
     charts.push(chart)
     chart.setOption({
       tooltip: {
@@ -208,13 +290,14 @@ function renderCharts() {
           return `${fullNames[i] || p?.name}<br/>${p?.marker || ''}${p?.value ?? '-'}`
         },
       },
-      grid: { left: 44, right: 16, top: 24, bottom: 64, containLabel: false },
+      grid: tightGrid({ top: 20 }),
       xAxis: categoryAxis(shortNames),
       yAxis: { type: 'value', splitLine: { lineStyle: { color: '#eee' } } },
       series: [
         {
           type: 'bar',
-          barMaxWidth: 42,
+          barWidth,
+          barMaxWidth: n <= 1 ? 96 : 48,
           data: scenarios.value.map((s) => ({
             value: num(s.summary?.total_actions) || 0,
             itemStyle: { color: s.color || '#FF4500' },
@@ -226,6 +309,7 @@ function renderCharts() {
 
   if (stanceEl.value) {
     const chart = echarts.init(stanceEl.value)
+    stanceChart = chart
     charts.push(chart)
     chart.setOption({
       tooltip: {
@@ -239,14 +323,14 @@ function renderCharts() {
         },
       },
       legend: {
-        top: 4,
+        top: 0,
         left: 'center',
         itemWidth: 10,
         itemHeight: 10,
         itemGap: 14,
         textStyle: { color: '#666', fontSize: 11 },
       },
-      grid: { left: 44, right: 16, top: 40, bottom: 64, containLabel: false },
+      grid: tightGrid({ legend: true }),
       xAxis: categoryAxis(shortNames),
       yAxis: {
         type: 'value',
@@ -259,6 +343,8 @@ function renderCharts() {
           name: '赞成',
           type: 'bar',
           stack: 's',
+          barWidth,
+          barMaxWidth: n <= 1 ? 96 : 48,
           itemStyle: { color: '#059669' },
           data: scenarios.value.map((s) => num(s.summary?.stance_share?.supportive) || 0),
         },
@@ -282,11 +368,12 @@ function renderCharts() {
 
   if (curveEl.value && hasCurves.value) {
     const chart = echarts.init(curveEl.value)
+    curveChart = chart
     charts.push(chart)
-    const series = scenarios.value.map((s) => {
+    const series = scenarios.value.map((s, i) => {
       const curve = s.activity_curve || []
       return {
-        name: scenarioLabel(s),
+        name: scenarioLabel(s, i),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -310,24 +397,37 @@ function renderCharts() {
         },
       },
       legend: {
-        top: 4,
+        top: 0,
         left: 'center',
         type: 'scroll',
+        width: '90%',
         itemWidth: 10,
         itemHeight: 10,
         itemGap: 12,
+        formatter: (name) => truncateLabel(name, 14),
         textStyle: { color: '#666', fontSize: 11 },
+        tooltip: { show: true },
       },
-      grid: { left: 44, right: 20, top: 44, bottom: 36, containLabel: false },
+      grid: tightGrid({ legend: true }),
       xAxis: {
         type: 'category',
         data: Array.from({ length: maxLen }, (_, i) => `R${i}`),
-        axisLabel: { color: '#666', fontSize: 11 },
+        axisLabel: { color: '#666', fontSize: 11, margin: 6 },
+        boundaryGap: false,
       },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#eee' } } },
+      yAxis: {
+        type: 'value',
+        splitLine: { lineStyle: { color: '#eee' } },
+        axisLabel: { margin: 4 },
+      },
       series,
     })
   }
+
+  // 布局稳定后再 resize，避免首绘把柱子挤到角落
+  requestAnimationFrame(() => {
+    for (const c of charts) c.resize()
+  })
 }
 
 function resize() {
@@ -422,6 +522,13 @@ onUnmounted(() => {
   gap: 8px;
   margin-bottom: 8px;
   font-size: 13px;
+  min-width: 0;
+}
+.kpi-head strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .dot {
   width: 8px;

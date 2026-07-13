@@ -58,14 +58,32 @@ def generate_report(
     compare_payload: Dict[str, Any],
     graph_id: Optional[str] = None,
     decision_id: Optional[str] = None,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """
-    优先尝试 ReportAgent；失败则用 LLM/规则摘要写 markdown 到 DECISION_DIR。
+    对比指标 → markdown。默认复用已有 compare_report.md（秒开）；
+    force=True 时才重新调 LLM/规则生成。
     """
     Config.ensure_directories()
     did = decision_id or compare_payload.get("decision_id") or "unknown"
     out_dir = os.path.join(Config.DECISION_DIR, did, "report")
     os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "compare_report.md")
+
+    if not force and os.path.isfile(path) and os.path.getsize(path) > 0:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = f.read()
+            if cached.strip():
+                logger.info(f"compare report cache hit: {path}")
+                return {
+                    "decision_id": did,
+                    "path": path,
+                    "source": "cache",
+                    "markdown": cached,
+                }
+        except OSError as e:
+            logger.warning(f"读取对比报告缓存失败: {e}")
 
     markdown = None
     source = "rules"
@@ -107,14 +125,12 @@ def generate_report(
             logger.warning(f"LLM 报告失败: {e}")
 
     # ReportAgent 较重且依赖模拟环境，MVP 仅在显式 graph_id + 有 LLM 时尝试跳过
-    # （避免阻塞）；保留钩子注释
     _ = graph_id  # reserved for future ReportAgent integration
 
     if not markdown:
         markdown = _rule_markdown(compare_payload)
         source = "rules"
 
-    path = os.path.join(out_dir, "compare_report.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(markdown)
 

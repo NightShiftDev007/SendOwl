@@ -571,92 +571,63 @@ class GraphBuilderService:
             "created_at": str(created_at) if created_at else None,
         }
 
-    def _heal_missing_edge_endpoints(self, nodes: list, edges: list) -> list:
-        """Zep 列表分页常漏掉边两端节点；按边引用补拉，否则前端会滤掉几乎所有连线。"""
-        by_id = {n.uuid_: n for n in nodes if getattr(n, "uuid_", None)}
-        missing = set()
-        for edge in edges:
-            src = getattr(edge, "source_node_uuid", None)
-            tgt = getattr(edge, "target_node_uuid", None)
-            if src and src not in by_id:
-                missing.add(src)
-            if tgt and tgt not in by_id:
-                missing.add(tgt)
-        if not missing:
-            return nodes
-
-        healed = 0
-        for uid in missing:
-            try:
-                node = self.client.graph.node.get(uuid_=uid)
-                if node and getattr(node, "uuid_", None):
-                    by_id[node.uuid_] = node
-                    healed += 1
-            except Exception as e:
-                logger.debug(f"heal node {uid[:8]}… skip: {e}")
-        if healed:
-            logger.info(
-                f"图谱补全边端点节点: graph 列表 {len(nodes)} → {len(by_id)} "
-                f"(补拉 {healed}/{len(missing)})"
-            )
-        return list(by_id.values())
-
-    def get_graph_data(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph_data(self, graph_id: str, heal: bool = False) -> Dict[str, Any]:
         """
-        获取完整图谱数据（包含详细信息）
-        
-        Args:
-            graph_id: 图谱ID
-            
-        Returns:
-            包含nodes和edges的字典，包括时间信息、属性等详细数据
+        获取完整图谱数据（包含详细信息）。
+
+        展示主路径应读本地快照；本方法仅用于建图期 live 刷图等场景。
+        heal 默认关闭（补全仅在 export_snapshot 导出时做一次）。
         """
         nodes = fetch_all_nodes(self.client, graph_id)
         edges = fetch_all_edges(self.client, graph_id)
-        nodes = self._heal_missing_edge_endpoints(nodes, edges)
+        if heal:
+            from app.ontology.snapshot import heal_missing_edge_endpoints
+
+            nodes = heal_missing_edge_endpoints(self.client, nodes, edges)
 
         # 创建节点映射用于获取节点名称
         node_map = {}
         for node in nodes:
             node_map[node.uuid_] = node.name or ""
-        
+
         nodes_data = [self._serialize_node(node) for node in nodes]
-        
+
         edges_data = []
         for edge in edges:
-            # 获取时间信息
-            created_at = getattr(edge, 'created_at', None)
-            valid_at = getattr(edge, 'valid_at', None)
-            invalid_at = getattr(edge, 'invalid_at', None)
-            expired_at = getattr(edge, 'expired_at', None)
-            
-            # 获取 episodes
-            episodes = getattr(edge, 'episodes', None) or getattr(edge, 'episode_ids', None)
+            created_at = getattr(edge, "created_at", None)
+            valid_at = getattr(edge, "valid_at", None)
+            invalid_at = getattr(edge, "invalid_at", None)
+            expired_at = getattr(edge, "expired_at", None)
+
+            episodes = getattr(edge, "episodes", None) or getattr(
+                edge, "episode_ids", None
+            )
             if episodes and not isinstance(episodes, list):
                 episodes = [str(episodes)]
             elif episodes:
                 episodes = [str(e) for e in episodes]
-            
-            # 获取 fact_type
-            fact_type = getattr(edge, 'fact_type', None) or edge.name or ""
-            
-            edges_data.append({
-                "uuid": edge.uuid_,
-                "name": edge.name or "",
-                "fact": edge.fact or "",
-                "fact_type": fact_type,
-                "source_node_uuid": edge.source_node_uuid,
-                "target_node_uuid": edge.target_node_uuid,
-                "source_node_name": node_map.get(edge.source_node_uuid, ""),
-                "target_node_name": node_map.get(edge.target_node_uuid, ""),
-                "attributes": edge.attributes or {},
-                "created_at": str(created_at) if created_at else None,
-                "valid_at": str(valid_at) if valid_at else None,
-                "invalid_at": str(invalid_at) if invalid_at else None,
-                "expired_at": str(expired_at) if expired_at else None,
-                "episodes": episodes or [],
-            })
-        
+
+            fact_type = getattr(edge, "fact_type", None) or edge.name or ""
+
+            edges_data.append(
+                {
+                    "uuid": edge.uuid_,
+                    "name": edge.name or "",
+                    "fact": edge.fact or "",
+                    "fact_type": fact_type,
+                    "source_node_uuid": edge.source_node_uuid,
+                    "target_node_uuid": edge.target_node_uuid,
+                    "source_node_name": node_map.get(edge.source_node_uuid, ""),
+                    "target_node_name": node_map.get(edge.target_node_uuid, ""),
+                    "attributes": edge.attributes or {},
+                    "created_at": str(created_at) if created_at else None,
+                    "valid_at": str(valid_at) if valid_at else None,
+                    "invalid_at": str(invalid_at) if invalid_at else None,
+                    "expired_at": str(expired_at) if expired_at else None,
+                    "episodes": episodes or [],
+                }
+            )
+
         return {
             "graph_id": graph_id,
             "nodes": nodes_data,

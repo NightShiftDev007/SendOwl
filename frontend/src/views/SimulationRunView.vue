@@ -68,7 +68,7 @@ import AppHeader from '../components/AppHeader.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
 import StepNav from '../components/StepNav.vue'
-import { getProject, getOntologyGraph } from '../api/graph'
+import { getProject, getOntologyGraph, snapshotOntology } from '../api/graph'
 import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus, resolveSimContext } from '../api/simulation'
 import { subscribeDecision } from '../api/sse'
 import { useI18n } from 'vue-i18n'
@@ -274,10 +274,21 @@ const loadGraph = async (_graphId) => {
   }
 }
 
-const refreshGraph = () => {
-  if (projectData.value?.id || projectData.value?.project_id || projectData.value?.graph_id) {
-    loadGraph(projectData.value.graph_id)
+const refreshGraph = async ({ sync = true } = {}) => {
+  const ontologyId = projectData.value?.id || projectData.value?.project_id || projectData.value?.ontology_id
+  if (!ontologyId && !projectData.value?.graph_id) return
+  if (sync && ontologyId) {
+    addLog(t('log.graphSyncRefresh'))
+    graphLoading.value = true
+    try {
+      await snapshotOntology(ontologyId).catch(() => null)
+      await loadGraph(projectData.value?.graph_id)
+    } finally {
+      graphLoading.value = false
+    }
+    return
   }
+  await loadGraph(projectData.value?.graph_id)
 }
 
 // --- Auto Refresh Logic（decision SSE 事件驱动，失败降级定时器）---
@@ -290,7 +301,8 @@ const maybeRefreshGraph = (force = false) => {
   const now = Date.now()
   if (!force && now - lastGraphRefreshAt < GRAPH_REFRESH_MIN_MS) return
   lastGraphRefreshAt = now
-  refreshGraph()
+  // 自动刷新只读本地快照，不 POST snapshot（避免打爆 Zep）
+  refreshGraph({ sync: false })
 }
 
 const startGraphRefresh = () => {

@@ -580,9 +580,17 @@ const loadGraph = async () => {
   }
 }
 
-const refreshGraph = () => {
+const refreshGraph = async () => {
   addLog('Manual graph refresh triggered.')
-  loadGraph()
+  graphLoading.value = true
+  try {
+    if (ontologyId.value) {
+      await snapshotOntology(ontologyId.value).catch(() => null)
+    }
+    await loadGraph()
+  } finally {
+    graphLoading.value = false
+  }
 }
 
 const stopPolling = () => {

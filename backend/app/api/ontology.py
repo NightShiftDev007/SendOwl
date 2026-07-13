@@ -169,12 +169,21 @@ def resolve_ontology_graph_id(ontology_id: str) -> str | None:
 
 
 def read_ontology_graph(ontology_id: str) -> dict | None:
-    """读图谱数据（对齐 MiroFish /api/graph/data/{graph_id}）。
+    """读图谱数据。
 
-    优先 Zep live；无 graph_id 或 live 连线率过低时回退最新快照。
+    - building：读 Zep live（不 heal），供 Step1 建图 SSE 增量刷图
+    - ready：默认本地最新快照；无快照则 bootstrap 导出后再读
     """
     registry.init_schema()
+    ont = registry.get_ontology(ontology_id)
+    if not ont:
+        return None
+
     graph_id = resolve_ontology_graph_id(ontology_id)
+    status = str(ont.get("status") or "").lower()
+    building = status == "building" or bool(
+        ont.get("build_task_id") or ont.get("graph_build_task_id")
+    )
 
     def _from_snapshot():
         latest = registry.get_latest_version(ontology_id)
@@ -196,55 +205,59 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
                 logger.warning(f"read snapshot graph failed for {ontology_id}: {e}")
         return None
 
-    def _match_rate(nodes, edges) -> float:
-        if not edges:
-            return 1.0
-        ids = {n.get("uuid") for n in nodes if n.get("uuid")}
-        ok = sum(
-            1
-            for e in edges
-            if e.get("source_node_uuid") in ids and e.get("target_node_uuid") in ids
-        )
-        return ok / max(len(edges), 1)
-
-    if graph_id:
+    def _from_live(gid: str):
         try:
             from app.config import Config
             from app.ontology.graph_builder import GraphBuilderService
 
             builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-            data = builder.get_graph_data(graph_id)
+            data = builder.get_graph_data(gid, heal=False)
             nodes = data.get("nodes") or []
             edges = data.get("edges") or []
-            live = {
-                "graph_id": graph_id,
+            return {
+                "graph_id": gid,
                 "nodes": nodes,
                 "edges": edges,
                 "node_count": data.get("node_count") or len(nodes),
                 "edge_count": data.get("edge_count") or len(edges),
                 "source": "zep",
             }
-            # 推演写入后 Zep 列表常漏节点；补拉后若仍几乎无连线，用快照保底
-            if edges and _match_rate(nodes, edges) < 0.25:
-                snap = _from_snapshot()
-                if snap and _match_rate(snap["nodes"], snap["edges"]) > _match_rate(
-                    nodes, edges
-                ):
-                    logger.warning(
-                        f"live graph connectivity low for {ontology_id}, "
-                        f"fallback to snapshot (live={_match_rate(nodes, edges):.0%} "
-                        f"snap={_match_rate(snap['nodes'], snap['edges']):.0%})"
-                    )
-                    return snap
-            return live
         except Exception as e:
             logger.warning(f"read zep graph failed for {ontology_id}: {e}")
+            return None
 
-    return _from_snapshot()
+    # 建图期：live（不 heal、不 bootstrap）
+    if building and graph_id:
+        live = _from_live(graph_id)
+        if live:
+            return live
+        return _from_snapshot()
+
+    # ready：快照优先
+    snap = _from_snapshot()
+    if snap:
+        return snap
+
+    # ready 无快照：bootstrap 导出一次
+    if graph_id and not building:
+        try:
+            from app.ontology.snapshot import export_snapshot
+
+            export_snapshot(ontology_id, graph_id)
+            snap = _from_snapshot()
+            if snap:
+                return snap
+        except Exception as e:
+            logger.warning(f"bootstrap snapshot failed for {ontology_id}: {e}")
+            # 兜底 live，避免首屏完全空白
+            return _from_live(graph_id)
+
+    return None
+
 
 @ontology_bp.get("/<ontology_id>/graph")
 def graph(ontology_id: str):
-    """一次性拉图（有 graph_id 读 Zep；否则快照）。"""
+    """读图：默认本地快照；建图中读 Zep live。"""
     registry.init_schema()
     ont = registry.get_ontology(ontology_id)
     if not ont:

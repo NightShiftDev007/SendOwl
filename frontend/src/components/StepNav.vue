@@ -21,13 +21,14 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   canReachStep,
   getWorkflowContext,
   routeForStep,
+  syncWorkflowFromServer,
   touchWorkflowStep,
 } from '../store/workflowContext'
 
@@ -50,7 +51,8 @@ const ctx = computed(() => ({
   ontologyId: stored.ontologyId || '',
   simulationId: stored.simulationId || '',
   reportId: stored.reportId || '',
-  maxReached: Math.max(Number(stored.maxReached || 1), props.currentStep),
+  currentStep: props.currentStep,
+  serverMaxReached: stored.serverMaxReached,
 }))
 
 const reachable = computed(() => ({
@@ -63,15 +65,35 @@ const reachable = computed(() => ({
 
 watch(
   () => [props.currentStep, props.decisionId],
-  () => {
+  async ([, decisionId]) => {
     const ids = {}
-    if (props.decisionId && props.decisionId !== 'new') {
-      ids.decisionId = props.decisionId
+    if (decisionId && decisionId !== 'new') {
+      ids.decisionId = decisionId
     }
     touchWorkflowStep(props.currentStep, ids)
+    if (decisionId && String(decisionId).startsWith('dec_')) {
+      await syncWorkflowFromServer(decisionId)
+    }
   },
   { immediate: true },
 )
+
+// 同页停留时（推演跑完等）也要刷新顶栏解锁
+function onVisibilityRefresh() {
+  if (document.visibilityState !== 'visible') return
+  const id = props.decisionId || stored.decisionId
+  if (id && String(id).startsWith('dec_')) syncWorkflowFromServer(id)
+}
+
+onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityRefresh)
+  window.addEventListener('focus', onVisibilityRefresh)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityRefresh)
+  window.removeEventListener('focus', onVisibilityRefresh)
+})
 
 function tooltipFor(step, name) {
   if (step === props.currentStep) return `${name} · ${t('main.stepNavCurrent')}`

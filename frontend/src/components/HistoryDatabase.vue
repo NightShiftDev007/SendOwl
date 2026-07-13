@@ -213,7 +213,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory, createSimulation } from '../api/simulation'
 import { deleteDecision } from '../api/decision'
-import { patchWorkflowContext, touchWorkflowStep } from '../store/workflowContext'
+import { touchWorkflowStep } from '../store/workflowContext'
 import { taskRoute, resolveDecisionId } from '../utils/taskRoute'
 
 const emit = defineEmits(['trashed'])
@@ -464,8 +464,6 @@ const goToSimulation = async () => {
       decisionId,
       ontologyId: p.ontology_id || p.project_id || '',
     })
-    // 历史决策通常已有报告，允许顶栏跳到 Step4
-    if (p.report_id || decisionId) patchWorkflowContext({ maxReached: Math.max(4, 2) })
     router.push(taskRoute(2, decisionId))
     closeModal()
     return

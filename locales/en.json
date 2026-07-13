@@ -90,7 +90,7 @@
     "stepNavLabel": "Workflow steps",
     "stepNavCurrent": "Current step",
     "stepNavGo": "Go to {name}",
-    "stepNavLocked": "Step not reached yet (missing IDs)"
+    "stepNavLocked": "This step is not available yet for this task"
   },
   "step1": {
     "ontologyGeneration": "Ontology Generation",
@@ -231,6 +231,17 @@
   "step4": {
     "generatingSection": "Generating {title}...",
     "goToInteraction": "Enter Deep Interaction",
+    "export": "Export",
+    "exporting": "Exporting…",
+    "exportPdf": "Export as PDF",
+    "exportingPdf": "Exporting…",
+    "exportPdfFailed": "Failed to export PDF. Please try again.",
+    "exportPdfPopupBlocked": "Pop-up blocked. Allow pop-ups for this site and retry.",
+    "exportPdfHint": "Fixed A4 · Print → Save as PDF",
+    "exportMd": "Export as Markdown",
+    "exportingMd": "Exporting MD…",
+    "exportMdFailed": "Failed to export Markdown. Please try again.",
+    "exportMdHint": "Single .md with embedded charts",
     "predictionReportTag": "Prediction Report",
     "waitingForReportAgent": "Waiting for Report Agent...",
     "waitingForAgentActivity": "Waiting for agent activity...",
@@ -354,7 +365,7 @@
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
-    "refreshGraph": "Refresh Graph",
+    "refreshGraph": "Sync from Zep & update local snapshot",
     "graphMemoryRealtime": "GraphRAG short/long-term memory updating in real-time",
     "realtimeUpdating": "Updating in real-time...",
     "pendingContentHint": "Some content is still processing. Consider refreshing the graph manually later.",
@@ -562,6 +573,7 @@
     "loadSimDataFailed": "Failed to load simulation data: {error}",
     "loadException": "Load error: {error}",
     "graphDataLoadSuccess": "Graph data loaded successfully",
+    "graphSyncRefresh": "Syncing from Zep and updating local snapshot…",
     "graphLoadFailed": "Graph load failed: {error}",
     "graphRealtimeRefreshStart": "Graph real-time refresh enabled (30s)",
     "graphRealtimeRefreshStop": "Graph real-time refresh stopped",

@@ -443,6 +443,10 @@ def append_documents(
             episode_uuids = builder.add_text_batches(graph_id, chunks)
             builder._wait_for_episodes(episode_uuids)
             registry.update_ontology(ontology_id, status="ready")
+            try:
+                export_snapshot(ontology_id, graph_id)
+            except Exception as se:
+                logger.warning(f"追加文档后自动快照失败: {se}")
         except Exception as e:
             logger.warning(f"追加文档到图谱失败: {e}")
 

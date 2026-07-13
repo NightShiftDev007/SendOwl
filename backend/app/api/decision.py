@@ -233,7 +233,8 @@ def decision_compare(decision_id: str):
         payload = build_compare_payload(decision_id)
         # 可选生成报告
         if request.args.get("report", "false").lower() in ("1", "true", "yes"):
-            report = generate_report(payload, decision_id=decision_id)
+            force = request.args.get("force", "false").lower() in ("1", "true", "yes")
+            report = generate_report(payload, decision_id=decision_id, force=force)
             payload["report"] = {
                 "path": report["path"],
                 "source": report["source"],

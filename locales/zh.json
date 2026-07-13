@@ -90,7 +90,7 @@
     "stepNavLabel": "流程步骤",
     "stepNavCurrent": "当前步骤",
     "stepNavGo": "前往{name}",
-    "stepNavLocked": "尚未到达该步骤（缺少对应 ID）"
+    "stepNavLocked": "任务尚未到达该步骤"
   },
   "step1": {
     "ontologyGeneration": "本体生成",
@@ -231,6 +231,17 @@
   "step4": {
     "generatingSection": "正在生成{title}...",
     "goToInteraction": "进入深度互动",
+    "export": "导出",
+    "exporting": "正在导出…",
+    "exportPdf": "导出为 PDF",
+    "exportingPdf": "正在导出…",
+    "exportPdfFailed": "导出 PDF 失败，请重试",
+    "exportPdfPopupBlocked": "浏览器拦截了导出窗口，请允许本站弹窗后重试",
+    "exportPdfHint": "固定 A4 · 打印另存为 PDF",
+    "exportMd": "导出为 Markdown",
+    "exportingMd": "正在导出 MD…",
+    "exportMdFailed": "导出 Markdown 失败，请重试",
+    "exportMdHint": "单个 .md，图表内嵌",
     "predictionReportTag": "预测报告",
     "waitingForReportAgent": "等待报告 Agent…",
     "waitingForAgentActivity": "等待 Agent 活动…",
@@ -354,7 +365,7 @@
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",
-    "refreshGraph": "刷新图谱",
+    "refreshGraph": "从 Zep 同步并更新本地快照",
     "graphMemoryRealtime": "GraphRAG长短期记忆实时更新中",
     "realtimeUpdating": "实时更新中...",
     "pendingContentHint": "还有少量内容处理中，建议稍后手动刷新图谱",
@@ -562,6 +573,7 @@
     "loadSimDataFailed": "加载模拟数据失败: {error}",
     "loadException": "加载异常: {error}",
     "graphDataLoadSuccess": "图谱数据加载成功",
+    "graphSyncRefresh": "正在从 Zep 同步并更新本地快照…",
     "graphLoadFailed": "图谱加载失败: {error}",
     "graphRealtimeRefreshStart": "开启图谱实时刷新 (30s)",
     "graphRealtimeRefreshStop": "停止图谱实时刷新",

@@ -76,13 +76,17 @@ export function listVersions(ontologyId) {
   return service.get(`/api/ontology/${ontologyId}/versions`)
 }
 
+/**
+ * 读图：默认本地快照；建图中读 Zep live。
+ * 强制对齐 Zep：先 snapshotOntology 再调本方法。
+ */
 export function getOntologyGraph(ontologyId) {
   return service.get(`/api/ontology/${ontologyId}/graph`)
 }
 
 /**
  * 兼容旧名 getGraphData —— ADC 用 ontologyId。
- * 统一走 /graph（有 graph_id 读 Zep，对齐 MiroFish /api/graph/data）。
+ * 统一走 /graph（默认快照）。
  */
 export function getGraphData(ontologyId) {
   return getOntologyGraph(ontologyId)
