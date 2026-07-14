@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import os
+
 from flask import Blueprint, jsonify, request
 
+from app.config import Config
 from app.decision.metrics_service import build_compare_payload
 from app.decision.report_service import generate_report
-from app.engine.scenario_runner import ScenarioRunner, _sim_dir_looks_prepared
+from app.engine.scenario_runner import (
+    ScenarioRunner,
+    _read_prepare_progress,
+    _sim_dir_looks_prepared,
+)
 from app.ontology import registry
 from app.utils.logger import get_logger
+from app.world.population import expected_agent_count_from_slice
 
 logger = get_logger("adc.api.decision")
 
@@ -130,6 +139,20 @@ def prepare_decision(decision_id: str):
 
         status = str(dec.get("status") or "").lower()
         if status == "preparing" and not force:
+            expected = None
+            try:
+                prep = _read_prepare_progress(decision_id) or {}
+                if prep.get("total_expected"):
+                    expected = int(prep["total_expected"])
+                else:
+                    slice_path = os.path.join(
+                        Config.DECISION_DIR, decision_id, "shared", "slice.json"
+                    )
+                    if os.path.isfile(slice_path):
+                        with open(slice_path, encoding="utf-8") as f:
+                            expected = expected_agent_count_from_slice(json.load(f)) or None
+            except Exception:
+                expected = None
             return jsonify({
                 "success": True,
                 "data": {
@@ -137,6 +160,8 @@ def prepare_decision(decision_id: str):
                     "status": "preparing",
                     "already_prepared": False,
                     "message": "环境准备进行中",
+                    "total_expected": expected,
+                    "expected_entities_count": expected,  # 兼容旧字段
                 },
             })
 

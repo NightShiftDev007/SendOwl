@@ -93,6 +93,16 @@ def slice_nodes_to_entities(nodes: List[Dict[str, Any]]) -> List[EntityNode]:
     return entities
 
 
+def expected_agent_count_from_slice(
+    world_slice: Optional[Dict[str, Any]],
+    max_agents: int = MAX_AGENTS,
+) -> int:
+    """切片中可转为人设的实体数（上限 max_agents），供准备中进度展示。"""
+    if not isinstance(world_slice, dict):
+        return 0
+    return min(len(slice_nodes_to_entities(world_slice.get("nodes") or [])), max_agents)
+
+
 def _rule_based_profile(entity: EntityNode, user_id: int) -> Dict[str, Any]:
     from app.world.china_location import format_location_label, resolve_location
 
@@ -191,6 +201,32 @@ def generate_profiles_from_slice(
         reddit_path = os.path.join(output_dir, "reddit_profiles.json")
         twitter_path = os.path.join(output_dir, "twitter_profiles.csv")
         gen = OasisProfileGenerator(graph_id=None)
+
+        def _profile_progress(current: int, total: int, msg: str) -> None:
+            # N>1：Cast Sheet 后把准确预期写回 prepare_progress（仅在总数变化时）
+            try:
+                t_int = int(total or 0)
+                if t_int <= 0:
+                    return
+                shared_parent = os.path.basename(
+                    os.path.dirname(os.path.abspath(output_dir))
+                )
+                if not str(shared_parent).startswith("dec_"):
+                    return
+                from app.engine.scenario_runner import (
+                    _read_prepare_progress,
+                    _write_prepare_progress,
+                )
+
+                prep = _read_prepare_progress(shared_parent) or {}
+                prev = int(prep.get("total_expected") or 0)
+                if prev == t_int:
+                    return
+                if not prev or t_int < prev:
+                    _write_prepare_progress(shared_parent, total_expected=t_int)
+            except Exception as e:
+                logger.debug(f"更新 prepare_progress.total_expected 跳过: {e}")
+
         oasis_profiles = gen.generate_profiles_from_entities(
             entities,
             use_llm=True,
@@ -198,6 +234,7 @@ def generate_profiles_from_slice(
             parallel_count=3,
             realtime_output_path=reddit_path,
             output_platform="reddit",
+            progress_callback=_profile_progress,
         )
         for p in oasis_profiles:
             profiles_data.append(p.to_dict())

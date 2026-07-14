@@ -1321,6 +1321,9 @@ class OasisProfileGenerator:
         uuid_to_idx = {e.uuid: i for i, e in enumerate(entities)}
 
         total = len(work_entities)
+        # Cast Sheet 裁剪后立刻回传准确总数，供 UI 预期 / state.entities_count 下调
+        if progress_callback:
+            progress_callback(0, total, t("progress.startGenerating"))
         profiles_by_uuid: Dict[str, OasisAgentProfile] = {}
         lock = Lock()
         current_locale = get_locale()

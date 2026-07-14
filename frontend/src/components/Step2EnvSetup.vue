@@ -767,11 +767,6 @@ const progressMessage = ref('')
 const profiles = ref([])
 const entityTypes = ref([])
 const expectedTotal = ref(null)
-const displayExpectedTotal = computed(() => {
-  if (expectedTotal.value && expectedTotal.value > 0) return expectedTotal.value
-  if (profiles.value.length > 0) return profiles.value.length
-  return '-'
-})
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
@@ -798,6 +793,13 @@ const stepFlags = ref({
 const retryingStage = ref(null) // profiles | platform_config | event_config | null
 const lastStageError = ref('')
 const isGeneratingProfiles = ref(false)
+const displayExpectedTotal = computed(() => {
+  if (expectedTotal.value && expectedTotal.value > 0) return expectedTotal.value
+  // 生成中未知预期时不要回落成当前数，否则会显示成「6/6」假完成
+  if (isGeneratingProfiles.value) return '-'
+  if (profiles.value.length > 0) return profiles.value.length
+  return '-'
+})
 
 const isWeakEventConfig = computed(() => {
   const cfg = simulationConfig.value
@@ -1075,8 +1077,17 @@ const applyDecisionPrepareEnvelope = async (env, raw, { done = false } = {}) => 
   const arts = envelope.artifacts || {}
   const profileCount = Number(arts.profile_count ?? payload.profile_count)
   const digest = arts.profiles_digest || payload.profiles_digest
+  const envelopeExpected = Number(
+    arts.total_expected ?? payload.total_expected ?? payload.expected_entities_count,
+  )
+  if (Number.isFinite(envelopeExpected) && envelopeExpected > 0) {
+    const preparing =
+      status === 'preparing' || String(envelope.status || '').toLowerCase() === 'running'
+    expectedTotal.value = preparing
+      ? envelopeExpected
+      : Math.max(expectedTotal.value || 0, envelopeExpected)
+  }
   if (Number.isFinite(profileCount) && profileCount > 0) {
-    expectedTotal.value = Math.max(expectedTotal.value || 0, profileCount)
     prepareStallTicks = 0
   }
   // 同帧直接渲染 digest（主通道推结果，不再依赖 preview SSE / 二次 GET）
@@ -1271,9 +1282,8 @@ const startPrepareSimulation = async (opts = {}) => {
       // N>1 后台 prepare：无 TaskManager task_id，主通道 decision SSE Envelope
       if (!isRealTaskId(tid) && (status === 'preparing' || status === 'pending')) {
         addLog('多方案共享世界准备已启动，正在生成 Agent 人设…')
-        if (res.data.expected_entities_count) {
-          expectedTotal.value = res.data.expected_entities_count
-        }
+        const n1 = Number(res.data.total_expected ?? res.data.expected_entities_count)
+        if (Number.isFinite(n1) && n1 > 0) expectedTotal.value = n1
         startDecisionPrepareWatch()
         return
       }
@@ -1290,10 +1300,13 @@ const startPrepareSimulation = async (opts = {}) => {
       addLog(t('log.prepareTaskStarted'))
       addLog(t('log.prepareTaskId', { taskId: tid }))
       
-      // 立即设置预期Agent总数（从prepare接口返回值获取）
-      if (res.data.expected_entities_count) {
-        expectedTotal.value = res.data.expected_entities_count
-        addLog(t('log.zepEntitiesFound', { count: res.data.expected_entities_count }))
+      // 立即设置预期 Agent 总数（统一读 total_expected，兼容旧字段）
+      const prepareExpected = Number(
+        res.data.total_expected ?? res.data.expected_entities_count,
+      )
+      if (Number.isFinite(prepareExpected) && prepareExpected > 0) {
+        expectedTotal.value = prepareExpected
+        addLog(t('log.zepEntitiesFound', { count: prepareExpected }))
         if (res.data.entity_types && res.data.entity_types.length > 0) {
           addLog(t('log.entityTypes', { types: res.data.entity_types.join(', ') }))
         }
@@ -1446,15 +1459,22 @@ const startPolling = () => {
     const arts = env.artifacts || {}
     const digest = arts.profiles_digest || data.profiles_digest
     const profileCount = Number(arts.profile_count ?? data.profile_count)
+    const pollExpected = Number(
+      arts.total_expected ?? data.total_expected ?? data.expected_entities_count,
+    )
+    if (Number.isFinite(pollExpected) && pollExpected > 0) {
+      const stillRunning = !['completed', 'ready', 'failed'].includes(
+        String(data.status || '').toLowerCase(),
+      )
+      expectedTotal.value = stillRunning
+        ? pollExpected
+        : Math.max(expectedTotal.value || 0, pollExpected)
+    }
     if (Array.isArray(digest) && digest.length > 0) {
       applyProfilesDigest(digest, {
         generating: !['completed', 'ready', 'failed'].includes(String(data.status || '').toLowerCase()),
       })
-      if (Number.isFinite(profileCount) && profileCount > 0) {
-        expectedTotal.value = Math.max(expectedTotal.value || 0, profileCount)
-      }
     } else if (Number.isFinite(profileCount) && profileCount > profiles.value.length) {
-      expectedTotal.value = Math.max(expectedTotal.value || 0, profileCount)
       await fetchProfilesRealtime()
     }
     if (arts.config_ready || data.config_ready) {
@@ -1645,11 +1665,15 @@ const applyProfilesSnapshot = (data) => {
   if (!data) return
   const prevCount = profiles.value.length
   profiles.value = data.profiles || []
-  isGeneratingProfiles.value = Boolean(data.is_generating)
-  const apiExpected = Number(data.total_expected)
+  const generating = Boolean(data.is_generating)
+  isGeneratingProfiles.value = generating
+  // 生成中以后端 total_expected 为准（可含 Cast Sheet 下调）；完成后取 max 对齐实绩
+  const apiExpected = Number(data.total_expected ?? data.expected_entities_count)
   if (Number.isFinite(apiExpected) && apiExpected > 0) {
-    expectedTotal.value = apiExpected
-  } else if (!expectedTotal.value && profiles.value.length > 0) {
+    expectedTotal.value = generating
+      ? apiExpected
+      : Math.max(apiExpected, profiles.value.length)
+  } else if (!generating && !expectedTotal.value && profiles.value.length > 0) {
     expectedTotal.value = profiles.value.length
   }
 

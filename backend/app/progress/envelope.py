@@ -232,6 +232,12 @@ def build_decision_envelope(
         "report_task_id": snap.get("report_task_id") or dec.get("report_task_id"),
         "topics_count": int(snap.get("topics_count") or 0),
     }
+    total_expected = prep.get("total_expected") or snap.get("total_expected")
+    try:
+        if total_expected is not None and int(total_expected) > 0:
+            artifacts["total_expected"] = int(total_expected)
+    except (TypeError, ValueError):
+        pass
 
     if include_profiles_digest and is_preparing:
         sim_id = (
@@ -326,6 +332,23 @@ def build_task_envelope(task_id: str, task_snap: Optional[Dict[str, Any]] = None
         artifacts["config_ready"] = artifacts["config_ready"] or _config_ready_for_sim(
             str(sim_id)
         )
+        # 预期：progress_detail.total_items（含 Cast 下调）优先，其次 state.entities_count
+        try:
+            detail_total = detail.get("total_items")
+            if detail_total is not None and int(detail_total) > 0:
+                artifacts["total_expected"] = int(detail_total)
+            else:
+                state_path = os.path.join(
+                    Config.OASIS_SIMULATION_DATA_DIR, str(sim_id), "state.json"
+                )
+                if os.path.isfile(state_path):
+                    with open(state_path, encoding="utf-8") as f:
+                        st = json.load(f) or {}
+                    ec = st.get("entities_count") or 0
+                    if ec:
+                        artifacts["total_expected"] = int(ec)
+        except Exception:
+            pass
     elif task_type in ("prepare", "simulation_prepare") and sim_id and mapped == "completed":
         digest_info = load_profiles_digest_for_sim(str(sim_id))
         artifacts["profile_count"] = digest_info["profile_count"]

@@ -24,7 +24,10 @@ from app.ontology.service import _combined_document_text
 from app.ontology.snapshot import load_snapshot
 from app.utils.logger import get_logger
 from app.world.network import write_network
-from app.world.population import generate_profiles_from_slice
+from app.world.population import (
+    expected_agent_count_from_slice,
+    generate_profiles_from_slice,
+)
 from app.world.slicer import slice_world
 
 logger = get_logger("adc.engine.scenario_runner")
@@ -510,12 +513,14 @@ class ScenarioRunner:
             )
 
         node_count = len(world_slice.get("nodes") or [])
+        total_expected = expected_agent_count_from_slice(world_slice)
         _write_prepare_progress(
             decision_id,
             stage="profiles",
             progress=25,
             message=f"切片完成（{node_count} 实体），正在生成 Agent 人设…",
             profile_count=0,
+            total_expected=total_expected or None,
             status="running",
         )
 

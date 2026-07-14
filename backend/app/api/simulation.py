@@ -386,57 +386,84 @@ def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict
                 state_data = json.load(f)
                 status = state_data.get("status", "")
                 is_generating = status == "preparing"
-                total_expected = state_data.get("entities_count") or state_data.get("profiles_count")
+                # 生成中禁止用 profiles_count 冒充预期，否则前端会变成「当前=预期」
+                entities_count = state_data.get("entities_count") or 0
+                if entities_count:
+                    total_expected = int(entities_count)
+                elif not is_generating:
+                    pc = state_data.get("profiles_count") or 0
+                    if pc:
+                        total_expected = int(pc)
                 project_id = state_data.get("project_id")
         except Exception:
             pass
 
-    # sim 尚无人设时，回退 decision shared（N>1 准备中）
-    if (not profiles) and project_id and str(project_id).startswith("dec_"):
+    # N>1：shared 人设 + 切片预期（sim 目录可能尚未同步）
+    if project_id and str(project_id).startswith("dec_"):
         shared_dir = os.path.join(Config.DECISION_DIR, project_id, "shared")
-        if platform == "reddit":
-            shared_file = os.path.join(shared_dir, "reddit_profiles.json")
-        else:
-            shared_file = os.path.join(shared_dir, "twitter_profiles.csv")
-        if os.path.isfile(shared_file):
-            try:
-                file_stat = os.stat(shared_file)
-                file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
-                file_exists = True
-                if platform == "reddit":
-                    with open(shared_file, "r", encoding="utf-8") as f:
-                        raw = json.load(f)
-                    if isinstance(raw, list):
-                        profiles = raw
-                    elif isinstance(raw, dict):
-                        profiles = raw.get("profiles") or raw.get("agents") or []
-                else:
-                    with open(shared_file, "r", encoding="utf-8") as f:
-                        reader = csv.DictReader(f)
-                        profiles = list(reader)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"读取 shared profiles 失败: {e}")
+        if not profiles:
+            if platform == "reddit":
+                shared_file = os.path.join(shared_dir, "reddit_profiles.json")
+            else:
+                shared_file = os.path.join(shared_dir, "twitter_profiles.csv")
+            if os.path.isfile(shared_file):
+                try:
+                    file_stat = os.stat(shared_file)
+                    file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+                    file_exists = True
+                    if platform == "reddit":
+                        with open(shared_file, "r", encoding="utf-8") as f:
+                            raw = json.load(f)
+                        if isinstance(raw, list):
+                            profiles = raw
+                        elif isinstance(raw, dict):
+                            profiles = raw.get("profiles") or raw.get("agents") or []
+                    else:
+                        with open(shared_file, "r", encoding="utf-8") as f:
+                            reader = csv.DictReader(f)
+                            profiles = list(reader)
+                except (json.JSONDecodeError, Exception) as e:
+                    logger.warning(f"读取 shared profiles 失败: {e}")
 
-        # decision 级 preparing：即使 shared 尚未写出，也标为生成中
         try:
             from app.ontology import registry as ont_registry
+            from app.world.population import expected_agent_count_from_slice
 
             ont_registry.init_schema()
             dec = ont_registry.get_decision(project_id) or {}
             if str(dec.get("status") or "").lower() == "preparing":
                 is_generating = True
-            slice_path = os.path.join(shared_dir, "slice.json")
-            if is_generating and not total_expected and os.path.isfile(slice_path):
-                with open(slice_path, "r", encoding="utf-8") as f:
-                    slice_data = json.load(f)
-                nodes = slice_data.get("nodes") or []
-                if nodes:
-                    total_expected = min(len(nodes), 30)
+
+            # 优先级：prepare_progress（含 Cast 下调）> 已有 entities_count > 切片估算
+            prep_path = os.path.join(
+                Config.DECISION_DIR, project_id, "prepare_progress.json"
+            )
+            prep_expected = None
+            if os.path.isfile(prep_path):
+                try:
+                    with open(prep_path, "r", encoding="utf-8") as f:
+                        prep = json.load(f) or {}
+                    pe = prep.get("total_expected")
+                    if pe and int(pe) > 0:
+                        prep_expected = int(pe)
+                except Exception:
+                    pass
+            if prep_expected:
+                total_expected = prep_expected
+            elif not total_expected:
+                slice_path = os.path.join(shared_dir, "slice.json")
+                if is_generating and os.path.isfile(slice_path):
+                    with open(slice_path, "r", encoding="utf-8") as f:
+                        slice_data = json.load(f)
+                    slice_expected = expected_agent_count_from_slice(slice_data)
+                    if slice_expected > 0:
+                        total_expected = slice_expected
         except Exception:
             pass
 
     profile_count = len(profiles) if isinstance(profiles, list) else 0
-    if not total_expected and profile_count > 0:
+    # 仅在非生成中才用已生成数回填预期；生成中保持未知或切片预期
+    if not total_expected and profile_count > 0 and not is_generating:
         total_expected = profile_count
     elif total_expected and profile_count > total_expected and not is_generating:
         total_expected = profile_count
@@ -1088,8 +1115,10 @@ def prepare_simulation():
                 "status": "preparing",
                 "message": t('api.prepareStarted'),
                 "already_prepared": False,
-                "expected_entities_count": state.entities_count,  # 预期的Agent总数
-                "entity_types": state.entity_types  # 实体类型列表
+                "total_expected": state.entities_count,
+                # 兼容旧前端字段
+                "expected_entities_count": state.entities_count,
+                "entity_types": state.entity_types,
             }
         })
         

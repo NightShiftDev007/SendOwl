@@ -345,6 +345,8 @@ class SimulationManager:
             
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
+            # 尽早落盘，刷新/realtime 才能读到预期总数
+            self._save_simulation_state(state)
             
             if progress_callback:
                 progress_callback(
@@ -376,10 +378,21 @@ class SimulationManager:
                 generator = OasisProfileGenerator(graph_id=graph_id or state.graph_id)
                 
                 def profile_progress(current, total, msg):
+                    # Cast Sheet 后 total 可能下调：同步 entities_count 供 realtime/SSE
+                    try:
+                        t_int = int(total or 0)
+                        if t_int > 0 and (
+                            not state.entities_count or t_int < state.entities_count
+                        ):
+                            if state.entities_count != t_int:
+                                state.entities_count = t_int
+                                self._save_simulation_state(state)
+                    except Exception:
+                        pass
                     if progress_callback:
                         progress_callback(
                             "generating_profiles", 
-                            int(current / total * 100), 
+                            int(current / total * 100) if total else 0, 
                             msg,
                             current=current,
                             total=total,
