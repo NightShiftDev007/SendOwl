@@ -89,10 +89,61 @@ def _event_config_is_strong(event_config: Optional[Dict[str, Any]]) -> bool:
     """LLM 生成的初始激活通常 ≥2 帖 + ≥1 话题 + 叙事；干预 stub 往往只有 1 帖。"""
     if not isinstance(event_config, dict):
         return False
-    posts = event_config.get("initial_posts") or []
-    topics = event_config.get("hot_topics") or []
+    posts = [
+        p
+        for p in (event_config.get("initial_posts") or [])
+        if isinstance(p, dict) and str(p.get("content") or "").strip()
+    ]
+    topics = [
+        t for t in (event_config.get("hot_topics") or []) if str(t or "").strip()
+    ]
     narrative = str(event_config.get("narrative_direction") or "").strip()
     return len(posts) >= 2 and len(topics) >= 1 and bool(narrative)
+
+
+def _read_event_config_from_sim(sim_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not sim_id:
+        return None
+    path = os.path.join(
+        Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json"
+    )
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f) or {}
+        ec = cfg.get("event_config")
+        return ec if isinstance(ec, dict) else None
+    except Exception:
+        return None
+
+
+def _assert_event_config_ready_for_prepare(
+    decision_id: str, *, sim_id: Optional[str] = None, cfg: Optional[Dict[str, Any]] = None
+) -> None:
+    """prepared 前硬门槛：弱初始激活不得解锁 Step3。"""
+    event_config = None
+    if isinstance(cfg, dict):
+        event_config = cfg.get("event_config") if isinstance(cfg.get("event_config"), dict) else cfg
+    if not _event_config_is_strong(event_config):
+        event_config = _read_event_config_from_sim(sim_id)
+    if not _event_config_is_strong(event_config):
+        # 尝试 shared base
+        shared = os.path.join(
+            Config.DECISION_DIR, decision_id, "shared", "base_simulation_config.json"
+        )
+        if os.path.isfile(shared):
+            try:
+                with open(shared, encoding="utf-8") as f:
+                    base = json.load(f) or {}
+                event_config = base.get("event_config")
+            except Exception:
+                pass
+    if not _event_config_is_strong(event_config):
+        raise RuntimeError(
+            "初始激活编排未完成或结果无效（需≥2条初始帖、≥1个热点、非空叙事），"
+            "不能标记为 prepared"
+        )
 
 
 def _sim_dir_looks_prepared(sim_id: str) -> bool:
@@ -859,6 +910,7 @@ class ScenarioRunner:
                 status="ready",
                 run_dir=os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id),
             )
+            _assert_event_config_ready_for_prepare(decision_id, sim_id=sim_id)
             registry.update_decision(decision_id, status="prepared")
             world = self.get_world_assets(decision_id, prefer_sim_id=sim_id)
             return {
@@ -915,6 +967,7 @@ class ScenarioRunner:
                 )
                 registry.update_run(run["id"], status="ready", run_dir=run_dir)
 
+        _assert_event_config_ready_for_prepare(decision_id, cfg=base_cfg)
         registry.update_decision(decision_id, status="prepared")
         world = self.get_world_assets(decision_id)
         _write_prepare_progress(
@@ -1020,7 +1073,20 @@ class ScenarioRunner:
                     item.get("source_entity_type") or item.get("profession") or "Agent"
                 )
             if not item.get("interested_topics"):
-                item["interested_topics"] = []
+                # 旧人设常缺话题字段：读盘时轻量回填，避免 UI「关联话题数」恒为 0
+                try:
+                    from app.world.oasis_profile_generator import OasisProfileGenerator
+
+                    item["interested_topics"] = OasisProfileGenerator._normalize_interested_topics(
+                        item.get("interested_topics"),
+                        profession=item.get("profession"),
+                        entity_type=item.get("source_entity_type")
+                        or item.get("entity_type"),
+                        entity_summary=item.get("persona") or item.get("bio"),
+                        bio=item.get("bio"),
+                    )
+                except Exception:
+                    item["interested_topics"] = []
             normalized.append(item)
 
         slice_node_count = 0
@@ -1523,25 +1589,41 @@ class ScenarioRunner:
         matrix = []
         for sc in scenarios:
             runs = registry.list_runs_for_scenario(sc["id"])
+            run_rows = []
+            for r in runs:
+                row = {
+                    "run_id": r["id"],
+                    "sim_id": r.get("sim_id"),
+                    "seed": r.get("seed"),
+                    "status": r.get("status"),
+                    "error": r.get("error"),
+                    "started_at": r.get("started_at"),
+                    "finished_at": r.get("finished_at"),
+                    "has_metrics": bool(r.get("metrics")),
+                    "current_round": 0,
+                    "total_rounds": 0,
+                }
+                sid = r.get("sim_id")
+                if sid:
+                    try:
+                        rs = SimulationRunner.get_run_state(sid)
+                        if rs:
+                            row["current_round"] = int(
+                                getattr(rs, "current_round", 0) or 0
+                            )
+                            row["total_rounds"] = int(
+                                getattr(rs, "total_rounds", 0) or 0
+                            )
+                    except Exception:
+                        pass
+                run_rows.append(row)
             matrix.append(
                 {
                     "scenario_id": sc["id"],
                     "scenario_name": sc.get("name"),
                     "kind": sc.get("kind"),
                     "color": sc.get("color"),
-                    "runs": [
-                        {
-                            "run_id": r["id"],
-                            "sim_id": r.get("sim_id"),
-                            "seed": r.get("seed"),
-                            "status": r.get("status"),
-                            "error": r.get("error"),
-                            "started_at": r.get("started_at"),
-                            "finished_at": r.get("finished_at"),
-                            "has_metrics": bool(r.get("metrics")),
-                        }
-                        for r in runs
-                    ],
+                    "runs": run_rows,
                 }
             )
         total = sum(len(m["runs"]) for m in matrix)

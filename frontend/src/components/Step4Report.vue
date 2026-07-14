@@ -144,6 +144,13 @@
               <span class="metric-pill" :class="`pill--${statusClass}`">{{ statusText }}</span>
             </div>
           </div>
+          <div
+            v-if="!isComplete && totalSections > 0"
+            class="report-progress-bar"
+            :title="`${progressPercent}%`"
+          >
+            <div class="report-progress-fill" :style="{ width: `${progressPercent}%` }"></div>
+          </div>
 
           <div class="workflow-steps" v-if="workflowSteps.length > 0">
             <div
@@ -2035,6 +2042,41 @@ const workflowSteps = computed(() => {
   return steps
 })
 
+const headerStatusText = computed(() => {
+  if (isComplete.value) return t('step4.statusCompleted')
+  if (isFinalizing.value) return t('step4.statusFinalizing')
+  if (activeStep.value?.key === 'planning' && activeStep.value?.status === 'active') {
+    return t('step4.statusPlanningHeader')
+  }
+  const title = activeStep.value?.title || t('step4.statusGenerating')
+  if (totalSections.value > 0) {
+    const cur = Math.min(
+      Math.max(completedSections.value + (isComplete.value ? 0 : 1), 1),
+      totalSections.value,
+    )
+    return t('step4.statusSectionHeader', {
+      current: cur,
+      total: totalSections.value,
+      title,
+    })
+  }
+  return title
+})
+
+watch(
+  [headerStatusText, isComplete, statusClass],
+  () => {
+    if (isComplete.value) {
+      emit('update-status', { status: 'completed', text: t('step4.statusCompleted') })
+      return
+    }
+    if (statusClass.value === 'processing' || agentLogs.value.length > 0) {
+      emit('update-status', { status: 'processing', text: headerStatusText.value })
+    }
+  },
+  { immediate: true },
+)
+
 // Methods
 const addLog = (msg) => {
   console.log(`[SandOwl] ${msg}`)
@@ -3262,6 +3304,20 @@ watch(() => props.reportId, (newId) => {
 /* Workflow Overview */
 .workflow-overview {
   padding: 16px 20px 0 20px;
+}
+
+.report-progress-bar {
+  height: 4px;
+  margin: 0 16px 10px;
+  background: #eee;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.report-progress-fill {
+  height: 100%;
+  background: var(--brand, #ff5722);
+  transition: width 0.35s ease;
 }
 
 .workflow-metrics {

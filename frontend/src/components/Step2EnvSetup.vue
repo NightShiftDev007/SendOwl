@@ -89,6 +89,35 @@
             {{ lastStageError || $t('log.prepareFailed', { error: $t('common.unknownError') }) }}
           </p>
 
+          <!-- 准备进度：仅在人设阶段真正运行时展示（完成后收起，避免假「进行中」） -->
+          <div v-if="stepIsRunning('profiles', 1)" class="prepare-live">
+            <div class="stage-stepper">
+              <div
+                v-for="(st, idx) in prepareStageSteps"
+                :key="st.key"
+                class="stage-step"
+                :class="st.status"
+              >
+                <span class="stage-dot">{{ st.status === 'done' ? '✓' : idx + 1 }}</span>
+                <span class="stage-label">{{ st.label }}</span>
+                <span v-if="idx < prepareStageSteps.length - 1" class="stage-connector"></span>
+              </div>
+            </div>
+            <div v-if="progressMessage" class="activity-line">
+              <span class="activity-spinner" aria-hidden="true"></span>
+              <span class="activity-text">{{ progressMessage }}</span>
+              <span v-if="prepareProgress > 0 && prepareProgress < 100" class="activity-pct mono">
+                {{ prepareProgress }}%
+              </span>
+            </div>
+            <div
+              v-if="prepareProgress > 0 && prepareProgress < 100"
+              class="prepare-progress-bar"
+            >
+              <div class="prepare-progress-fill" :style="{ width: `${prepareProgress}%` }"></div>
+            </div>
+          </div>
+
           <!-- Profiles Stats -->
           <div v-if="profiles.length > 0" class="stats-grid">
             <div class="stat-card">
@@ -476,7 +505,7 @@
             <span class="step-title">{{ $t('step2.setupComplete') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="phase >= 4" class="badge processing">{{ $t('step1.inProgress') }}</span>
+            <span v-if="phase >= 4" class="badge ready">{{ $t('common.ready') }}</span>
             <span v-else class="badge pending">{{ $t('common.pending') }}</span>
           </div>
         </div>
@@ -686,6 +715,10 @@ import {
 import { getDecision, replaceDecisionScenarios, getDecisionWorld } from '../api/decision'
 import { subscribeTask } from '../api/sse'
 import { useProgress, pickEnvelope } from '../composables/useProgress'
+import {
+  capWorkflowMaxReached,
+  syncWorkflowFromServer,
+} from '../store/workflowContext'
 import ScenarioEditor from './ScenarioEditor.vue'
 
 const { t } = useI18n()
@@ -764,6 +797,8 @@ const taskId = ref(null)
 const prepareProgress = ref(0)
 const currentStage = ref('')
 const progressMessage = ref('')
+/** prepare 细分阶段：slice | cast | profiles | review | inject | ready */
+const prepareStageKey = ref('')
 const profiles = ref([])
 const entityTypes = ref([])
 const expectedTotal = ref(null)
@@ -801,6 +836,54 @@ const displayExpectedTotal = computed(() => {
   return '-'
 })
 
+const PREPARE_STAGE_ORDER = ['slice', 'cast', 'profiles', 'review', 'inject', 'ready']
+
+function normalizePrepareStage(raw) {
+  const s = String(raw || '').toLowerCase()
+  if (!s) return ''
+  if (s.includes('cast') || s.includes('分角') || s.includes('planningcast')) return 'cast'
+  if (s.includes('review') || s.includes('终审') || s.includes('reviewingprofiles')) return 'review'
+  if (
+    s.includes('generating_profiles') ||
+    s.includes('profile') ||
+    s.includes('人设') ||
+    (s.includes('startgenerating') && !s.includes('config'))
+  ) {
+    return 'profiles'
+  }
+  if (s.includes('inject') || s.includes('注入')) return 'inject'
+  if (s.includes('slice') || s.includes('切片') || s === 'reading') return 'slice'
+  if (s === 'ready' || s === 'prepared' || s === 'completed') return 'ready'
+  if (PREPARE_STAGE_ORDER.includes(s)) return s
+  return ''
+}
+
+const prepareStageSteps = computed(() => {
+  const labels = {
+    slice: t('step2.stageSlice'),
+    cast: t('step2.stageCast'),
+    profiles: t('step2.stageProfiles'),
+    review: t('step2.stageReview'),
+    inject: t('step2.stageInject'),
+  }
+  const keys = ['slice', 'cast', 'profiles', 'review', 'inject']
+  const cur = prepareStageKey.value || (stepIsRunning('profiles', 1) ? 'profiles' : '')
+  const curIdx = keys.indexOf(cur)
+  return keys.map((key, idx) => {
+    let status = 'todo'
+    if (cur === 'ready' || (stepHasResult('profiles') && !isGeneratingProfiles.value && phase.value > 1)) {
+      status = 'done'
+    } else if (curIdx < 0) {
+      status = 'todo'
+    } else if (idx < curIdx) {
+      status = 'done'
+    } else if (idx === curIdx) {
+      status = 'active'
+    }
+    return { key, label: labels[key], status }
+  })
+})
+
 const isWeakEventConfig = computed(() => {
   const cfg = simulationConfig.value
   if (!cfg?.event_config) return false
@@ -817,6 +900,23 @@ const isWeakEventConfig = computed(() => {
   }
   return false
 })
+
+// 初始激活失败/弱结果：立刻锁住顶栏 Step3，不必等下一次 sync
+watch(
+  () => [isWeakEventConfig.value, stepFlags.value.events, stepFlags.value.platform],
+  ([weak, eventsFlag, platformFlag]) => {
+    if (weak || eventsFlag === 'failed' || platformFlag === 'failed') {
+      capWorkflowMaxReached(2)
+      return
+    }
+    // 编排恢复合格后重新向服务端校准解锁
+    if (eventsFlag === 'ok' || (!weak && simulationConfig.value?.event_config)) {
+      const id = props.decisionId || workflowId.value
+      if (id && String(id).startsWith('dec_')) syncWorkflowFromServer(id)
+    }
+  },
+  { immediate: true },
+)
 
 /** 平台配置：有 time + agents 即视为已生成成功；历史默认作息不算失败 */
 const hasPlatformConfig = computed(() => {
@@ -873,11 +973,59 @@ function stepBadgeClass(flagKey, phaseNum) {
   return 'pending'
 }
 
+function emitPrepareStatusLabel() {
+  if (stepIsFailed('profiles') || stepIsFailed('platform') || stepIsFailed('events')) {
+    return
+  }
+  if (phase.value >= 4 && !isGeneratingProfiles.value) {
+    emit('update-status', { status: 'completed', text: t('common.ready') })
+    return
+  }
+  let badge = ''
+  if (stepIsRunning('profiles', 1)) badge = stepBadgeText('profiles', 1)
+  else if (stepIsRunning('platform', 2)) badge = stepBadgeText('platform', 2)
+  else if (stepIsRunning('events', 3)) badge = stepBadgeText('events', 3)
+  else return
+  const msg = progressMessage.value ? String(progressMessage.value).slice(0, 28) : ''
+  const text =
+    msg && badge && !String(badge).includes(msg.slice(0, 8))
+      ? `${badge} · ${msg}`
+      : badge || msg || t('step2.generating')
+  emit('update-status', { status: 'processing', text })
+}
+
 function stepBadgeText(flagKey, phaseNum) {
   if (stepIsRunning(flagKey, phaseNum)) {
-    if (flagKey === 'profiles') return `${prepareProgress.value}%`
-    if (flagKey === 'platform') return t('step2.generating')
-    return t('step2.orchestrating')
+    if (flagKey === 'profiles') {
+      const stage = prepareStageKey.value
+      if (stage === 'cast') return t('step2.castPlanning')
+      if (stage === 'review') return t('step2.reviewing')
+      if (stage === 'slice') return t('step2.slicing')
+      if (stage === 'inject') return t('step2.injecting')
+      const cur = profiles.value.length
+      const tot = expectedTotal.value
+      if (tot && tot > 0) {
+        return t('step2.profilesCountBadge', { current: cur, total: tot })
+      }
+      if (progressMessage.value) {
+        const short = String(progressMessage.value).slice(0, 18)
+        return short + (progressMessage.value.length > 18 ? '…' : '')
+      }
+      return prepareProgress.value > 0 ? `${prepareProgress.value}%` : t('step2.generating')
+    }
+    if (flagKey === 'platform') {
+      if (progressMessage.value && (phase.value === 2 || currentStage.value)) {
+        const msg = String(progressMessage.value)
+        if (msg.includes('时间') || msg.toLowerCase().includes('time')) return msg.slice(0, 20)
+        if (msg.includes('配置') || msg.toLowerCase().includes('config')) return msg.slice(0, 20)
+      }
+      return progressMessage.value
+        ? String(progressMessage.value).slice(0, 18)
+        : t('step2.generating')
+    }
+    return progressMessage.value
+      ? String(progressMessage.value).slice(0, 18)
+      : t('step2.orchestrating')
   }
   if (stepIsFailed(flagKey)) return t('common.failed')
   if (stepHasResult(flagKey) || phase.value > phaseNum) return t('common.completed')
@@ -1073,6 +1221,19 @@ const applyDecisionPrepareEnvelope = async (env, raw, { done = false } = {}) => 
   if (envelope.message || payload.message) {
     progressMessage.value = envelope.message || payload.message
   }
+  const stageRaw =
+    envelope.stage ||
+    payload.stage ||
+    payload.prepare_progress?.stage ||
+    envelope.raw_status
+  const normalized = normalizePrepareStage(stageRaw)
+  if (normalized) prepareStageKey.value = normalized
+  // 消息关键字兜底（N=1 progress_detail 文案）
+  if (progressMessage.value) {
+    const fromMsg = normalizePrepareStage(progressMessage.value)
+    if (fromMsg && fromMsg !== 'ready') prepareStageKey.value = fromMsg
+  }
+  emitPrepareStatusLabel()
 
   const arts = envelope.artifacts || {}
   const profileCount = Number(arts.profile_count ?? payload.profile_count)
@@ -1484,6 +1645,12 @@ const startPolling = () => {
     if (data.progress_detail) {
       currentStage.value = data.progress_detail.current_stage_name || ''
       const detail = data.progress_detail
+      const st = normalizePrepareStage(
+        detail.current_stage || detail.current_stage_name || detail.item_description,
+      )
+      if (st) prepareStageKey.value = st
+      if (detail.item_description) progressMessage.value = detail.item_description
+      else if (detail.current_stage_name) progressMessage.value = detail.current_stage_name
       const logKey = `${detail.current_stage}-${detail.current_item}-${detail.total_items}`
       if (logKey !== lastLoggedMessage && detail.item_description) {
         lastLoggedMessage = logKey
@@ -1497,6 +1664,9 @@ const startPolling = () => {
     } else if (data.message && data.message !== lastLoggedMessage) {
       lastLoggedMessage = data.message
       addLog(data.message)
+      progressMessage.value = data.message
+      const fromMsg = normalizePrepareStage(data.message)
+      if (fromMsg) prepareStageKey.value = fromMsg
       const match = data.message.match(/\[(\d+)\/(\d+)\]\s*([^:]+)/)
       if (match) currentStage.value = match[3].trim()
     }
@@ -2103,9 +2273,127 @@ onUnmounted(() => {
   letter-spacing: 0.5px;
 }
 
+.prepare-live {
+  margin: 12px 0 16px;
+  padding: 12px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stage-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+}
+
+.stage-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #999;
+}
+
+.stage-step.done { color: #2E7D32; }
+.stage-step.active { color: var(--brand); font-weight: 600; }
+
+.stage-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.stage-step.done .stage-dot {
+  background: #E8F5E9;
+  border-color: #A5D6A7;
+}
+
+.stage-step.active .stage-dot {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.stage-connector {
+  width: 16px;
+  height: 1px;
+  background: #ddd;
+  margin: 0 4px;
+}
+
+.stage-step.done + .stage-step .stage-connector,
+.stage-step.done .stage-connector {
+  background: #A5D6A7;
+}
+
+.activity-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #333;
+  min-width: 0;
+}
+
+.activity-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #eee;
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: prepare-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes prepare-spin {
+  to { transform: rotate(360deg); }
+}
+
+.activity-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-pct {
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.prepare-progress-bar {
+  height: 4px;
+  background: #eee;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.prepare-progress-fill {
+  height: 100%;
+  background: var(--brand);
+  transition: width 0.3s ease;
+}
+
 .badge {
   font-size: 10px;
   padding: 4px 8px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   border-radius: 4px;
   font-weight: 600;
   text-transform: uppercase;
@@ -2114,6 +2402,11 @@ onUnmounted(() => {
 .badge.success { background: #E8F5E9; color: #2E7D32; }
 .badge.processing { background: var(--brand); color: #FFF; }
 .badge.failed { background: #FDECEA; color: #C0392B; }
+.badge.ready {
+  background: #fff;
+  color: #1B5E20;
+  border: 1px solid #A5D6A7;
+}
 .badge.pending { background: #F5F5F5; color: #999; }
 
 .retry-btn {

@@ -468,6 +468,26 @@ def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict
     elif total_expected and profile_count > total_expected and not is_generating:
         total_expected = profile_count
 
+    # 旧人设常缺 interested_topics：读时回填，避免 Step2「关联话题数」恒为 0
+    if isinstance(profiles, list) and profiles:
+        try:
+            from app.world.oasis_profile_generator import OasisProfileGenerator
+
+            for p in profiles:
+                if not isinstance(p, dict):
+                    continue
+                if p.get("interested_topics"):
+                    continue
+                p["interested_topics"] = OasisProfileGenerator._normalize_interested_topics(
+                    p.get("interested_topics"),
+                    profession=p.get("profession"),
+                    entity_type=p.get("source_entity_type") or p.get("entity_type"),
+                    entity_summary=p.get("persona") or p.get("bio"),
+                    bio=p.get("bio"),
+                )
+        except Exception as e:
+            logger.debug(f"profiles topics backfill skip: {e}")
+
     return {
         "simulation_id": simulation_id,
         "platform": platform,
@@ -1063,16 +1083,24 @@ def prepare_simulation():
                 except Exception as sync_err:
                     logger.warning(f"sync_prepare_to_registry 失败: {sync_err}")
 
-                # 清 prepare_task_id；decision → prepared
+                # 清 prepare_task_id；decision → prepared（弱初始激活不得放行）
                 try:
                     result_state.prepare_task_id = None
                     manager._save_simulation_state(result_state)
                     pid = result_state.project_id or state.project_id or ""
                     if str(pid).startswith("dec_"):
+                        from app.engine.scenario_runner import _event_config_is_strong
                         from app.ontology import registry as ont_registry
 
                         ont_registry.init_schema()
-                        ont_registry.update_decision(pid, status="prepared")
+                        cfg = manager.get_simulation_config(simulation_id) or {}
+                        if _event_config_is_strong(cfg.get("event_config")):
+                            ont_registry.update_decision(pid, status="prepared")
+                        else:
+                            ont_registry.update_decision(pid, status="prepare_failed")
+                            logger.warning(
+                                f"prepare 完成但 event_config 弱: {pid} → prepare_failed"
+                            )
                 except Exception as e:
                     logger.warning(f"prepare 完成后清 task_id/status 失败: {e}")
                 

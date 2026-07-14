@@ -114,7 +114,11 @@
           </div>
           <div class="step-status">
             <span v-if="currentPhase > 1" class="badge success">{{ $t('step1.ontologyCompleted') }}</span>
-            <span v-else-if="currentPhase === 1" class="badge processing">{{ buildProgress?.progress || 0 }}%</span>
+            <span v-else-if="currentPhase === 1" class="badge processing">
+              {{ buildProgress?.progress || 0 }}%
+              <template v-if="buildProgress?.message"> · {{ buildProgress.message }}</template>
+              <template v-if="buildElapsedText"> · {{ buildElapsedText }}</template>
+            </span>
             <span v-else class="badge pending">{{ $t('step1.ontologyPending') }}</span>
           </div>
         </div>
@@ -151,7 +155,8 @@
             <span class="step-title">{{ $t('step1.buildComplete') }}</span>
           </div>
           <div class="step-status">
-            <span v-if="currentPhase >= 2" class="badge accent">{{ $t('step1.inProgress') }}</span>
+            <span v-if="currentPhase >= 2" class="badge ready">{{ $t('common.ready') }}</span>
+            <span v-else class="badge pending">{{ $t('common.pending') }}</span>
           </div>
         </div>
         
@@ -174,7 +179,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { createSimulation } from '../api/simulation'
@@ -197,6 +202,44 @@ defineEmits(['next-step'])
 
 const selectedOntologyItem = ref(null)
 const creatingSimulation = ref(false)
+
+// 建图耗时前端本地计时（每秒平滑跳动，不依赖后端推帧节奏）
+const buildStartAt = ref(0)
+const nowTick = ref(Date.now())
+let elapsedTimer = null
+
+watch(
+  () => props.currentPhase,
+  (phase) => {
+    if (phase === 1) {
+      if (!buildStartAt.value) buildStartAt.value = Date.now()
+      if (!elapsedTimer) {
+        elapsedTimer = setInterval(() => {
+          nowTick.value = Date.now()
+        }, 1000)
+      }
+    } else {
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer)
+        elapsedTimer = null
+      }
+      buildStartAt.value = 0
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (elapsedTimer) clearInterval(elapsedTimer)
+})
+
+const buildElapsedText = computed(() => {
+  if (props.currentPhase !== 1 || !buildStartAt.value) return ''
+  const s = Math.max(0, Math.floor((nowTick.value - buildStartAt.value) / 1000))
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : `${sec}s`
+})
 
 const ontologySchema = computed(
   () => props.projectData?.ontology || props.projectData?.schema || null,
@@ -343,6 +386,11 @@ const formatDate = (dateStr) => {
 .badge.success { background: #E8F5E9; color: #2E7D32; }
 .badge.processing { background: var(--brand); color: #FFF; }
 .badge.accent { background: var(--brand); color: #FFF; }
+.badge.ready {
+  background: #fff;
+  color: #1B5E20;
+  border: 1px solid #A5D6A7;
+}
 .badge.pending { background: #F5F5F5; color: #999; }
 
 .api-note {

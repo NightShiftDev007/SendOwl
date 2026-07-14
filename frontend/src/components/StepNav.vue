@@ -46,13 +46,16 @@ const stepNames = computed(() => {
   return Array.isArray(names) ? names : ['1', '2', '3', '4', '5']
 })
 
+// 显式依赖 serverMaxReached，确保 Step2 压锁后顶栏立刻重算
+const serverMaxReached = computed(() => stored.serverMaxReached)
+
 const ctx = computed(() => ({
   decisionId: props.decisionId || stored.decisionId || '',
   ontologyId: stored.ontologyId || '',
   simulationId: stored.simulationId || '',
   reportId: stored.reportId || '',
   currentStep: props.currentStep,
-  serverMaxReached: stored.serverMaxReached,
+  serverMaxReached: serverMaxReached.value,
 }))
 
 const reachable = computed(() => ({

@@ -287,6 +287,7 @@ def _task_dedupe_key(snap: Dict[str, Any]) -> str:
             "message": snap.get("message") if isinstance(snap, dict) else None,
             "profile_count": (arts or {}).get("profile_count")
             or (snap.get("profile_count") if isinstance(snap, dict) else None),
+            "total_expected": (arts or {}).get("total_expected"),
             "topics_count": (arts or {}).get("topics_count"),
             "config_ready": (arts or {}).get("config_ready"),
             "node_count": (arts or {}).get("node_count")
@@ -438,8 +439,16 @@ def _decision_dedupe_key(snap: Dict[str, Any]) -> str:
     """指纹含 profile_count / 平台进度 / actions watermark，避免吞增量。"""
     env = snap.get("envelope") if isinstance(snap, dict) else None
     arts = (env or {}).get("artifacts") if isinstance(env, dict) else {}
+    # matrix 各 run 的状态/轮次也纳入指纹，否则非选中 run 的轮次推进会被去重吞掉
+    matrix_digest = [
+        f"{r.get('run_id')}:{r.get('status')}:{r.get('current_round')}/{r.get('total_rounds')}"
+        for m in (snap.get("matrix") or [] if isinstance(snap, dict) else [])
+        for r in (m.get("runs") or [])
+        if isinstance(r, dict)
+    ]
     return _fingerprint(
         {
+            "matrix": matrix_digest,
             "status": snap.get("status"),
             "stage": snap.get("stage") or ((env or {}).get("stage") if isinstance(env, dict) else None),
             "prepare_percent": snap.get("prepare_percent")
@@ -448,6 +457,7 @@ def _decision_dedupe_key(snap: Dict[str, Any]) -> str:
             or ((env or {}).get("message") if isinstance(env, dict) else None),
             "profile_count": snap.get("profile_count")
             or (arts or {}).get("profile_count"),
+            "total_expected": (arts or {}).get("total_expected"),
             "topics_count": (arts or {}).get("topics_count"),
             "progress": snap.get("progress"),
             "twitter_current_round": snap.get("twitter_current_round")

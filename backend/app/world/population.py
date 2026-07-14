@@ -203,11 +203,10 @@ def generate_profiles_from_slice(
         gen = OasisProfileGenerator(graph_id=None)
 
         def _profile_progress(current: int, total: int, msg: str) -> None:
-            # N>1：Cast Sheet 后把准确预期写回 prepare_progress（仅在总数变化时）
+            # N>1：回写预期 / 进度消息 / 细分 stage，供 Step2 SSE 实时展示
             try:
                 t_int = int(total or 0)
-                if t_int <= 0:
-                    return
+                c_int = int(current or 0)
                 shared_parent = os.path.basename(
                     os.path.dirname(os.path.abspath(output_dir))
                 )
@@ -219,13 +218,34 @@ def generate_profiles_from_slice(
                 )
 
                 prep = _read_prepare_progress(shared_parent) or {}
-                prev = int(prep.get("total_expected") or 0)
-                if prev == t_int:
-                    return
-                if not prev or t_int < prev:
-                    _write_prepare_progress(shared_parent, total_expected=t_int)
+                prev_expected = int(prep.get("total_expected") or 0)
+                text = str(msg or "")
+                stage = "profiles"
+                low = text.lower()
+                if "cast" in low or "分角" in text or "规划" in text:
+                    stage = "cast"
+                elif "review" in low or "终审" in text:
+                    stage = "review"
+
+                fields: Dict[str, Any] = {
+                    "stage": stage,
+                    "message": text or prep.get("message"),
+                    "profile_count": max(c_int, int(prep.get("profile_count") or 0)),
+                    "status": "running",
+                }
+                if t_int > 0 and (not prev_expected or t_int <= prev_expected):
+                    fields["total_expected"] = t_int
+                # 进度粗估：Cast/Review 固定区间，生成中按 k/n
+                if stage == "cast":
+                    fields["progress"] = 30
+                elif stage == "review":
+                    fields["progress"] = 80
+                elif t_int > 0:
+                    fields["progress"] = min(75, 35 + int(40 * c_int / t_int))
+
+                _write_prepare_progress(shared_parent, **fields)
             except Exception as e:
-                logger.debug(f"更新 prepare_progress.total_expected 跳过: {e}")
+                logger.debug(f"更新 prepare_progress 跳过: {e}")
 
         oasis_profiles = gen.generate_profiles_from_entities(
             entities,

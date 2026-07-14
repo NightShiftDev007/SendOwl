@@ -98,6 +98,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing') // processing | completed | error
+const statusDetailText = ref('')
 
 // --- Computed Layout Styles ---
 const leftPanelStyle = computed(() => {
@@ -120,7 +121,7 @@ const statusClass = computed(() => {
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
   if (currentStatus.value === 'completed') return 'Completed'
-  return 'Running'
+  return statusDetailText.value || 'Running'
 })
 
 const isSimulating = computed(() => currentStatus.value === 'processing')
@@ -135,8 +136,14 @@ const addLog = (msg) => {
   }
 }
 
-const updateStatus = (status) => {
-  currentStatus.value = status
+const updateStatus = (payload) => {
+  if (payload && typeof payload === 'object') {
+    currentStatus.value = payload.status || 'processing'
+    statusDetailText.value = payload.text || ''
+  } else {
+    currentStatus.value = payload
+    if (payload !== 'processing') statusDetailText.value = ''
+  }
 }
 
 // --- Layout Methods ---

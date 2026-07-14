@@ -849,16 +849,22 @@ class SimulationConfigGenerator:
 - 描述舆论发展方向
 - 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）**
 
+## 硬性数量要求（不满足即判失败）
+- hot_topics：至少 1 个非空关键词，建议 2-5 个
+- narrative_direction：非空字符串，概括舆论发展方向
+- initial_posts：至少 2 条，建议 3-5 条；帖子之间角度/立场应有差异
+- 每条 initial_posts 必须含非空 content 与合法 poster_type
+
 **重要**: poster_type 必须从上面的"可用实体类型"中选择，这样初始帖子才能分配给合适的 Agent 发布。
 例如：官方声明应由 Official/University 类型发布，新闻由 MediaOutlet 发布，学生观点由 Student 发布。
 
 返回JSON格式（不要markdown）：
 {{
-    "hot_topics": ["关键词1", "关键词2", ...],
+    "hot_topics": ["关键词1", "关键词2"],
     "narrative_direction": "<舆论发展方向描述>",
     "initial_posts": [
-        {{"content": "帖子内容", "poster_type": "实体类型（必须从可用类型中选择）"}},
-        ...
+        {{"content": "帖子内容1", "poster_type": "实体类型（必须从可用类型中选择）"}},
+        {{"content": "帖子内容2", "poster_type": "实体类型（必须从可用类型中选择）"}}
     ],
     "platform_dynamics": {{
         "twitter": {{
@@ -883,24 +889,70 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
 - 三权重应和约为 1；突发冲突提高 popularity/viral_threshold 可偏低；慢性政策讨论提高 relevance、echo_chamber 可偏高
 - viral_threshold 建议 3-50；echo_chamber_strength 建议 0.1-0.9"""
 
-        system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
+        system_prompt = (
+            "你是舆论分析专家。返回纯JSON格式。"
+            "必须满足：initial_posts≥2、hot_topics≥1、narrative_direction非空。"
+            "注意 poster_type 必须精确匹配可用实体类型。"
+        )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
 
-        try:
-            result = self._call_llm_with_retry(prompt, system_prompt)
-        except Exception as e:
-            logger.error(f"事件配置LLM生成失败: {e}")
-            raise RuntimeError(f"事件配置 LLM 生成失败（已禁用兜底）: {e}") from e
+        def _quantity_ok(payload: Dict[str, Any]) -> Optional[str]:
+            posts = payload.get("initial_posts") or []
+            topics = [
+                t for t in (payload.get("hot_topics") or [])
+                if str(t or "").strip()
+            ]
+            narrative = (payload.get("narrative_direction") or "").strip()
+            nonempty_posts = [
+                p for p in posts
+                if isinstance(p, dict) and str(p.get("content") or "").strip()
+            ]
+            if len(nonempty_posts) < 2 or len(topics) < 1 or not narrative:
+                return (
+                    "事件配置 LLM 返回无效（需至少 2 条非空初始帖、1 个热点话题、非空叙事方向），"
+                    f"实际 posts={len(nonempty_posts)} topics={len(topics)} narrative={bool(narrative)}"
+                )
+            return None
 
-        posts = result.get("initial_posts") or []
-        topics = result.get("hot_topics") or []
-        narrative = (result.get("narrative_direction") or "").strip()
-        if len(posts) < 2 or len(topics) < 1 or not narrative:
-            raise RuntimeError(
-                "事件配置 LLM 返回无效（需至少 2 条初始帖、1 个热点话题、非空叙事方向），"
-                f"实际 posts={len(posts)} topics={len(topics)} narrative={bool(narrative)}"
+        # 数量校验失败时带反馈自动重试（与 JSON/限流重试正交）
+        max_quantity_attempts = 3
+        last_error: Optional[Exception] = None
+        prev_result: Optional[Dict[str, Any]] = None
+        for attempt in range(max_quantity_attempts):
+            user_prompt = prompt
+            if prev_result is not None and last_error is not None:
+                user_prompt = (
+                    f"{prompt}\n\n"
+                    f"## 上一次输出未通过校验\n"
+                    f"错误：{last_error}\n"
+                    f"上一次输出：\n{json.dumps(prev_result, ensure_ascii=False)[:4000]}\n"
+                    "请补足缺失项（至少 2 条非空初始帖、至少 1 个热点、非空叙事），"
+                    "返回完整合规 JSON，不要省略已有合格字段。"
+                )
+            try:
+                result = self._call_llm_with_retry(user_prompt, system_prompt)
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"事件配置LLM调用失败 (quantity attempt {attempt+1}): {e}"
+                )
+                time.sleep(1 * (attempt + 1))
+                continue
+
+            err = _quantity_ok(result)
+            if err is None:
+                return result
+
+            last_error = RuntimeError(err)
+            prev_result = result
+            logger.warning(
+                f"事件配置数量校验失败 (attempt {attempt+1}/{max_quantity_attempts}): {err}"
             )
-        return result
+            time.sleep(1 * (attempt + 1))
+
+        raise RuntimeError(
+            f"事件配置 LLM 生成失败（已自动重试 {max_quantity_attempts} 次，已禁用兜底）: {last_error}"
+        ) from last_error
     
     def _default_platform_config(self, platform: str) -> PlatformConfig:
         if platform == "twitter":
@@ -1212,6 +1264,7 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
 
 ## 任务
 为每个实体生成活动配置，注意：
+- **硬性覆盖要求**：必须为实体列表中的每一个 agent_id 各返回恰好一条配置，不得遗漏、不得合并、不得新增列表外的 agent_id（本批共 {len(entities)} 条）
 - **时间符合目标用户群体作息**：以下为参考（东八区），请根据模拟场景调整
 - **官方机构**（University/GovernmentAgency）：活跃度低(0.1-0.3)，工作时间(9-17)活动，响应慢(60-240分钟)，影响力高(2.5-3.0)
 - **媒体**（MediaOutlet）：活跃度中(0.4-0.6)，全天活动(8-23)，响应快(5-30分钟)，影响力高(2.0-2.5)
@@ -1222,7 +1275,7 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
 {{
     "agent_configs": [
         {{
-            "agent_id": <必须与输入一致>,
+            "agent_id": <必须与输入列表中的 agent_id 完全一致>,
             "activity_level": <0.0-1.0>,
             "posts_per_hour": <发帖频率>,
             "comments_per_hour": <评论频率>,
@@ -1232,12 +1285,15 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
             "sentiment_bias": <-1.0到1.0>,
             "stance": "<supportive/opposing/neutral/observer>",
             "influence_weight": <影响力权重>
-        }},
-        ...
+        }}
     ]
-}}"""
+}}
+说明：agent_configs 数组长度必须等于 {len(entities)}，且覆盖输入中全部 agent_id。"""
 
-        system_prompt = "你是社交媒体行为分析专家。返回纯JSON，配置需符合模拟场景中目标用户群体的作息习惯。"
+        system_prompt = (
+            "你是社交媒体行为分析专家。返回纯JSON，配置需符合模拟场景中目标用户群体的作息习惯。"
+            f"必须为输入列表中每一个 agent_id 各返回一条配置（共 {len(entities)} 条），不得遗漏。"
+        )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'stance' field value MUST be one of the English strings: 'supportive', 'opposing', 'neutral', 'observer'. All JSON field names and numeric values must remain unchanged. Only natural language text fields should use the specified language."
 
         try:

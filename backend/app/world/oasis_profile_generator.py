@@ -10,6 +10,7 @@ OASIS Agent Profile生成器
 
 import json
 import random
+import re
 import time
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
@@ -105,8 +106,8 @@ class OasisAgentProfile:
             profile["district_adcode"] = self.district_adcode
         if self.profession:
             profile["profession"] = self.profession
-        if self.interested_topics:
-            profile["interested_topics"] = self.interested_topics
+        # 始终写出，避免前端「关联话题数」因缺字段显示 0
+        profile["interested_topics"] = list(self.interested_topics or [])
         
         return profile
     
@@ -147,8 +148,7 @@ class OasisAgentProfile:
             profile["district_adcode"] = self.district_adcode
         if self.profession:
             profile["profession"] = self.profession
-        if self.interested_topics:
-            profile["interested_topics"] = self.interested_topics
+        profile["interested_topics"] = list(self.interested_topics or [])
         
         return profile
     
@@ -342,6 +342,14 @@ class OasisProfileGenerator:
             seed=f"{entity.uuid}:{name}",
         )
         persona = profile_data.get("persona", entity.summary or f"A {entity_type} named {name}.")
+        profession = profile_data.get("profession")
+        topics = self._normalize_interested_topics(
+            profile_data.get("interested_topics"),
+            profession=profession,
+            entity_type=entity_type,
+            entity_summary=entity.summary,
+            bio=profile_data.get("bio"),
+        )
         
         return OasisAgentProfile(
             user_id=user_id,
@@ -363,11 +371,62 @@ class OasisProfileGenerator:
             province_adcode=loc.get("province_adcode") or None,
             city_adcode=loc.get("city_adcode") or None,
             district_adcode=loc.get("district_adcode") or None,
-            profession=profile_data.get("profession"),
-            interested_topics=profile_data.get("interested_topics", []),
+            profession=profession,
+            interested_topics=topics,
             source_entity_uuid=entity.uuid,
             source_entity_type=entity_type,
         )
+
+    @staticmethod
+    def _normalize_interested_topics(
+        raw: Any,
+        *,
+        profession: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_summary: Optional[str] = None,
+        bio: Optional[str] = None,
+    ) -> List[str]:
+        """规范化话题列表；LLM 漏返回时用职业/类型做轻量回填，避免 UI 恒为 0。"""
+        topics: List[str] = []
+        if isinstance(raw, list):
+            topics = [str(t).strip() for t in raw if str(t or "").strip()]
+        elif isinstance(raw, str) and raw.strip():
+            topics = [x.strip() for x in re.split(r"[,，;；/|]", raw) if x.strip()]
+
+        # 过滤过长/像句子的噪声
+        topics = [t for t in topics if 1 < len(t) <= 16]
+        if len(topics) >= 2:
+            return topics[:8]
+
+        fallback: List[str] = []
+        for src in (profession, entity_type):
+            s = str(src or "").strip()
+            # 职业字段过长时取逗号/顿号前的短称
+            if "，" in s or "," in s or "、" in s:
+                s = re.split(r"[,，、]", s)[0].strip()
+            if s and 1 < len(s) <= 16 and s not in fallback:
+                fallback.append(s)
+
+        # 仅从摘要抽短名词，不从整段 bio 切句
+        blob = str(entity_summary or "")[:120]
+        for token in re.findall(r"[\u4e00-\u9fff]{2,6}", blob):
+            if token in fallback or token in topics:
+                continue
+            # 跳过常见虚词碎片
+            if token in ("我们", "他们", "一个", "以及", "因为", "所以", "但是"):
+                continue
+            fallback.append(token)
+            if len(fallback) >= 4:
+                break
+
+        merged = topics + [t for t in fallback if t not in topics]
+        if len(merged) < 2:
+            for extra in ("公共议题", "社会讨论", "本地生活"):
+                if extra not in merged:
+                    merged.append(extra)
+                if len(merged) >= 2:
+                    break
+        return merged[:8]
     
     def _generate_username(self, name: str) -> str:
         """生成用户名"""
@@ -802,6 +861,9 @@ class OasisProfileGenerator:
             "地域（省市区）是人格的一部分：你必须根据给定地名自行推断并写出地域人格，"
             "塑造语感、利益敏感点与政策第一反应；禁止只当地址标签，禁止套用外部模板文案。"
             "必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
+            "硬性失败条件（违反即判失败）：bio 与 persona 都必须是非空字符串；"
+            "禁止返回空壳人设（例如 bio 仅为「实体类型: 实体名」且 persona 过短）；"
+            "interested_topics 必须为含 2-5 个非空关键词的数组（写在 persona 之前，避免被截断丢失）。"
         )
         return f"{base_prompt}\n\n{get_language_instruction()}"
     
@@ -836,10 +898,16 @@ class OasisProfileGenerator:
 上下文信息:
 {context_str}
 
-请生成JSON，包含以下字段:
+请生成JSON，包含以下字段（字段顺序请严格遵守，短字段在前，避免截断丢失）:
 
 1. bio: 社交媒体简介，200字（可点出本地身份）
-2. persona: 详细人设描述（2000字的纯文本），需包含:
+2. interested_topics: 感兴趣话题数组，必须 2-5 个非空关键词（与事件/职业相关）
+3. age: 年龄数字（必须是整数）
+4. gender: 性别，必须是英文: "male" 或 "female"
+5. mbti: MBTI类型（如INTJ、ENFP等）
+6. country: 国家（必须为「中国」）
+7. profession: 职业
+8. persona: 详细人设描述（2000字的纯文本），需包含:
    - 基本信息（年龄、职业、教育背景、所在地）
    - 地域人格（你自行根据「{place}」推断：本地生活如何塑造其语感、利益、通勤/生计与对政策的第一反应；这是人格核心，不是地址备注）
    - 人物背景（重要经历、与事件的关联、社会关系）
@@ -848,12 +916,6 @@ class OasisProfileGenerator:
    - 立场观点（对话题的态度、可能被激怒/感动的内容）
    - 独特特征（口头禅、特殊经历、个人爱好）
    - 个人记忆（人设的重要部分，要介绍这个个体与事件的关联，以及这个个体在事件中的已有动作与反应）
-3. age: 年龄数字（必须是整数）
-4. gender: 性别，必须是英文: "male" 或 "female"
-5. mbti: MBTI类型（如INTJ、ENFP等）
-6. country: 国家（必须为「中国」）
-7. profession: 职业
-8. interested_topics: 感兴趣话题数组
 {location_instruction_for_llm()}
 
 重要:
@@ -862,6 +924,7 @@ class OasisProfileGenerator:
 - {get_language_instruction()} (gender字段必须用英文male/female)
 - 内容要与实体信息保持一致
 - age必须是有效的整数，gender必须是"male"或"female"
+- 硬性要求：bio、persona 均不得为空；interested_topics 必须 2-5 项；禁止空壳（bio 不能只是「{entity_type}: {entity_name}」这类占位，persona 须有实质内容）
 """
 
     def _build_group_persona_prompt(
@@ -895,10 +958,16 @@ class OasisProfileGenerator:
 上下文信息:
 {context_str}
 
-请生成JSON，包含以下字段:
+请生成JSON，包含以下字段（字段顺序请严格遵守，短字段在前，避免截断丢失）:
 
 1. bio: 官方账号简介，200字，专业得体
-2. persona: 详细账号设定描述（2000字的纯文本），需包含:
+2. interested_topics: 关注领域数组，必须 2-5 个非空关键词（与机构职能/事件相关）
+3. age: 固定填30（机构账号的虚拟年龄）
+4. gender: 固定填"other"（机构账号使用other表示非个人）
+5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
+6. country: 国家（必须为「中国」）
+7. profession: 机构职能描述
+8. persona: 详细账号设定描述（2000字的纯文本），需包含:
    - 机构基本信息（正式名称、机构性质、成立背景、主要职能、辖区/属地）
    - 地域人格（你自行根据「{place}」推断：辖区舆论场如何塑造其发言风格与利益立场）
    - 账号定位（账号类型、目标受众、核心功能）
@@ -907,12 +976,6 @@ class OasisProfileGenerator:
    - 立场态度（对核心话题的官方立场、面对争议的处理方式）
    - 特殊说明（代表的群体画像、运营习惯）
    - 机构记忆（机构人设的重要部分，要介绍这个机构与事件的关联，以及这个机构在事件中的已有动作与反应）
-3. age: 固定填30（机构账号的虚拟年龄）
-4. gender: 固定填"other"（机构账号使用other表示非个人）
-5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
-6. country: 国家（必须为「中国」）
-7. profession: 机构职能描述
-8. interested_topics: 关注领域数组
 {location_instruction_for_llm()}
 
 重要:
@@ -920,7 +983,8 @@ class OasisProfileGenerator:
 - persona必须是一段连贯的文字描述，不要使用换行符
 - {get_language_instruction()} (gender字段必须用英文"other")
 - age必须是整数30，gender必须是字符串"other"
-- 机构账号发言要符合其身份定位"""
+- 机构账号发言要符合其身份定位
+- 硬性要求：bio、persona 均不得为空；interested_topics 必须 2-5 项；禁止空壳（bio 不能只是「{entity_type}: {entity_name}」这类占位，persona 须有实质内容）"""
     
     def _generate_profile_rule_based(
         self,
@@ -1067,7 +1131,9 @@ class OasisProfileGenerator:
         system_prompt = (
             "你是舆论模拟的分角导演。请为候选实体输出 Cast Sheet（JSON）。"
             "要求：1) 每个输入实体都必须出现在 agents 数组；"
-            "2) 近似/重复实体保留多人，用同一 similar_group 标注，组内 role_slot/stance_axis/voice 必须互不相同；"
+            "2) 近似/重复实体保留多人，用同一 similar_group 标注；"
+            "同一 similar_group 内任意两人的 role_slot 与 stance_axis 的组合必须互不相同"
+            "（仅 voice 不同不算差异，必须在 role_slot 或 stance_axis 至少一项上错开）；"
             "3) 不适合做社交媒体 Agent 的实体（纯地点、抽象概念、政策文件等）可设 excluded=true 并给 exclude_reason；"
             "4) 不得扩编（不得新增实体）；保留至少 1 个非 excluded；"
             "5) 只返回 JSON 对象，不要 markdown。"
@@ -1098,13 +1164,29 @@ class OasisProfileGenerator:
         )
 
         last_error: Optional[Exception] = None
+        prev_raw: Optional[Dict[str, Any]] = None
         for attempt in range(max_attempts):
+            raw: Optional[Dict[str, Any]] = None
             try:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ]
+                # 带着上一次的输出和校验错误重试，只让模型修正违规处，避免盲目重跑撞同样的错
+                if prev_raw is not None and last_error is not None:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f"你上一次输出的 Cast Sheet JSON 未通过校验，错误：{last_error}\n"
+                                "上一次输出：\n"
+                                f"{json.dumps(prev_raw, ensure_ascii=False)[:6000]}\n"
+                                "请在保持其余内容不变的前提下修正违规部分，重新返回完整 JSON。"
+                            ),
+                        }
+                    )
                 raw = client.chat_json(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    messages=messages,
                     temperature=0.3,
                     max_tokens=8192,
                 )
@@ -1112,8 +1194,25 @@ class OasisProfileGenerator:
                 return sheet
             except Exception as e:
                 last_error = e
+                if isinstance(raw, dict):
+                    prev_raw = raw
                 logger.warning(f"Cast Sheet 规划失败 (attempt {attempt+1}): {e}")
                 time.sleep(1 * (attempt + 1))
+
+        # 严格校验多次未过：部分打捞——保留合法条目，剔除非法条目
+        # （未覆盖的实体只是没有分角锚点，仍会正常生成人设）
+        if isinstance(prev_raw, dict):
+            try:
+                sheet = self._validate_cast_sheet(
+                    prev_raw, entity_uuids, entities, salvage=True
+                )
+                logger.warning(
+                    f"Cast Sheet 严格校验未通过，已部分打捞：覆盖 "
+                    f"{len(sheet['agents'])}/{len(entities)} 个实体，其余无分角锚点"
+                )
+                return sheet
+            except Exception as e2:
+                logger.warning(f"Cast Sheet 部分打捞失败: {e2}")
 
         raise RuntimeError(f"Cast Sheet 规划失败（已重试 {max_attempts} 次）: {last_error}") from last_error
 
@@ -1122,7 +1221,12 @@ class OasisProfileGenerator:
         raw: Dict[str, Any],
         entity_uuids: set,
         entities: List[EntityNode],
+        salvage: bool = False,
     ) -> Dict[str, Any]:
+        """
+        salvage=False：严格模式，任何违规抛错（供重试反馈）。
+        salvage=True：打捞模式，保留合法条目、剔除非法条目，尽量不抛错。
+        """
         agents = raw.get("agents")
         if not isinstance(agents, list) or not agents:
             raise ValueError("Cast Sheet 缺少 agents")
@@ -1136,12 +1240,15 @@ class OasisProfileGenerator:
                 continue  # 丢弃未知 uuid
             by_uuid[uid] = row
 
+        if not by_uuid:
+            raise ValueError("Cast Sheet 无任何合法实体条目")
+
         missing = entity_uuids - set(by_uuid.keys())
-        if missing:
+        if missing and not salvage:
             raise ValueError(f"Cast Sheet 未覆盖实体: {list(missing)[:5]}")
 
-        # similar_group 槽位互斥
-        group_slots: Dict[str, List[tuple]] = {}
+        # similar_group 槽位互斥：撞车时本地自动错开，不再抛错重调 LLM
+        group_slot_owners: Dict[str, Dict[tuple, List[str]]] = {}
         for uid, row in by_uuid.items():
             if row.get("excluded"):
                 continue
@@ -1153,15 +1260,35 @@ class OasisProfileGenerator:
                 str(row.get("role_slot") or "").strip().lower(),
                 str(row.get("stance_axis") or "").strip().lower(),
             )
-            group_slots.setdefault(key, []).append(slot)
-
-        for g, slots in group_slots.items():
-            if len(slots) != len(set(slots)):
-                raise ValueError(f"similar_group={g} 内存在重复 role_slot/stance_axis")
+            owners = group_slot_owners.setdefault(key, {})
+            names = owners.setdefault(slot, [])
+            name = str(row.get("name") or uid)
+            names.append(name)
+            if len(names) == 1:
+                continue
+            # 与组内首个占位者撞槽位：改写立场侧重 + 追加 must_not 差异化约束
+            first_name = names[0]
+            base_stance = str(row.get("stance_axis") or "").strip()
+            row["stance_axis"] = (
+                f"{base_stance}（同组变体{len(names)}：立场侧重须与{first_name}明显不同）"
+            )
+            must_not = list(row.get("must_not") or [])
+            must_not.append(f"与同组「{first_name}」的立场表述、经历、口吻雷同")
+            row["must_not"] = must_not
+            logger.warning(
+                f"Cast Sheet 本地修复: similar_group={key} 内 {name} 与 {first_name} "
+                f"槽位重复，已自动错开立场侧重"
+            )
 
         kept = [r for r in by_uuid.values() if not r.get("excluded")]
         if len(kept) < 1:
-            raise ValueError("Cast Sheet 裁剪后无人保留（至少保留 1 人）")
+            if salvage:
+                # 打捞模式：模型把所有人都 excluded 了不可信，忽略其裁剪意见
+                for row in by_uuid.values():
+                    row["excluded"] = False
+                    row["exclude_reason"] = ""
+            else:
+                raise ValueError("Cast Sheet 裁剪后无人保留（至少保留 1 人）")
         if len(kept) > len(entities):
             raise ValueError("Cast Sheet 不得扩编")
 
@@ -1301,12 +1428,17 @@ class OasisProfileGenerator:
         if use_llm:
             if progress_callback:
                 progress_callback(0, max(len(entities), 1), t("progress.planningCastSheet"))
-            cast_sheet = self.plan_cast_sheet(entities, simulation_requirement=simulation_requirement)
-            logger.info(
-                f"Cast Sheet 完成: theme={cast_sheet.get('cast_theme')!r}, "
-                f"kept={len(entities) - len(cast_sheet.get('excluded') or [])}, "
-                f"excluded={len(cast_sheet.get('excluded') or [])}"
-            )
+            try:
+                cast_sheet = self.plan_cast_sheet(entities, simulation_requirement=simulation_requirement)
+                logger.info(
+                    f"Cast Sheet 完成: theme={cast_sheet.get('cast_theme')!r}, "
+                    f"kept={len(entities) - len(cast_sheet.get('excluded') or [])}, "
+                    f"excluded={len(cast_sheet.get('excluded') or [])}"
+                )
+            except Exception as e:
+                # 降级：Cast Sheet 不做关键路径门卫。失败则退回
+                # 「无分角表 + 批间摘要 + 终审」路径继续生成，不终止 prepare
+                logger.warning(f"Cast Sheet 规划失败，降级为无分角表生成: {e}")
 
         agents_by_uuid: Dict[str, Dict[str, Any]] = cast_sheet.get("agents_by_uuid") or {}
         excluded_list: List[Dict[str, Any]] = list(cast_sheet.get("excluded") or [])
@@ -1717,8 +1849,7 @@ class OasisProfileGenerator:
             # 可选字段
             if profile.profession:
                 item["profession"] = profile.profession
-            if profile.interested_topics:
-                item["interested_topics"] = profile.interested_topics
+            item["interested_topics"] = list(profile.interested_topics or [])
             
             data.append(item)
         

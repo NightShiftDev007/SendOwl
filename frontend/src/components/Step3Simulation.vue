@@ -691,6 +691,37 @@ const onSelectRun = (row) => {
   }
 }
 
+function emitStatusLabel(data) {
+  const cur = Math.max(
+    Number(data?.twitter_current_round || 0),
+    Number(data?.reddit_current_round || 0),
+  )
+  const tot = Number(data?.total_rounds || 0)
+  let scenarioName = ''
+  for (const sc of runMatrix.value || []) {
+    const hit = (sc.runs || []).find(
+      (r) => r.run_id === selectedRunId.value || r.sim_id === selectedSimId.value,
+    )
+    if (hit) {
+      scenarioName = sc.scenario_name || sc.kind || ''
+      break
+    }
+  }
+  if (!scenarioName) scenarioName = t('common.running')
+  if (tot > 0) {
+    emit('update-status', {
+      status: 'processing',
+      text: t('step3.statusRunningRound', {
+        scenario: scenarioName,
+        current: cur,
+        total: tot,
+      }),
+    })
+  } else {
+    emit('update-status', { status: 'processing', text: scenarioName })
+  }
+}
+
 const applyRunStatus = (data) => {
   if (!data) return
 
@@ -739,6 +770,9 @@ const applyRunStatus = (data) => {
     prevRedditRound.value = data.reddit_current_round
   }
 
+  // 顶栏：方案名 · Rk/n
+  emitStatusLabel(data)
+
   const isCompleted =
     data.runner_status === 'completed' ||
     data.runner_status === 'stopped' ||
@@ -753,7 +787,7 @@ const applyRunStatus = (data) => {
     addLog(t('log.simCompleted'))
     phase.value = 2
     stopPolling()
-    emit('update-status', 'completed')
+    emit('update-status', { status: 'completed' })
     const decId = props.decisionId || (
       String(props.simulationId || '').startsWith('dec_') ? props.simulationId : ''
     )

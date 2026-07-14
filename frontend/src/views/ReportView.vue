@@ -87,6 +87,7 @@ const graphData = ref(null)
 const graphLoading = ref(false)
 const systemLogs = ref([])
 const currentStatus = ref('processing')
+const statusDetailText = ref('')
 
 const leftPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '100%', opacity: 1, transform: 'translateX(0)' }
@@ -105,7 +106,7 @@ const statusClass = computed(() => currentStatus.value)
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
   if (currentStatus.value === 'completed') return 'Completed'
-  return 'Generating'
+  return statusDetailText.value || 'Generating'
 })
 
 const addLog = (msg) => {
@@ -117,8 +118,14 @@ const addLog = (msg) => {
   }
 }
 
-const updateStatus = (status) => {
-  currentStatus.value = status
+const updateStatus = (payload) => {
+  if (payload && typeof payload === 'object') {
+    currentStatus.value = payload.status || 'processing'
+    statusDetailText.value = payload.text || ''
+  } else {
+    currentStatus.value = payload
+    if (payload !== 'processing') statusDetailText.value = ''
+  }
 }
 
 const toggleMaximize = (target) => {

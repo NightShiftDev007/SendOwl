@@ -30,12 +30,12 @@
               run.status,
               { selected: run.run_id === selectedRunId || run.sim_id === selectedSimId },
             ]"
-            :title="`${run.run_id} · seed ${run.seed} · ${run.status}`"
+            :title="pillTitle(run)"
             @click="select(run, sc)"
           >
             <span class="pill-idx">R{{ idx + 1 }}</span>
             <span class="pill-seed mono">{{ run.seed }}</span>
-            <span class="pill-status">{{ shortStatus(run.status) }}</span>
+            <span class="pill-status">{{ pillStatus(run) }}</span>
           </button>
         </div>
       </div>
@@ -85,6 +85,32 @@ function shortStatus(status) {
   if (s === 'failed' || s === 'error') return 'fail'
   if (s === 'ready') return 'ready'
   return s.slice(0, 5) || '—'
+}
+
+function pillStatus(run) {
+  const s = String(run?.status || '').toLowerCase()
+  const cur = Number(run?.current_round || 0)
+  const tot = Number(run?.total_rounds || 0)
+  if ((s === 'running' || s === 'starting') && tot > 0) {
+    return `${cur}/${tot}`
+  }
+  if ((s === 'completed' || s === 'done') && tot > 0) {
+    return `${tot}/${tot}`
+  }
+  return shortStatus(run?.status)
+}
+
+function pillTitle(run) {
+  const parts = [
+    run?.run_id,
+    `seed ${run?.seed}`,
+    run?.status,
+  ]
+  const cur = Number(run?.current_round || 0)
+  const tot = Number(run?.total_rounds || 0)
+  if (tot > 0) parts.push(`round ${cur}/${tot}`)
+  if (run?.error) parts.push(String(run.error))
+  return parts.filter(Boolean).join(' · ')
 }
 
 function select(run, sc) {

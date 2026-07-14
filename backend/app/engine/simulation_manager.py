@@ -994,6 +994,20 @@ class SimulationManager:
                 "done",
             }
             if runs and all((r.get("status") or "") in done_statuses for r in runs):
+                # 弱初始激活不得解锁 Step3：与 scenario_runner 门槛一致
+                try:
+                    from app.engine.scenario_runner import _event_config_is_strong
+
+                    cfg = self.get_simulation_config(sim_id) or {}
+                    if not _event_config_is_strong(cfg.get("event_config")):
+                        registry.update_decision(decision_id, status="prepare_failed")
+                        logger.warning(
+                            f"sync_prepare_to_registry: decision {decision_id} "
+                            f"event_config 弱 → prepare_failed"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"sync_prepare_to_registry event check skip: {e}")
                 registry.update_decision(decision_id, status="prepared")
                 logger.info(
                     f"sync_prepare_to_registry: decision {decision_id} -> prepared"

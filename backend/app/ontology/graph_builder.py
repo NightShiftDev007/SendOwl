@@ -61,7 +61,8 @@ class GraphBuilderService:
         graph_name: str = "MiroFish Graph",
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-        batch_size: int = 3
+        batch_size: int = 3,
+        extra_metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         异步构建图谱
@@ -77,14 +78,17 @@ class GraphBuilderService:
         Returns:
             任务ID
         """
-        # 创建任务
+        # 创建任务（metadata 带 ontology_id，供 SSE 同帧附带 graph 快照）
+        metadata = {
+            "graph_name": graph_name,
+            "chunk_size": chunk_size,
+            "text_length": len(text),
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
         task_id = self.task_manager.create_task(
             task_type="graph_build",
-            metadata={
-                "graph_name": graph_name,
-                "chunk_size": chunk_size,
-                "text_length": len(text),
-            }
+            metadata=metadata,
         )
         
         # Capture locale before spawning background thread
@@ -524,10 +528,10 @@ class GraphBuilderService:
                     # 忽略单个查询错误，继续
                     pass
             
-            elapsed = int(time.time() - start_time)
+            # 耗时秒数不再拼进 message，由前端本地计时展示，避免依赖推帧节奏一卡一卡
             if progress_callback:
                 progress_callback(
-                    t('progress.zepProcessing', completed=completed_count, total=total_episodes, pending=len(pending_episodes), elapsed=elapsed),
+                    t('progress.zepProcessing', completed=completed_count, total=total_episodes, pending=len(pending_episodes)),
                     completed_count / total_episodes if total_episodes > 0 else 0
                 )
             

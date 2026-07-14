@@ -134,7 +134,15 @@ const statusClass = computed(() => {
 const statusText = computed(() => {
   if (error.value) return 'Error'
   if (currentPhase.value >= 2) return 'Ready'
-  if (currentPhase.value === 1) return 'Building Graph'
+  if (currentPhase.value === 1) {
+    const pct = buildProgress.value?.progress
+    const msg = buildProgress.value?.message
+    if (msg) {
+      const short = String(msg).length > 36 ? `${String(msg).slice(0, 36)}…` : msg
+      return Number.isFinite(pct) ? `${pct}% · ${short}` : short
+    }
+    return Number.isFinite(pct) ? `Building Graph ${pct}%` : 'Building Graph'
+  }
   if (currentPhase.value === 0) return 'Generating Ontology'
   return 'Initializing'
 })
@@ -390,6 +398,7 @@ const applyGraphPayload = (data) => {
 }
 
 const fetchGraphData = async () => {
+  if (!ontologyId.value) return
   try {
     const gRes = await getOntologyGraph(ontologyId.value)
     if (gRes?.success && gRes.data) {
@@ -399,6 +408,25 @@ const fetchGraphData = async () => {
     console.warn('Graph fetch error:', err)
   }
 }
+
+// 建图期间兜底轮询图谱（SSE 帧不带 graph 时也能逐步显示实体）
+let graphRefreshTimer = null
+const stopGraphRefresh = () => {
+  if (graphRefreshTimer) {
+    clearInterval(graphRefreshTimer)
+    graphRefreshTimer = null
+  }
+}
+watch(currentPhase, (phase) => {
+  if (phase === 1) {
+    if (!graphRefreshTimer) {
+      fetchGraphData()
+      graphRefreshTimer = setInterval(fetchGraphData, 10000)
+    }
+  } else {
+    stopGraphRefresh()
+  }
+})
 
 const startPollingTask = (taskId) => {
   stopPolling()
@@ -626,6 +654,7 @@ watch(
 
 onUnmounted(() => {
   stopPolling()
+  stopGraphRefresh()
 })
 </script>
 

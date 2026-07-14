@@ -216,6 +216,7 @@ def build_graph(
             graph_name=ont.get("name") or ontology_id,
             chunk_size=Config.DEFAULT_CHUNK_SIZE,
             chunk_overlap=Config.DEFAULT_CHUNK_OVERLAP,
+            extra_metadata={"ontology_id": ontology_id},
         )
         registry.update_ontology(
             ontology_id, status="building", build_task_id=task_id
@@ -234,6 +235,7 @@ def build_graph(
         text=text,
         ontology=schema,
         graph_name=ont.get("name") or ontology_id,
+        extra_metadata={"ontology_id": ontology_id},
     )
     tm = TaskManager()
     import time

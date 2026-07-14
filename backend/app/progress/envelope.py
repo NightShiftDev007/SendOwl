@@ -39,6 +39,19 @@ def digest_profiles(profiles: Optional[List[Any]], limit: int = DIGEST_LIMIT) ->
         if not isinstance(topics, list):
             topics = []
         topics = [str(t) for t in topics[:6] if t]
+        if not topics:
+            try:
+                from app.world.oasis_profile_generator import OasisProfileGenerator
+
+                topics = OasisProfileGenerator._normalize_interested_topics(
+                    None,
+                    profession=p.get("profession"),
+                    entity_type=p.get("entity_type") or p.get("source_entity_type"),
+                    entity_summary=p.get("persona") or bio,
+                    bio=bio,
+                )[:6]
+            except Exception:
+                topics = []
         out.append(
             {
                 "name": p.get("name") or p.get("username") or "",

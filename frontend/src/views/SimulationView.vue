@@ -110,10 +110,12 @@ const statusClass = computed(() => {
   return currentStatus.value
 })
 
+const statusDetailText = ref('')
+
 const statusText = computed(() => {
   if (currentStatus.value === 'error') return 'Error'
-  if (currentStatus.value === 'completed') return 'Ready'
-  return 'Preparing'
+  if (currentStatus.value === 'completed') return statusDetailText.value || 'Ready'
+  return statusDetailText.value || 'Preparing'
 })
 
 // --- Helpers ---
@@ -126,8 +128,14 @@ const addLog = (msg) => {
   }
 }
 
-const updateStatus = (status) => {
-  currentStatus.value = status
+const updateStatus = (payload) => {
+  if (payload && typeof payload === 'object') {
+    currentStatus.value = payload.status || 'processing'
+    statusDetailText.value = payload.text || ''
+  } else {
+    currentStatus.value = payload
+    if (payload !== 'processing') statusDetailText.value = ''
+  }
 }
 
 // --- Layout Methods ---

@@ -8,6 +8,7 @@ import { reactive } from 'vue'
 import { taskRoute } from '../utils/taskRoute'
 import { getDecision } from '../api/decision'
 import { getReport, resolveReportId } from '../api/report'
+import { getSimulationConfig } from '../api/simulation'
 
 const STORAGE_KEY = 'adc_workflow_ctx'
 
@@ -124,11 +125,20 @@ export function touchWorkflowStep(step, ids = {}) {
  * @param {object} data getDecision 返回的 data
  * @param {{ hasReport?: boolean }} [extra]
  */
+function isStrongEventConfig(eventConfig) {
+  if (!eventConfig || typeof eventConfig !== 'object') return false
+  const posts = (eventConfig.initial_posts || []).filter(
+    (p) => p && String(p.content || '').trim(),
+  )
+  const topics = (eventConfig.hot_topics || []).filter((t) => String(t || '').trim())
+  const narrative = String(eventConfig.narrative_direction || '').trim()
+  return posts.length >= 2 && topics.length >= 1 && Boolean(narrative)
+}
+
 export function inferMaxReachedFromDecisionPayload(data, extra = {}) {
-  const dec = data?.decision || data || {}
-  const status = String(
-    dec.status || data?.envelope?.status || data?.envelope?.raw_status || '',
-  ).toLowerCase()
+  // 只用原始决策状态；envelope.status 可能把 prepared 映射成 completed，会误解锁
+  const dec = data?.decision || {}
+  const status = String(dec.status || data?.status || '').toLowerCase()
   const matrix = data?.matrix || []
   const runs = matrix.flatMap((s) => s.runs || [])
   const hasOntology = Boolean(dec.ontology_id)
@@ -139,18 +149,38 @@ export function inferMaxReachedFromDecisionPayload(data, extra = {}) {
       String(r?.status || '').toLowerCase() === 'completed' ||
       r?.has_metrics === true,
   )
+  // 真正开跑过（不含 prepare 后的 ready）
+  const anySimStarted = runs.some((r) =>
+    ['running', 'failed', 'stopped', 'completed', 'timeout', 'stalled'].includes(
+      String(r?.status || '').toLowerCase(),
+    ),
+  )
   const hasReport = Boolean(extra.hasReport)
+  // 默认偏保守：未显式确认 eventReady 时，不得凭 prepared 解锁 Step3
+  const eventReady = extra.eventReady === true
 
-  // 有可用报告 → 互动
-  if (hasReport) return 5
-  // 推演整体完成（或至少有完成 run）→ 可进报告；勿因空壳 sim_id 提前解锁
+  // 有可用报告 → 互动（仍要求至少推演过）
+  if (hasReport && (anyCompletedRun || status === 'completed')) return 5
+  // 推演整体完成（或至少有完成 run）→ 可进报告
   if (status === 'completed' || (status === 'failed' && anyCompletedRun)) return 4
-  if (status === 'running' || anyRunning) return 3
-  if (status === 'prepared') return 3
+  // 正在推演 / 已开跑 → Step3
+  if (status === 'running' || anyRunning || anySimStarted) return 3
+  // 环境已准备：必须初始激活合格才解锁 Step3
+  if (status === 'prepared') return eventReady ? 3 : 2
   if (status === 'preparing' || status === 'prepare_failed') return 2
-  if (status === 'failed' && !anyCompletedRun) return 3
+  if (status === 'failed' && !anyCompletedRun) return eventReady ? 3 : 2
   if (hasOntology || hasScenarios || status === 'created') return 2
   return 1
+}
+
+/** Step2 检测到弱编排/失败时立刻压顶栏上限（不必等下一次 sync） */
+export function capWorkflowMaxReached(maxStep) {
+  const cap = Math.max(1, Math.min(5, Number(maxStep) || 1))
+  if (state.serverMaxReached == null || Number(state.serverMaxReached) > cap) {
+    state.serverMaxReached = cap
+    state.updatedAt = Date.now()
+  }
+  return state
 }
 
 /** 顶栏是否可点：以服务端进度为准；当前页始终可点，避免拉取中闪锁 */
@@ -192,35 +222,9 @@ export async function syncWorkflowFromServer(decisionId) {
       const data = res?.data || res
       if (!data) return state
 
-      let hasReport = false
-      try {
-        const rid = await resolveReportId(id)
-        if (rid && String(rid).startsWith('report_')) {
-          hasReport = true
-          state.reportId = rid
-        } else {
-          // 无独立 report_* 时：对比/叙事正文也算「有报告」，可进互动
-          const rep = await getReport(id)
-          const d = rep?.data || {}
-          const md =
-            d.markdown_content ||
-            d.report?.markdown ||
-            d.markdown ||
-            ''
-          if (String(md).trim().length > 40) {
-            hasReport = true
-            if (d.report_id && String(d.report_id).startsWith('report_')) {
-              state.reportId = d.report_id
-            }
-          }
-        }
-      } catch (_) {
-        /* ignore */
-      }
-
-      const inferred = inferMaxReachedFromDecisionPayload(data, { hasReport })
       const dec = data.decision || {}
-      const status = String(dec.status || data?.envelope?.status || '').toLowerCase()
+      // 禁止用 envelope 映射状态（prepared→completed 会误解锁）
+      const status = String(dec.status || data?.status || '').toLowerCase()
       // 仅取「已完成」run 的 sim，避免空壳 sim 误导下游
       const simId =
         (data.matrix || [])
@@ -237,6 +241,54 @@ export async function syncWorkflowFromServer(decisionId) {
           .map((r) => r.sim_id)
           .find((x) => x && String(x).startsWith('sim_')) ||
         ''
+
+      // 默认 false：只有读到强 event_config 才解锁 Step3
+      let eventReady = false
+      if (status === 'prepare_failed' || status === 'preparing') {
+        eventReady = false
+      } else if (simId) {
+        try {
+          const cfgRes = await getSimulationConfig(simId)
+          const cfg = cfgRes?.data || cfgRes || {}
+          eventReady = isStrongEventConfig(cfg.event_config)
+        } catch (_) {
+          eventReady = false
+        }
+      }
+
+      // 先按决策状态算基础可达步骤；只有推演已有完成结果（>=4）才探测报告。
+      // 否则 getReport 会退回 compare 接口——它对新决策也会即时生成模板报告，
+      // 导致 hasReport 误判为 true、顶栏全解锁。
+      const baseInferred = inferMaxReachedFromDecisionPayload(data, { eventReady })
+      let hasReport = false
+      if (baseInferred >= 4) {
+        try {
+          const rid = await resolveReportId(id)
+          if (rid && String(rid).startsWith('report_')) {
+            hasReport = true
+            state.reportId = rid
+          } else {
+            // 无独立 report_* 时：对比/叙事正文也算「有报告」，可进互动
+            const rep = await getReport(id)
+            const d = rep?.data || {}
+            const md =
+              d.markdown_content ||
+              d.report?.markdown ||
+              d.markdown ||
+              ''
+            if (String(md).trim().length > 40) {
+              hasReport = true
+              if (d.report_id && String(d.report_id).startsWith('report_')) {
+                state.reportId = d.report_id
+              }
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      const inferred = inferMaxReachedFromDecisionPayload(data, { hasReport, eventReady })
 
       if (state.decisionId && state.decisionId !== id) {
         return state
