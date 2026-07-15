@@ -614,6 +614,9 @@ def trash_decision(decision_id: str, *, cascade_ontology: bool = True) -> bool:
 
     cascade_ontology=True（用户删任务）时：若该本体已无其它活跃决策，连同本体一起软删。
     cascade_ontology=False 用于「一本体一活跃决策」替换流程，避免本体被误软删。
+
+    入回收站后挂起在途推演/报告/prepare，crash recovery 不再自动续跑；
+    用户须从任务内显式重试或重新走流程。
     """
     dec = get_decision(decision_id)
     if not dec:
@@ -626,6 +629,17 @@ def trash_decision(decision_id: str, *, cascade_ontology: bool = True) -> bool:
         conn.execute(
             "UPDATE decisions SET trashed_at = ?, updated_at = ? WHERE id = ?",
             (now, now, decision_id),
+        )
+    try:
+        from app.progress.suspend import suspend_decision_work
+
+        suspend_decision_work(decision_id)
+    except Exception:
+        # 软删已成功；挂起失败不应回滚，仅记日志
+        import logging
+
+        logging.getLogger("adc.ontology.registry").exception(
+            "suspend_decision_work failed decision=%s", decision_id
         )
     if cascade_ontology and ontology_id:
         still_active = [
@@ -641,6 +655,16 @@ def trash_decision(decision_id: str, *, cascade_ontology: bool = True) -> bool:
                         "UPDATE ontologies SET trashed_at = ?, updated_at = ? WHERE id = ?",
                         (now, now, ontology_id),
                     )
+                try:
+                    from app.progress.suspend import suspend_ontology_work
+
+                    suspend_ontology_work(ontology_id)
+                except Exception:
+                    import logging
+
+                    logging.getLogger("adc.ontology.registry").exception(
+                        "suspend_ontology_work failed ontology=%s", ontology_id
+                    )
     return True
 
 
@@ -649,6 +673,11 @@ def trash_ontology(ontology_id: str) -> bool:
     ont = get_ontology(ontology_id)
     if not ont:
         return False
+    to_suspend = [
+        d["id"]
+        for d in list_decisions(include_trashed=False)
+        if d.get("ontology_id") == ontology_id and d.get("id")
+    ]
     now = _utc_now()
     with connection() as conn:
         if not _is_trashed(ont):
@@ -663,6 +692,18 @@ def trash_ontology(ontology_id: str) -> bool:
             WHERE ontology_id = ? AND (trashed_at IS NULL OR trashed_at = '')
             """,
             (now, now, ontology_id),
+        )
+    try:
+        from app.progress.suspend import suspend_decision_work, suspend_ontology_work
+
+        suspend_ontology_work(ontology_id)
+        for did in to_suspend:
+            suspend_decision_work(did)
+    except Exception:
+        import logging
+
+        logging.getLogger("adc.ontology.registry").exception(
+            "suspend after trash_ontology failed ontology=%s", ontology_id
         )
     return True
 
@@ -743,6 +784,7 @@ def purge_decision(decision_id: str) -> bool:
     """彻底删除决策及其 runs / 场景 / 磁盘产物。
 
     若本体已无任何决策引用（含回收站），一并 purge_ontology 清除孤儿本体。
+    删除前再次挂起/终止在途工作，避免仅清磁盘后后台线程仍跑。
     """
     import os
 
@@ -751,6 +793,17 @@ def purge_decision(decision_id: str) -> bool:
     dec = get_decision(decision_id)
     if not dec:
         return False
+
+    try:
+        from app.progress.suspend import suspend_decision_work
+
+        suspend_decision_work(decision_id, reason="任务已彻底删除")
+    except Exception:
+        import logging
+
+        logging.getLogger("adc.ontology.registry").exception(
+            "purge 前 suspend 失败 decision=%s", decision_id
+        )
 
     ontology_id = dec.get("ontology_id") or ""
     runs = list_runs_for_decision(decision_id)
@@ -768,6 +821,29 @@ def purge_decision(decision_id: str) -> bool:
     _rm_path(os.path.join(Config.REPORTS_DIR, decision_id))
     for name in (f"{decision_id}.json", f"{decision_id}.md"):
         _rm_path(os.path.join(Config.REPORTS_DIR, name))
+
+    # 清掉挂在该决策 sims 上的 report_* 目录
+    try:
+        from app.progress.suspend import collect_sim_ids
+        from app.decision.report_agent import ReportManager
+
+        sim_ids = collect_sim_ids(decision_id)
+        reports_root = Config.REPORTS_DIR
+        if os.path.isdir(reports_root):
+            for name in os.listdir(reports_root):
+                if not name.startswith("report_"):
+                    continue
+                meta = ReportManager.get_generate_task_meta(name) or {}
+                if str(meta.get("decision_id") or "") == decision_id or (
+                    meta.get("simulation_id") and str(meta.get("simulation_id")) in sim_ids
+                ):
+                    _rm_path(os.path.join(reports_root, name))
+    except Exception:
+        import logging
+
+        logging.getLogger("adc.ontology.registry").exception(
+            "purge 清理 report 目录失败 decision=%s", decision_id
+        )
 
     with connection() as conn:
         for r in runs:

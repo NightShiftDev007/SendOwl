@@ -156,6 +156,11 @@ def generate_report():
                 report_id,
                 task_id,
                 simulation_id=simulation_id,
+                decision_id=(
+                    getattr(state, "project_id", None)
+                    if str(getattr(state, "project_id", "") or "").startswith("dec_")
+                    else None
+                ),
             )
         except Exception as e:
             logger.warning(f"保存 report generate_task 失败: {e}")

@@ -1278,7 +1278,13 @@ const applyDecisionPrepareEnvelope = async (env, raw, { done = false } = {}) => 
   if (['prepare_failed', 'failed', 'error'].includes(status)) {
     stopDecisionPrepareWatch()
     addLog(t('log.prepareFailed', { error: '环境准备失败，请重试' }))
-    stepFlags.value.profiles = 'failed'
+    // 人设已有时不要误标 Step02 失败（多方案常见卡在初始激活）
+    if (hasProfiles.value || profiles.value.length > 0) {
+      stepFlags.value.profiles = 'ok'
+      stepFlags.value.events = 'failed'
+    } else {
+      stepFlags.value.profiles = 'failed'
+    }
     emit('update-status', 'error')
     return
   }
@@ -1814,10 +1820,28 @@ const pollPrepareStatus = async () => {
         else if (stage === 'platform_config') stepFlags.value.platform = 'failed'
         else if (stage === 'event_config') stepFlags.value.events = 'failed'
         else {
-          // 全量失败：按当前进度标记
-          if (phase.value <= 1) stepFlags.value.profiles = 'failed'
-          else if (phase.value === 2) stepFlags.value.platform = 'failed'
-          else stepFlags.value.events = 'failed'
+          // 全量失败：按产物归因，避免人设已成功却被标成 profiles failed
+          const profilesOk =
+            hasProfiles.value ||
+            stepFlags.value.profiles === 'ok' ||
+            profiles.value.length > 0
+          const platformOk = !!(
+            simulationConfig.value?.time_config &&
+            ((simulationConfig.value?.agent_configs || []).length > 0 || profilesOk)
+          )
+          const eventsOk =
+            stepFlags.value.events === 'ok' ||
+            (simulationConfig.value?.event_config && !isWeakEventConfig.value)
+
+          if (!profilesOk) {
+            stepFlags.value.profiles = 'failed'
+          } else if (!platformOk) {
+            stepFlags.value.platform = 'failed'
+          } else if (!eventsOk) {
+            stepFlags.value.events = 'failed'
+          } else {
+            stepFlags.value.events = 'failed'
+          }
         }
         stopPolling()
         stopProfilesPolling()

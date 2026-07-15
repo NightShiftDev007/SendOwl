@@ -321,9 +321,17 @@ const loadProject = async () => {
         const buildTid =
           res.data.build_task_id || res.data.graph_build_task_id || null
         startPollingTask(buildTid)
-      } else if (['ready', 'graph_completed'].includes(st) || res.data.graph_id) {
+      } else if (['ready', 'graph_completed'].includes(st)) {
         currentPhase.value = 2
         await loadGraph()
+        // 空快照竞态：ready 但节点尚未写入时继续补拉
+        ensureGraphHydrated()
+      } else if (res.data.graph_id && ['building', 'graph_building'].includes(st)) {
+        // 仅有 early graph_id ≠ 建图完成，继续跟任务
+        currentPhase.value = 1
+        const buildTid =
+          res.data.build_task_id || res.data.graph_build_task_id || null
+        startPollingTask(buildTid)
       }
     } else {
       error.value = res.error
@@ -407,6 +415,24 @@ const fetchGraphData = async () => {
   } catch (err) {
     console.warn('Graph fetch error:', err)
   }
+
+  // 建图进度轮询/SSE 断线后，可能卡在 phase=1；用本体终态自愈
+  if (currentPhase.value === 1) {
+    try {
+      const projRes = await getProject(ontologyId.value)
+      const data = projRes?.data || {}
+      const st = String(data.status || '').toLowerCase()
+      if (['ready', 'graph_completed'].includes(st)) {
+        addLog('检测到建图已完成，自动进入完成态')
+        stopPolling()
+        currentPhase.value = 2
+        buildProgress.value = { progress: 100, message: 'ready' }
+        await finalizeBuild()
+      }
+    } catch (e) {
+      console.warn('reconcile ontology status failed:', e)
+    }
+  }
 }
 
 // 建图期间兜底轮询图谱（SSE 帧不带 graph 时也能逐步显示实体）
@@ -445,7 +471,7 @@ const startPollingTask = (taskId) => {
           startPollingTask(tid)
           return
         }
-        if (['ready', 'graph_completed'].includes(st) || data.graph_id) {
+        if (['ready', 'graph_completed'].includes(st)) {
           stopPolling()
           currentPhase.value = 2
           await finalizeBuild()
@@ -588,6 +614,45 @@ async function finalizeBuild() {
     projectData.value = normalizeProject(projRes.data)
   }
   await loadGraph()
+  // Zep 实体写入常滞后于 task completed；空图时后台补拉，避免「已完成但空白」
+  ensureGraphHydrated()
+}
+
+/** ready 后若图谱仍为空，周期性重导出快照并读图，直到有节点或超时 */
+let graphHydrateTimer = null
+const stopGraphHydrate = () => {
+  if (graphHydrateTimer) {
+    clearInterval(graphHydrateTimer)
+    graphHydrateTimer = null
+  }
+}
+const ensureGraphHydrated = () => {
+  stopGraphHydrate()
+  const nodeCount = () =>
+    Number(graphData.value?.node_count || graphData.value?.nodes?.length || 0)
+  if (nodeCount() > 0) return
+
+  let attempts = 0
+  const maxAttempts = 18 // ~90s @ 5s
+  addLog('图谱暂无节点，等待 Zep 落库后自动补拉…')
+  graphHydrateTimer = setInterval(async () => {
+    attempts += 1
+    try {
+      await snapshotOntology(ontologyId.value).catch(() => null)
+      await loadGraph()
+      if (nodeCount() > 0) {
+        addLog(`图谱补拉成功：${nodeCount()} 个实体节点`)
+        stopGraphHydrate()
+        return
+      }
+    } catch (e) {
+      console.warn('graph hydrate failed:', e)
+    }
+    if (attempts >= maxAttempts) {
+      addLog('图谱补拉超时，可点击左侧 Refresh 重试')
+      stopGraphHydrate()
+    }
+  }, 5000)
 }
 
 const loadGraph = async () => {
@@ -597,7 +662,9 @@ const loadGraph = async () => {
     const res = await getOntologyGraph(ontologyId.value)
     if (res?.success) {
       graphData.value = res.data
-      addLog('Graph data loaded successfully.')
+      const n = res.data?.node_count || res.data?.nodes?.length || 0
+      const e = res.data?.edge_count || res.data?.edges?.length || 0
+      addLog(`Graph data loaded successfully. Nodes: ${n}, Edges: ${e}`)
     } else {
       addLog(`Failed to load graph data: ${res?.error || 'unknown'}`)
     }
@@ -655,6 +722,7 @@ watch(
 onUnmounted(() => {
   stopPolling()
   stopGraphRefresh()
+  stopGraphHydrate()
 })
 </script>
 

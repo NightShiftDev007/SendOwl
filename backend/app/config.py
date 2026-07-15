@@ -35,7 +35,11 @@ class Config:
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
     # 前置/后置规划与终审（百炼 qwen3.7-plus + json_object）
     LLM_CAST_PLANNER_MODEL = os.environ.get('LLM_CAST_PLANNER_MODEL', 'qwen3.7-plus')
-    LLM_PROFILE_REVIEW_ROUNDS = int(os.environ.get('LLM_PROFILE_REVIEW_ROUNDS', '2'))
+    # 人设 LLM 终审：默认关闭（0）；本地查重后可选追加；打回人数上限
+    LLM_PROFILE_REVIEW_ROUNDS = int(os.environ.get('LLM_PROFILE_REVIEW_ROUNDS', '0'))
+    LLM_PROFILE_REVIEW_MAX_REGEN = int(os.environ.get('LLM_PROFILE_REVIEW_MAX_REGEN', '3'))
+    # 本地 persona 相似度查重阈值（SequenceMatcher ratio，默认 0.60）
+    PROFILE_DEDUP_THRESHOLD = float(os.environ.get('PROFILE_DEDUP_THRESHOLD', '0.60'))
     LLM_CONFIG_BATCH_WORKERS = int(os.environ.get('LLM_CONFIG_BATCH_WORKERS', '3'))
     LLM_RATE_LIMIT_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_RETRIES', '3'))
 

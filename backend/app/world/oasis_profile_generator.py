@@ -271,8 +271,8 @@ class OasisProfileGenerator:
             user_id: 用户ID（用于OASIS）
             use_llm: 是否使用LLM生成详细人设
             cast_anchor: Cast Sheet 分角锚点（role_slot/stance/voice 等）
-            occupied_summary: 已占位人设摘要（批间防撞）
-            extra_constraint: 终审点名重生成时的额外约束
+            occupied_summary: 全员分角清单（静态 roster，差异化防撞）
+            extra_constraint: 本地查重 / 终审点名重生成时的额外约束
 
         Returns:
             OasisAgentProfile
@@ -704,7 +704,7 @@ class OasisProfileGenerator:
             )
         if occupied_summary:
             extras.append(
-                "### 已占位人设摘要（请刻意差异化，勿雷同）\n"
+                "### 全员分角清单（请刻意差异化，勿雷同）\n"
                 f"{occupied_summary}"
             )
         if extra_constraint:
@@ -726,8 +726,8 @@ class OasisProfileGenerator:
                             {"role": "user", "content": prompt}
                         ],
                         response_format={"type": "json_object"},
-                        temperature=0.7 - (attempt * 0.1)  # 每次重试降低温度
-                        # 不设置max_tokens，让LLM自由发挥
+                        temperature=0.7 - (attempt * 0.1),  # 每次重试降低温度
+                        max_tokens=2048,  # 短人设上限，防超长拖慢
                     )
 
                 response = with_rate_limit_retry(_create)
@@ -900,27 +900,22 @@ class OasisProfileGenerator:
 
 请生成JSON，包含以下字段（字段顺序请严格遵守，短字段在前，避免截断丢失）:
 
-1. bio: 社交媒体简介，200字（可点出本地身份）
+1. bio: 社交媒体简介，约100字（可点出本地身份）
 2. interested_topics: 感兴趣话题数组，必须 2-5 个非空关键词（与事件/职业相关）
 3. age: 年龄数字（必须是整数）
 4. gender: 性别，必须是英文: "male" 或 "female"
 5. mbti: MBTI类型（如INTJ、ENFP等）
 6. country: 国家（必须为「中国」）
 7. profession: 职业
-8. persona: 详细人设描述（2000字的纯文本），需包含:
-   - 基本信息（年龄、职业、教育背景、所在地）
-   - 地域人格（你自行根据「{place}」推断：本地生活如何塑造其语感、利益、通勤/生计与对政策的第一反应；这是人格核心，不是地址备注）
-   - 人物背景（重要经历、与事件的关联、社会关系）
-   - 性格特征（MBTI类型、核心性格、情绪表达方式）
-   - 社交媒体行为（发帖频率、内容偏好、互动风格、语言特点）
-   - 立场观点（对话题的态度、可能被激怒/感动的内容）
-   - 独特特征（口头禅、特殊经历、个人爱好）
-   - 个人记忆（人设的重要部分，要介绍这个个体与事件的关联，以及这个个体在事件中的已有动作与反应）
+8. persona: 详细人设描述（600-800字纯文本，勿超800字），需包含:
+   - 基本信息（年龄、职业、所在地）与地域人格（基于「{place}」的语感/利益/对政策第一反应）
+   - 与事件的关联、立场观点、社交媒体口吻
+   - 一条关键个人记忆（与事件相关的已有动作或反应）
 {location_instruction_for_llm()}
 
 重要:
 - 所有字段值必须是字符串或数字，不要使用换行符
-- persona必须是一段连贯的文字描述
+- persona必须是一段连贯的文字描述，控制在600-800字
 - {get_language_instruction()} (gender字段必须用英文male/female)
 - 内容要与实体信息保持一致
 - age必须是有效的整数，gender必须是"male"或"female"
@@ -960,27 +955,22 @@ class OasisProfileGenerator:
 
 请生成JSON，包含以下字段（字段顺序请严格遵守，短字段在前，避免截断丢失）:
 
-1. bio: 官方账号简介，200字，专业得体
+1. bio: 官方账号简介，约100字，专业得体
 2. interested_topics: 关注领域数组，必须 2-5 个非空关键词（与机构职能/事件相关）
 3. age: 固定填30（机构账号的虚拟年龄）
 4. gender: 固定填"other"（机构账号使用other表示非个人）
 5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
 6. country: 国家（必须为「中国」）
 7. profession: 机构职能描述
-8. persona: 详细账号设定描述（2000字的纯文本），需包含:
-   - 机构基本信息（正式名称、机构性质、成立背景、主要职能、辖区/属地）
-   - 地域人格（你自行根据「{place}」推断：辖区舆论场如何塑造其发言风格与利益立场）
-   - 账号定位（账号类型、目标受众、核心功能）
-   - 发言风格（语言特点、常用表达、禁忌话题）
-   - 发布内容特点（内容类型、发布频率、活跃时间段）
-   - 立场态度（对核心话题的官方立场、面对争议的处理方式）
-   - 特殊说明（代表的群体画像、运营习惯）
-   - 机构记忆（机构人设的重要部分，要介绍这个机构与事件的关联，以及这个机构在事件中的已有动作与反应）
+8. persona: 详细账号设定描述（600-800字纯文本，勿超800字），需包含:
+   - 机构职能/辖区与基于「{place}」的发言风格、利益立场
+   - 账号定位、官方口吻、对核心话题立场
+   - 一条与事件相关的机构记忆（已有动作或反应）
 {location_instruction_for_llm()}
 
 重要:
 - 所有字段值必须是字符串或数字，不允许null值
-- persona必须是一段连贯的文字描述，不要使用换行符
+- persona必须是一段连贯的文字描述，控制在600-800字，不要使用换行符
 - {get_language_instruction()} (gender字段必须用英文"other")
 - age必须是整数30，gender必须是字符串"other"
 - 机构账号发言要符合其身份定位
@@ -1321,14 +1311,131 @@ class OasisProfileGenerator:
         bio = (profile.bio or "")[:80]
         return f"{profile.name}|{slot}|{stance}|{bio}"
 
+
+    def _build_static_roster(
+        self,
+        work_entities: List[EntityNode],
+        agents_by_uuid: Dict[str, Dict[str, Any]],
+    ) -> str:
+        """静态全员清单：姓名｜role_slot｜stance_axis（生成前即可确定，无需批间等待）。"""
+        lines: List[str] = []
+        for e in work_entities:
+            cast = agents_by_uuid.get(e.uuid) or {}
+            slot = str(cast.get("role_slot") or "").strip()
+            stance = str(cast.get("stance_axis") or "").strip()
+            if slot or stance:
+                lines.append(f"{e.name}|{slot}|{stance}")
+            else:
+                # Cast Sheet 失败降级：仅实体名清单
+                lines.append(e.name)
+        return "\n".join(lines)
+
+    def _persona_similarity(self, a: str, b: str) -> float:
+        """本地 persona 相似度：SequenceMatcher ratio。"""
+        from difflib import SequenceMatcher
+        a = (a or "").strip()
+        b = (b or "").strip()
+        if not a or not b:
+            return 0.0
+        # 截断超长文本，避免极端耗时
+        a = a[:4000]
+        b = b[:4000]
+        return SequenceMatcher(None, a, b).ratio()
+
+    def _local_dedup_check(
+        self,
+        profiles: List[OasisAgentProfile],
+        cast_sheet: Dict[str, Any],
+        threshold: Optional[float] = None,
+        max_regen: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        本地相似度查重（零 LLM 成本）。
+        同 similar_group 内两两比较；无分组时全员两两。
+        超阈值则保留先出现者，后者列入重生成（附点名约束）；截断至 max_regen。
+        """
+        if threshold is None:
+            threshold = float(getattr(Config, "PROFILE_DEDUP_THRESHOLD", 0.60) or 0.60)
+        if max_regen is None:
+            max_regen = max(1, int(getattr(Config, "LLM_PROFILE_REVIEW_MAX_REGEN", 3) or 3))
+
+        agents_by_uuid = cast_sheet.get("agents_by_uuid") or {}
+        groups: Dict[str, List[OasisAgentProfile]] = {}
+        ungrouped: List[OasisAgentProfile] = []
+        for p in profiles:
+            cast = agents_by_uuid.get(p.source_entity_uuid or "", {}) or {}
+            sg = str(cast.get("similar_group") or "").strip()
+            if sg:
+                groups.setdefault(sg, []).append(p)
+            else:
+                ungrouped.append(p)
+
+        if groups:
+            pair_lists: List[List[OasisAgentProfile]] = list(groups.values())
+            if len(ungrouped) > 1:
+                pair_lists.append(ungrouped)
+        else:
+            pair_lists = [list(profiles)]
+
+        flagged: Dict[str, Dict[str, Any]] = {}
+        for group in pair_lists:
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    keep, drop = group[i], group[j]
+                    ratio = self._persona_similarity(keep.persona or "", drop.persona or "")
+                    if ratio < threshold:
+                        continue
+                    uid_drop = drop.source_entity_uuid or ""
+                    if not uid_drop or uid_drop in flagged:
+                        continue
+                    # 若 keep 已被标记为需重生成，则与下一对继续比
+                    if (keep.source_entity_uuid or "") in flagged:
+                        continue
+                    flagged[uid_drop] = {
+                        "entity_uuid": uid_drop,
+                        "reason": (
+                            f"与「{keep.name}」persona 相似度 {ratio:.2f} 超阈值 {threshold}"
+                        ),
+                        "extra_constraint": (
+                            f"本地查重：与「{keep.name}」人设过于相似（相似度{ratio:.2f}）。"
+                            f"请刻意错开立场侧重、个人经历与社交媒体口吻，禁止雷同表述。"
+                        ),
+                        "similarity": ratio,
+                    }
+                    logger.info(
+                        f"本地查重命中: {drop.name} ≈ {keep.name} "
+                        f"(ratio={ratio:.2f} ≥ {threshold})"
+                    )
+
+        rows = sorted(
+            flagged.values(),
+            key=lambda r: float(r.get("similarity") or 0),
+            reverse=True,
+        )
+        if len(rows) > max_regen:
+            logger.info(
+                f"本地查重 regenerate={len(rows)} 超上限 {max_regen}，截断"
+            )
+            rows = rows[:max_regen]
+        for r in rows:
+            r.pop("similarity", None)
+        if rows:
+            logger.info(f"本地查重需重生成 {len(rows)} 人")
+        else:
+            logger.info("本地查重通过，无需重生成")
+        return rows
+
     def review_cast(
         self,
         profiles: List[OasisAgentProfile],
         cast_sheet: Dict[str, Any],
         excluded: List[Dict[str, Any]],
         max_attempts: int = 2,
+        max_regen: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """后置终审：只点名不重写。"""
+        """后置终审：只点名不重写。默认从宽，仅打回硬伤。"""
+        if max_regen is None:
+            max_regen = max(1, int(getattr(Config, "LLM_PROFILE_REVIEW_MAX_REGEN", 3) or 3))
         agents_by_uuid = cast_sheet.get("agents_by_uuid") or {}
         roster = []
         for p in profiles:
@@ -1345,14 +1452,23 @@ class OasisProfileGenerator:
 
         client = self._planner_client()
         system_prompt = (
-            "你是人设终审官。通读全员摘要与被裁名单，只点名问题，不要重写人设。"
-            "若有雷同/违反分角契约，列入 regenerate；若核心当事人被误裁，列入 restore_excluded。"
-            "返回 JSON：{\"verdict\":\"pass|revise\",\"regenerate\":[{\"entity_uuid\",\"reason\",\"extra_constraint\"}],"
+            "你是人设终审官。通读全员摘要与被裁名单，只点名硬伤，不要重写人设，不要追求完美。\n"
+            "判定从宽：措辞相近、结构相似、同主题关注点重叠 → 一律放行（pass）。\n"
+            "仅在以下硬伤时列入 regenerate（总数尽量少，最多 "
+            f"{max_regen} 条）：\n"
+            "1) 两个人设几乎逐字雷同或姓名/身份明显串戏；\n"
+            "2) 明确违反分角契约（role_slot/stance 写反成对立阵营）；\n"
+            "3) 人设为空壳/明显不可用。\n"
+            "restore_excluded 仅用于「模拟需求核心当事人被误裁」；没有把握就不要 restore。\n"
+            "有疑虑时优先 verdict=pass。\n"
+            "返回 JSON：{\"verdict\":\"pass|revise\","
+            "\"regenerate\":[{\"entity_uuid\",\"reason\",\"extra_constraint\"}],"
             "\"restore_excluded\":[{\"entity_uuid\",\"reason\"}]}"
             f"\n{get_language_instruction()}"
         )
         user_prompt = (
             f"cast_theme: {cast_sheet.get('cast_theme', '')}\n"
+            f"打回上限：regenerate ≤ {max_regen}；超过请只保留最严重的。\n"
             f"全员摘要 JSON：\n{json.dumps(roster, ensure_ascii=False)}\n\n"
             f"被裁名单 JSON：\n{json.dumps(excluded, ensure_ascii=False)}\n"
         )
@@ -1365,8 +1481,8 @@ class OasisProfileGenerator:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.2,
-                    max_tokens=4096,
+                    temperature=0.1,
+                    max_tokens=2048,
                 )
                 verdict = raw.get("verdict") or "pass"
                 regenerate = raw.get("regenerate") if isinstance(raw.get("regenerate"), list) else []
@@ -1377,6 +1493,14 @@ class OasisProfileGenerator:
                 }
                 regenerate = [r for r in regenerate if isinstance(r, dict) and r.get("entity_uuid") in known]
                 restore = [r for r in restore if isinstance(r, dict) and r.get("entity_uuid") in known]
+                # 硬上限：防止终审把大半人设打回重跑
+                if len(regenerate) > max_regen:
+                    logger.info(
+                        f"人设终审 regenerate={len(regenerate)} 超上限 {max_regen}，截断"
+                    )
+                    regenerate = regenerate[:max_regen]
+                if len(restore) > max_regen:
+                    restore = restore[:max_regen]
                 if verdict not in ("pass", "revise"):
                     verdict = "revise" if (regenerate or restore) else "pass"
                 if not regenerate and not restore:
@@ -1407,7 +1531,8 @@ class OasisProfileGenerator:
     ) -> List[OasisAgentProfile]:
         """
         批量从实体生成Agent Profile：
-        Cast Sheet 前置 → 按 parallel_count 分批并行（批间摘要）→ 终审点名重生成
+        Cast Sheet 前置 → 静态 roster 全并行生成 → 本地查重点名重生成
+        （LLM 终审默认关闭，LLM_PROFILE_REVIEW_ROUNDS>0 时追加）
         """
         import concurrent.futures
         from threading import Lock
@@ -1437,7 +1562,7 @@ class OasisProfileGenerator:
                 )
             except Exception as e:
                 # 降级：Cast Sheet 不做关键路径门卫。失败则退回
-                # 「无分角表 + 批间摘要 + 终审」路径继续生成，不终止 prepare
+                # 「实体名 roster + 全并行 + 本地查重」路径继续生成，不终止 prepare
                 logger.warning(f"Cast Sheet 规划失败，降级为无分角表生成: {e}")
 
         agents_by_uuid: Dict[str, Dict[str, Any]] = cast_sheet.get("agents_by_uuid") or {}
@@ -1487,14 +1612,8 @@ class OasisProfileGenerator:
                 except Exception as e:
                     logger.warning(f"实时保存 profiles 失败: {e}")
 
-        def occupied_text(exclude_uuids: Optional[set] = None) -> str:
-            exclude_uuids = exclude_uuids or set()
-            lines = []
-            for uid, p in profiles_by_uuid.items():
-                if uid in exclude_uuids:
-                    continue
-                lines.append(self._profile_one_line_summary(p, agents_by_uuid.get(uid)))
-            return "\n".join(lines[-40:])  # 控制长度
+        # 静态 roster：全员分角清单，生成前即可确定（无批间栅栏）
+        static_roster = self._build_static_roster(work_entities, agents_by_uuid)
 
         def generate_one(
             entity: EntityNode,
@@ -1516,16 +1635,20 @@ class OasisProfileGenerator:
             )
             return profile
 
-        def run_batch(
+        def run_parallel(
             batch_entities: List[EntityNode],
             constraints: Optional[Dict[str, str]] = None,
+            occupied: Optional[str] = None,
         ) -> None:
+            """全并行提交；单个失败即整体报错（保留原有语义）。"""
             constraints = constraints or {}
-            occupied = occupied_text()
+            occupied_summary = occupied if occupied is not None else static_roster
             errors: List[str] = []
 
             def worker(ent: EntityNode):
-                return ent.uuid, generate_one(ent, occupied, constraints.get(ent.uuid))
+                return ent.uuid, generate_one(
+                    ent, occupied_summary, constraints.get(ent.uuid)
+                )
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
                 futures = {executor.submit(worker, ent): ent for ent in batch_entities}
@@ -1553,21 +1676,48 @@ class OasisProfileGenerator:
                 )
 
         logger.info(
-            f"开始分批生成 {total} 个Agent人设（并行数: {parallel_count}，批间摘要开启）..."
+            f"开始全并行生成 {total} 个Agent人设"
+            f"（并行数: {parallel_count}，静态 roster，无批间栅栏）..."
         )
         print(f"\n{'='*60}")
         print(f"开始生成Agent人设 - 共 {total} 个实体，并行数: {parallel_count}")
         print(f"{'='*60}\n")
 
-        # ---------- 严格分批 + 批间栅栏 ----------
-        for i in range(0, total, parallel_count):
-            batch = work_entities[i : i + parallel_count]
-            run_batch(batch)
+        # ---------- 全并行生成（无批间串行栅栏） ----------
+        run_parallel(work_entities)
 
-        # ---------- 终审（最多 N 轮） ----------
-        max_review = Config.LLM_PROFILE_REVIEW_ROUNDS
+        max_regen = max(1, int(getattr(Config, "LLM_PROFILE_REVIEW_MAX_REGEN", 3) or 3))
         entity_by_uuid = {e.uuid: e for e in entities}
 
+        # ---------- 本地相似度查重（替代默认 LLM 终审） ----------
+        if progress_callback:
+            progress_callback(total, total, "本地查重中…")
+        dedup_rows = self._local_dedup_check(
+            profiles=list(profiles_by_uuid.values()),
+            cast_sheet=cast_sheet,
+            max_regen=max_regen,
+        )
+        if dedup_rows:
+            constraints = {
+                r["entity_uuid"]: (r.get("extra_constraint") or r.get("reason") or "")
+                for r in dedup_rows
+                if r.get("entity_uuid")
+            }
+            regen_entities = [
+                entity_by_uuid[uid]
+                for uid in constraints
+                if uid in entity_by_uuid
+            ]
+            logger.info(f"本地查重点名重生成 {len(regen_entities)} 人（仅一轮）")
+            for ent in regen_entities:
+                profiles_by_uuid.pop(ent.uuid, None)
+            if regen_entities:
+                run_parallel(regen_entities, constraints)
+
+        # ---------- LLM 终审（opt-in：默认 LLM_PROFILE_REVIEW_ROUNDS=0） ----------
+        max_review = max(0, int(Config.LLM_PROFILE_REVIEW_ROUNDS or 0))
+        if max_review <= 0:
+            logger.info("人设 LLM 终审已关闭（LLM_PROFILE_REVIEW_ROUNDS=0），跳过")
         for review_round in range(max_review):
             if progress_callback:
                 progress_callback(
@@ -1579,6 +1729,7 @@ class OasisProfileGenerator:
                 profiles=list(profiles_by_uuid.values()),
                 cast_sheet=cast_sheet,
                 excluded=excluded_list,
+                max_regen=max_regen,
             )
             if review.get("verdict") == "pass":
                 logger.info(f"人设终审通过（round {review_round + 1}）")
@@ -1588,7 +1739,8 @@ class OasisProfileGenerator:
             restore_rows = review.get("restore_excluded") or []
             logger.info(
                 f"人设终审 revise round={review_round + 1}: "
-                f"regenerate={len(regenerate_rows)} restore={len(restore_rows)}"
+                f"regenerate={len(regenerate_rows)} restore={len(restore_rows)} "
+                f"(cap={max_regen})"
             )
 
             # 恢复误裁
@@ -1611,7 +1763,7 @@ class OasisProfileGenerator:
                     }
                 profiles_by_uuid[uid] = generate_one(
                     ent,
-                    occupied_text(),
+                    static_roster,
                     extra_constraint=row.get("reason")
                     or "终审要求恢复：请生成差异化核心当事人人设",
                 )
@@ -1630,14 +1782,16 @@ class OasisProfileGenerator:
             if regen_entities:
                 for ent in regen_entities:
                     profiles_by_uuid.pop(ent.uuid, None)
-                for i in range(0, len(regen_entities), parallel_count):
-                    run_batch(regen_entities[i : i + parallel_count], constraints)
+                run_parallel(regen_entities, constraints)
 
+            # 只审一轮时，重生成后不再二审（避免连环打回）
             if review_round == max_review - 1:
-                logger.warning(
-                    f"人设终审达上限 {max_review} 轮，带意见放行: "
-                    f"regenerate={len(regenerate_rows)} restore={len(restore_rows)}"
-                )
+                if regenerate_rows or restore_rows:
+                    logger.info(
+                        f"人设终审结束（{max_review} 轮）：已按意见重生成后放行，"
+                        f"不再二次打回"
+                    )
+                break
 
         # 按原始 entities 顺序输出（跳过仍 excluded 的）
         final_excluded = {e["entity_uuid"] for e in excluded_list}

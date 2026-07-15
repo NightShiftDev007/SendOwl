@@ -15,7 +15,7 @@
 | decision `preparing` | 重入 `prepare_decision`（N>1 shared 按产物跳过；N=1 按 profiles/config 跳过） |
 | decision `running` | 先 `reconcile_runs_with_run_state` → `try_adopt` 子进程 → `start_decision(revive_worker=True)` |
 | ontology `building` | 有检查点则同 graph 续传；无检查点立即 `failed` |
-| report task `processing` | **复用原 task_id**，`generate_report(resume=True)` 跳过已完成章节 |
+| report task `processing` | **复用原 task_id**，`generate_report(resume=True)` 跳过已完成章节。**例外**：任务已入回收站、已 `cancelled`、或无法归属到活跃决策 → fail task，不自动续跑（须用户进任务显式重试） |
 | sim `preparing` + `prepare_task_id` | 复用原 task_id 重开 prepare worker |
 
 ## 模拟子进程 adopt

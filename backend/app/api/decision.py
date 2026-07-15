@@ -57,7 +57,10 @@ def create_decision():
 @decision_bp.get("/list")
 def list_decisions():
     registry.init_schema()
-    return jsonify({"success": True, "data": registry.list_decisions()})
+    from app.progress.activity import enrich_decisions_with_activity
+
+    items = enrich_decisions_with_activity(registry.list_decisions())
+    return jsonify({"success": True, "data": items})
 
 
 @decision_bp.delete("/<decision_id>")
@@ -246,6 +249,14 @@ def decision_status(decision_id: str):
     registry.init_schema()
     try:
         data = ScenarioRunner().get_status(decision_id)
+        try:
+            from app.progress.activity import summarize_decision_activity
+
+            data["activity"] = summarize_decision_activity(
+                decision_id, dec=data.get("decision")
+            )
+        except Exception:
+            pass
         return jsonify({"success": True, "data": data})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 404

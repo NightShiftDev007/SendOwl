@@ -15,6 +15,32 @@ from app.config import Config
 from app.models.task import TaskManager, TaskStatus
 from app.ontology import registry
 from app.ontology.snapshot import export_snapshot
+
+def _export_snapshot_with_retry(ontology_id: str, graph_id: str, attempts: int = 4, delay_sec: float = 3.0) -> None:
+    """建图完成后 Zep 实体可能尚未可查；空快照时短暂重试，避免永久 0 节点。"""
+    import time
+
+    last_err: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            record = export_snapshot(ontology_id, graph_id)
+            # add_version 返回含 node_count；无则读文件
+            n = int(record.get("node_count") or 0)
+            e = int(record.get("edge_count") or 0)
+            if n > 0 or e > 0:
+                return
+            logger.info(
+                f"建图后快照仍为空，重试 {i+1}/{attempts}: {ontology_id}"
+            )
+        except Exception as ex:
+            last_err = ex
+            logger.warning(f"建图后快照失败 ({i+1}/{attempts}): {ex}")
+        if i + 1 < attempts:
+            time.sleep(delay_sec)
+    if last_err:
+        logger.warning(f"建图后快照最终失败: {last_err}")
+
+
 from app.ontology.text_processor import TextProcessor
 from app.utils.file_parser import FileParser
 from app.utils.logger import get_logger
@@ -289,7 +315,7 @@ def _watch_build_task(ontology_id: str, task_id: str) -> None:
                 build_task_id=None,
             )
             try:
-                export_snapshot(ontology_id, graph_id)
+                _export_snapshot_with_retry(ontology_id, graph_id)
             except Exception as e:
                 logger.warning(f"建图后自动快照失败: {e}")
             return
@@ -333,8 +359,10 @@ def get_build_status(ontology_id: str, task_id: Optional[str] = None) -> Dict[st
                             build_task_id=None,
                         )
                         result["graph_id"] = gid
-                        if not registry.get_latest_version(ontology_id):
-                            export_snapshot(ontology_id, gid)
+                        latest = registry.get_latest_version(ontology_id)
+                        need = (not latest) or int(latest.get("node_count") or 0) <= 0
+                        if need:
+                            _export_snapshot_with_retry(ontology_id, gid, attempts=2, delay_sec=2.0)
                     except Exception as e:
                         logger.warning(f"完成态同步落库/快照失败: {e}")
 

@@ -701,6 +701,8 @@ export const getSimulationHistory = async (limit = 20) => {
 
   const fromDecisions = decList.slice(0, limit).map((d) => {
     const n = Number(d.sample_count || 1)
+    const activity = d.activity || {}
+    const rounds = activity.rounds || {}
     return {
       kind: 'decision',
       simulation_id: d.id,
@@ -710,9 +712,16 @@ export const getSimulationHistory = async (limit = 20) => {
       ontology_id: d.ontology_id,
       simulation_requirement: d.title || d.id,
       status: d.status,
+      activity,
+      is_running: Boolean(activity.is_running),
+      workflow_step: Number(activity.workflow_step || 0) || null,
+      workflow_step_key: activity.workflow_step_key || '',
+      stage: activity.stage || '',
+      stage_message: activity.message || '',
+      stage_progress: Number(activity.progress || 0),
       created_at: d.created_at,
-      current_round: d.status === 'completed' ? 1 : 0,
-      total_rounds: 1,
+      current_round: Number(rounds.current || 0),
+      total_rounds: Number(rounds.total || 0) || 1,
       sample_count: n,
       files: docsByOntology[d.ontology_id] || [],
     }

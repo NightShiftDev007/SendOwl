@@ -185,16 +185,18 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
         ont.get("build_task_id") or ont.get("graph_build_task_id")
     )
 
-    def _from_snapshot():
+    def _from_snapshot(*, allow_empty: bool = True):
         latest = registry.get_latest_version(ontology_id)
         if latest and latest.get("snapshot_path"):
             try:
                 snap = load_snapshot(latest["snapshot_path"])
                 nodes = snap.get("nodes") or []
                 edges = snap.get("edges") or []
+                if not allow_empty and not nodes and not edges:
+                    return None
                 return {
                     "version": latest,
-                    "graph_id": snap.get("graph_id") or latest.get("graph_id"),
+                    "graph_id": snap.get("graph_id") or latest.get("graph_id") or graph_id,
                     "nodes": nodes,
                     "edges": edges,
                     "node_count": len(nodes),
@@ -226,6 +228,17 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
             logger.warning(f"read zep graph failed for {ontology_id}: {e}")
             return None
 
+    def _refresh_snapshot_from_live(gid: str):
+        """空快照时从 Zep 重导，避免 ready 后永久空白。"""
+        try:
+            from app.ontology.snapshot import export_snapshot
+
+            export_snapshot(ontology_id, gid)
+            return _from_snapshot(allow_empty=True)
+        except Exception as e:
+            logger.warning(f"refresh empty snapshot failed for {ontology_id}: {e}")
+            return None
+
     # 建图期：live（不 heal、不 bootstrap）
     if building and graph_id:
         live = _from_live(graph_id)
@@ -233,23 +246,29 @@ def read_ontology_graph(ontology_id: str) -> dict | None:
             return live
         return _from_snapshot()
 
-    # ready：快照优先
-    snap = _from_snapshot()
+    # ready：优先非空快照；空快照则回退 Zep live 并尝试重导
+    snap = _from_snapshot(allow_empty=False)
     if snap:
         return snap
 
-    # ready 无快照：bootstrap 导出一次
     if graph_id and not building:
+        live = _from_live(graph_id)
+        if live and (live.get("node_count") or live.get("edge_count")):
+            refreshed = _refresh_snapshot_from_live(graph_id)
+            return refreshed or live
+        # live 也空：仍返回空快照/空 live，供前端继续补拉
+        empty_snap = _from_snapshot(allow_empty=True)
+        if empty_snap:
+            return empty_snap
+        if live:
+            return live
         try:
             from app.ontology.snapshot import export_snapshot
 
             export_snapshot(ontology_id, graph_id)
-            snap = _from_snapshot()
-            if snap:
-                return snap
+            return _from_snapshot(allow_empty=True) or _from_live(graph_id)
         except Exception as e:
             logger.warning(f"bootstrap snapshot failed for {ontology_id}: {e}")
-            # 兜底 live，避免首屏完全空白
             return _from_live(graph_id)
 
     return None

@@ -1628,6 +1628,7 @@ class ReportAgent:
                 completed_sections=[]
             )
             ReportManager.save_report(report)
+            ReportManager.raise_if_generate_cancelled(report_id)
             
             # 阶段1: 规划大纲（resume 时若已有 outline 则跳过）
             outline = None
@@ -1706,6 +1707,8 @@ class ReportAgent:
                 section_num = i + 1
                 if resume and section_num < first_missing:
                     continue
+
+                ReportManager.raise_if_generate_cancelled(report_id)
 
                 base_progress = 20 + int((i / total_sections) * 70)
                 
@@ -2006,15 +2009,56 @@ class ReportManager:
         decision_id: Optional[str] = None,
     ) -> None:
         cls._ensure_report_folder(report_id)
+        # 显式写 cancelled=False：用户重试/重新生成时清掉回收站挂起标记
         payload = {
             "report_id": report_id,
             "task_id": task_id,
             "simulation_id": simulation_id,
             "decision_id": decision_id,
+            "cancelled": False,
             "updated_at": datetime.now().isoformat(),
         }
         with open(cls._get_generate_task_path(report_id), "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def cancel_generate(
+        cls,
+        report_id: str,
+        *,
+        reason: str = "cancelled",
+        decision_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """标记报告生成已取消（入回收站），返回 task_id（若有）。"""
+        if not report_id:
+            return None
+        cls._ensure_report_folder(report_id)
+        meta = cls.get_generate_task_meta(report_id) or {}
+        meta.update(
+            {
+                "report_id": report_id,
+                "cancelled": True,
+                "cancel_reason": reason,
+                "updated_at": datetime.now().isoformat(),
+            }
+        )
+        if decision_id:
+            meta["decision_id"] = decision_id
+        with open(cls._get_generate_task_path(report_id), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        return meta.get("task_id") or None
+
+    @classmethod
+    def is_generate_cancelled(cls, report_id: str) -> bool:
+        meta = cls.get_generate_task_meta(report_id) or {}
+        return bool(meta.get("cancelled"))
+
+    @classmethod
+    def raise_if_generate_cancelled(cls, report_id: str) -> None:
+        if cls.is_generate_cancelled(report_id):
+            meta = cls.get_generate_task_meta(report_id) or {}
+            reason = meta.get("cancel_reason") or "报告生成已取消"
+            raise RuntimeError(reason)
 
     @classmethod
     def get_generate_task_id(cls, report_id: str) -> Optional[str]:
@@ -2057,6 +2101,11 @@ class ReportManager:
         from app.utils.locale import get_locale, set_locale
 
         if not report_id or not task_id or not graph_id:
+            return False
+
+        # 回收站挂起后禁止隐式续跑；用户显式重试会先 save_generate_task 清 cancelled
+        if cls.is_generate_cancelled(report_id):
+            logger.info(f"resume 跳过：报告已取消 report={report_id}")
             return False
 
         tm = TaskManager()

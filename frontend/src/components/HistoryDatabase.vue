@@ -33,6 +33,11 @@
         <div class="card-header">
           <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
           <div class="card-header-right">
+            <span
+              v-if="project.is_running"
+              class="card-running-badge"
+              :title="project.stage_message || $t('history.running')"
+            >{{ $t('history.running') }}</span>
             <div class="card-status-icons">
               <span 
                 class="status-icon" 
@@ -99,7 +104,7 @@
             <span class="card-time">{{ formatTime(project.created_at) }}</span>
           </div>
           <span class="card-progress" :class="getProgressClass(project)">
-            <span class="status-dot">●</span> {{ formatRounds(project) }}
+            <span class="status-dot">●</span> {{ formatActivityLabel(project) }}
           </span>
         </div>
         
@@ -124,7 +129,8 @@
               <div class="modal-title-section">
                 <span class="modal-id">{{ formatSimulationId(selectedProject.simulation_id) }}</span>
                 <span class="modal-progress" :class="getProgressClass(selectedProject)">
-                  <span class="status-dot">●</span> {{ formatRounds(selectedProject) }}
+                  <span class="status-dot">●</span>
+                  {{ selectedProject.is_running ? $t('history.running') : formatActivityLabel(selectedProject) }}
                 </span>
                 <span class="modal-create-time">{{ formatDate(selectedProject.created_at) }} {{ formatTime(selectedProject.created_at) }}</span>
               </div>
@@ -141,6 +147,34 @@
 
             <!-- 弹窗内容 -->
             <div class="modal-body">
+              <!-- 当前进度 -->
+              <div class="modal-section modal-activity">
+                <div class="modal-label">{{ $t('history.currentProgress') }}</div>
+                <div class="activity-row">
+                  <span class="activity-step">{{ formatStepName(selectedProject) }}</span>
+                  <span
+                    class="activity-state"
+                    :class="getProgressClass(selectedProject)"
+                  >{{ selectedProject.is_running ? $t('history.running') : formatStatusName(selectedProject) }}</span>
+                </div>
+                <div class="activity-message" v-if="selectedProject.stage_message">
+                  {{ selectedProject.stage_message }}
+                </div>
+                <div class="activity-stage" v-if="selectedProject.stage">
+                  {{ $t('history.stageLabel') }}：{{ formatStageName(selectedProject.stage) }}
+                </div>
+                <div
+                  class="activity-bar"
+                  v-if="selectedProject.is_running || selectedProject.stage_progress > 0"
+                >
+                  <div
+                    class="activity-bar-fill"
+                    :style="{ width: `${Math.min(100, selectedProject.stage_progress || 0)}%` }"
+                  ></div>
+                  <span class="activity-bar-text">{{ selectedProject.stage_progress || 0 }}%</span>
+                </div>
+              </div>
+
               <!-- 模拟需求 -->
               <div class="modal-section">
                 <div class="modal-label">{{ $t('history.simRequirement') }}</div>
@@ -212,7 +246,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory, createSimulation } from '../api/simulation'
-import { deleteDecision } from '../api/decision'
+import { deleteDecision, getDecisionStatus } from '../api/decision'
 import { touchWorkflowStep } from '../store/workflowContext'
 import { taskRoute, resolveDecisionId } from '../utils/taskRoute'
 
@@ -237,6 +271,16 @@ let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
 let pendingState = null  // 记录待执行的目标状态
+let listPollTimer = null
+let modalPollTimer = null
+
+const STEP_I18N = {
+  1: 'history.stepGraph',
+  2: 'history.stepEnvironment',
+  3: 'history.stepSimulation',
+  4: 'history.stepReport',
+  5: 'history.stepInteraction',
+}
 
 // 卡片布局配置 - 调整为更宽的比例
 const CARDS_PER_ROW = 4
@@ -316,21 +360,68 @@ const getCardStyle = (index) => {
   }
 }
 
-// 根据轮数进度获取样式类
-const getProgressClass = (simulation) => {
-  const current = simulation.current_round || 0
-  const total = simulation.total_rounds || 0
-  
-  if (total === 0 || current === 0) {
-    // 未开始
-    return 'not-started'
-  } else if (current >= total) {
-    // 已完成
-    return 'completed'
-  } else {
-    // 进行中
-    return 'in-progress'
+// 根据活动状态获取样式类
+const getProgressClass = (project) => {
+  if (!project) return 'not-started'
+  if (project.is_running) return 'in-progress'
+  const status = String(project.status || project.activity?.status || '').toLowerCase()
+  if (status === 'completed') return 'completed'
+  if (status === 'failed' || status === 'prepare_failed') return 'failed'
+  const current = project.current_round || 0
+  const total = project.total_rounds || 0
+  if (total > 0 && current >= total && status !== 'prepared') return 'completed'
+  if (status === 'prepared' || status === 'created') return 'not-started'
+  return 'not-started'
+}
+
+const formatActivityLabel = (project) => {
+  if (!project) return t('history.notStarted')
+  if (project.is_running) {
+    if (project.stage_message) return truncateText(project.stage_message, 18)
+    return t('history.runningOnStep', { step: formatStepName(project) })
   }
+  const status = String(project.status || '').toLowerCase()
+  if (status === 'completed') return t('history.statusCompleted')
+  if (status === 'prepared') return t('history.statusPrepared')
+  if (status === 'prepare_failed' || status === 'failed') return t('history.statusFailed')
+  if (project.workflow_step) return formatStepName(project)
+  return formatRounds(project)
+}
+
+const formatStepName = (project) => {
+  const step = Number(project?.workflow_step || 0)
+  const key = STEP_I18N[step]
+  return key ? t(key) : t('history.stepUnknown')
+}
+
+const formatStatusName = (project) => {
+  const status = String(project?.status || '').toLowerCase()
+  const map = {
+    created: 'history.statusCreated',
+    preparing: 'history.statusPreparing',
+    prepared: 'history.statusPrepared',
+    running: 'history.statusRunning',
+    completed: 'history.statusCompleted',
+    failed: 'history.statusFailed',
+    prepare_failed: 'history.statusFailed',
+  }
+  return map[status] ? t(map[status]) : (status || t('history.notStarted'))
+}
+
+const formatStageName = (stage) => {
+  const s = String(stage || '').toLowerCase()
+  const map = {
+    building: 'history.stageBuilding',
+    graph_building: 'history.stageBuilding',
+    preparing: 'history.stagePreparing',
+    running: 'history.stageRunning',
+    report_generating: 'history.stageReport',
+    prepared: 'history.statusPrepared',
+    completed: 'history.statusCompleted',
+    failed: 'history.statusFailed',
+    prepare_failed: 'history.statusFailed',
+  }
+  return map[s] ? t(map[s]) : (stage || '—')
 }
 
 // 格式化日期（只显示日期部分）
@@ -423,12 +514,89 @@ const truncateFilename = (filename, maxLength) => {
 
 // 打开项目详情弹窗
 const navigateToProject = (simulation) => {
-  selectedProject.value = simulation
+  selectedProject.value = { ...simulation }
+  startModalPoll()
 }
 
 // 关闭弹窗
 const closeModal = () => {
+  stopModalPoll()
   selectedProject.value = null
+}
+
+const applyActivityToProject = (project, activity) => {
+  if (!project || !activity) return project
+  const rounds = activity.rounds || {}
+  return {
+    ...project,
+    activity,
+    status: activity.status || project.status,
+    is_running: Boolean(activity.is_running),
+    workflow_step: Number(activity.workflow_step || 0) || null,
+    workflow_step_key: activity.workflow_step_key || '',
+    stage: activity.stage || '',
+    stage_message: activity.message || '',
+    stage_progress: Number(activity.progress || 0),
+    current_round: Number(rounds.current || project.current_round || 0),
+    total_rounds: Number(rounds.total || project.total_rounds || 0) || 1,
+  }
+}
+
+const refreshSelectedActivity = async () => {
+  const p = selectedProject.value
+  const id = p?.decision_id || p?.simulation_id
+  if (!id) return
+  try {
+    const res = await getDecisionStatus(id)
+    const activity = res?.data?.activity
+    if (!activity) return
+    selectedProject.value = applyActivityToProject(p, activity)
+    // 同步回列表卡片
+    const idx = projects.value.findIndex((x) => x.simulation_id === p.simulation_id)
+    if (idx >= 0) {
+      projects.value[idx] = applyActivityToProject(projects.value[idx], activity)
+    }
+    if (!activity.is_running) {
+      stopModalPoll()
+    }
+  } catch (e) {
+    console.debug('refresh activity failed', e)
+  }
+}
+
+const startModalPoll = async () => {
+  stopModalPoll()
+  await refreshSelectedActivity()
+  // 仅运行中保持轮询；空闲任务刷一次即可
+  if (selectedProject.value?.is_running) {
+    modalPollTimer = setInterval(() => {
+      refreshSelectedActivity()
+    }, 4000)
+  }
+}
+
+const stopModalPoll = () => {
+  if (modalPollTimer) {
+    clearInterval(modalPollTimer)
+    modalPollTimer = null
+  }
+}
+
+const startListPoll = () => {
+  stopListPoll()
+  listPollTimer = setInterval(() => {
+    const anyRunning = projects.value.some((p) => p.is_running)
+    if (anyRunning || selectedProject.value?.is_running) {
+      loadHistory({ silent: true })
+    }
+  }, 12000)
+}
+
+const stopListPoll = () => {
+  if (listPollTimer) {
+    clearInterval(listPollTimer)
+    listPollTimer = null
+  }
 }
 
 // 本体工作台（Step1）
@@ -491,18 +659,26 @@ const goToReport = () => {
 }
 
 // 加载历史项目
-const loadHistory = async () => {
+const loadHistory = async ({ silent = false } = {}) => {
   try {
-    loading.value = true
+    if (!silent) loading.value = true
     const response = await getSimulationHistory(20)
     if (response.success) {
-      projects.value = response.data || []
+      const next = response.data || []
+      projects.value = next
+      // 弹窗打开时合并最新 activity
+      if (selectedProject.value) {
+        const match = next.find((p) => p.simulation_id === selectedProject.value.simulation_id)
+        if (match) {
+          selectedProject.value = { ...selectedProject.value, ...match }
+        }
+      }
     }
   } catch (error) {
     console.error('加载历史项目失败:', error)
-    projects.value = []
+    if (!silent) projects.value = []
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -627,6 +803,7 @@ onMounted(async () => {
   // 确保 DOM 渲染完成后再加载数据
   await nextTick()
   await loadHistory()
+  startListPoll()
   
   // 等待 DOM 渲染后初始化观察器
   setTimeout(() => {
@@ -637,6 +814,7 @@ onMounted(async () => {
 // 如果使用 keep-alive，在组件激活时重新加载数据
 onActivated(() => {
   loadHistory()
+  startListPoll()
 })
 
 onUnmounted(() => {
@@ -650,6 +828,8 @@ onUnmounted(() => {
     clearTimeout(expandDebounceTimer)
     expandDebounceTimer = null
   }
+  stopListPoll()
+  stopModalPoll()
 })
 </script>
 
@@ -794,6 +974,25 @@ onUnmounted(() => {
   gap: 10px;
 }
 
+.card-running-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #B45309;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  animation: runningPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes runningPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* 功能状态图标组 */
 .card-status-icons {
   display: flex;
@@ -867,6 +1066,7 @@ onUnmounted(() => {
 .card-progress.completed { color: #10B981; }    /* 已完成 - 绿色 */
 .card-progress.in-progress { color: #F59E0B; }  /* 进行中 - 橙色 */
 .card-progress.not-started { color: #9CA3AF; }  /* 未开始 - 灰色 */
+.card-progress.failed { color: #EF4444; }       /* 失败 - 红色 */
 .card-status.pending { color: #9CA3AF; }
 
 /* 文件列表区域 */
@@ -1069,6 +1269,7 @@ onUnmounted(() => {
 .card-footer .card-progress.completed { color: #10B981; }
 .card-footer .card-progress.in-progress { color: #F59E0B; }
 .card-footer .card-progress.not-started { color: #9CA3AF; }
+.card-footer .card-progress.failed { color: #EF4444; }
 
 /* 底部装饰线 */
 .card-bottom-line {
@@ -1224,6 +1425,83 @@ onUnmounted(() => {
 .modal-progress.completed { color: #10B981; background: rgba(16, 185, 129, 0.1); }
 .modal-progress.in-progress { color: #F59E0B; background: rgba(245, 158, 11, 0.1); }
 .modal-progress.not-started { color: #9CA3AF; background: #F3F4F6; }
+.modal-progress.failed { color: #EF4444; background: rgba(239, 68, 68, 0.1); }
+
+.modal-activity .activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.modal-activity .activity-step {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.modal-activity .activity-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+.modal-activity .activity-state.in-progress {
+  color: #B45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.modal-activity .activity-state.completed {
+  color: #059669;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.modal-activity .activity-state.failed {
+  color: #DC2626;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.modal-activity .activity-message {
+  font-size: 0.875rem;
+  color: #374151;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.modal-activity .activity-stage {
+  font-size: 0.75rem;
+  color: #9CA3AF;
+  margin-bottom: 10px;
+}
+
+.modal-activity .activity-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: #F3F4F6;
+  overflow: hidden;
+}
+
+.modal-activity .activity-bar-fill {
+  height: 100%;
+  background: #F59E0B;
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
+.modal-activity .activity-bar-text {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.65rem;
+  color: #6B7280;
+  font-weight: 600;
+}
 
 .modal-create-time {
   font-family: var(--font-mono);

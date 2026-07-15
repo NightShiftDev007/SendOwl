@@ -101,6 +101,126 @@ def _event_config_is_strong(event_config: Optional[Dict[str, Any]]) -> bool:
     return len(posts) >= 2 and len(topics) >= 1 and bool(narrative)
 
 
+
+def _entities_from_shared_profiles(shared_dir: str) -> List[Any]:
+    """从 shared reddit_profiles 构造 EntityNode，供多方案 LLM 配置生成。"""
+    from app.ontology.zep_entity_reader import EntityNode
+
+    path = os.path.join(shared_dir, "reddit_profiles.json")
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            profiles = json.load(f) or []
+    except Exception:
+        return []
+    if not isinstance(profiles, list):
+        return []
+
+    entities = []
+    for i, p in enumerate(profiles):
+        if not isinstance(p, dict):
+            continue
+        etype = p.get("source_entity_type") or p.get("profession") or "Unknown"
+        name = p.get("name") or p.get("username") or f"agent_{i}"
+        uuid = p.get("source_entity_uuid") or f"local-profile-{i}"
+        entities.append(
+            EntityNode(
+                uuid=str(uuid),
+                name=str(name),
+                labels=[str(etype)],
+                summary=str(p.get("bio") or p.get("persona") or "")[:500],
+                attributes={"entity_type": etype},
+            )
+        )
+    return entities
+
+
+def _generate_shared_base_config(
+    *,
+    decision_id: str,
+    shared_dir: str,
+    intervention_text: str,
+    max_rounds: int,
+    graph_id: str = "",
+) -> Dict[str, Any]:
+    """多方案共享世界：用人设 + 文档跑一遍 LLM 配置（含强 event_config）。"""
+    from app.engine.contract import default_time_config, ensure_agent_configs
+    from app.engine.simulation_config_generator import SimulationConfigGenerator
+
+    entities = _entities_from_shared_profiles(shared_dir)
+    if not entities:
+        raise RuntimeError("共享世界无人设，无法生成初始激活编排")
+
+    dec = registry.get_decision(decision_id) or {}
+    ontology_id = dec.get("ontology_id") or ""
+    document_text = _combined_document_text(ontology_id) if ontology_id else ""
+    graph_id = graph_id or ""
+    if not graph_id and ontology_id:
+        try:
+            ont = registry.get_ontology(ontology_id) or {}
+            graph_id = ont.get("graph_id") or ""
+        except Exception:
+            pass
+
+    _write_prepare_progress(
+        decision_id,
+        stage="config",
+        progress=78,
+        message="正在生成双平台配置与初始激活编排…",
+        profile_count=len(entities),
+        status="running",
+    )
+
+    generator = SimulationConfigGenerator()
+
+    def _progress(step, total, message):
+        pct = 78 + int(10 * step / max(total, 1))
+        _write_prepare_progress(
+            decision_id,
+            stage="config",
+            progress=min(pct, 88),
+            message=message or "生成模拟配置…",
+            profile_count=len(entities),
+            status="running",
+        )
+
+    params = generator.generate_config(
+        simulation_id=f"shared_{decision_id}",
+        project_id=decision_id,
+        graph_id=graph_id,
+        simulation_requirement=intervention_text or (dec.get("title") or decision_id),
+        document_text=document_text or "",
+        entities=entities,
+        enable_twitter=True,
+        enable_reddit=True,
+        progress_callback=_progress,
+    )
+    cfg = params.to_dict()
+    # 与单 sim 一致：补齐 agent_configs 兜底
+    try:
+        from app.engine.contract import _load_profiles_from_dir
+        from app.engine.intervention import load_agents_index
+
+        agents = load_agents_index(_load_profiles_from_dir(shared_dir))
+        cfg = ensure_agent_configs(cfg, agents)
+    except Exception as e:
+        logger.warning(f"shared base ensure_agent_configs 失败: {e}")
+
+    # 覆盖时间总长为决策 max_rounds（小时）
+    if isinstance(cfg.get("time_config"), dict) and max_rounds:
+        cfg["time_config"]["total_simulation_hours"] = int(max_rounds)
+
+    cfg["platform"] = cfg.get("platform") or "parallel"
+    cfg["simulation_requirement"] = intervention_text or cfg.get("simulation_requirement") or ""
+
+    if not _event_config_is_strong(cfg.get("event_config")):
+        raise RuntimeError(
+            "LLM 初始激活编排结果无效（需≥2条初始帖、≥1个热点、非空叙事）"
+        )
+    return cfg
+
+
 def _read_event_config_from_sim(sim_id: Optional[str]) -> Optional[Dict[str, Any]]:
     if not sim_id:
         return None
@@ -669,14 +789,19 @@ class ScenarioRunner:
             status="running",
         )
 
-        from app.engine.contract import default_time_config
-
         base_cfg = None
         if os.path.isfile(base_cfg_path) and not force:
             try:
                 with open(base_cfg_path, encoding="utf-8") as f:
                     base_cfg = json.load(f)
-                if not (base_cfg or {}).get("time_config"):
+                # 弱/空初始激活不能复用（否则多方案永远 prepare_failed）
+                if not (base_cfg or {}).get("time_config") or not _event_config_is_strong(
+                    (base_cfg or {}).get("event_config")
+                ):
+                    logger.info(
+                        f"resume shared: base_config 缺失或 event_config 弱，重新生成 "
+                        f"decision={decision_id}"
+                    )
                     base_cfg = None
                 else:
                     logger.info(
@@ -686,40 +811,26 @@ class ScenarioRunner:
                 base_cfg = None
 
         if base_cfg is None:
-            base_cfg = {
-                "time_config": default_time_config(
-                    total_hours=int(dec.get("max_rounds") or 10),
-                    minutes_per_round=60,
-                    agents_per_hour_min=2,
-                    agents_per_hour_max=12,
-                ),
-                "event_config": {
-                    "initial_posts": [],
-                    "hot_topics": [],
-                    "narrative_direction": "",
-                },
-                "agent_configs": [],
-                "twitter_config": {
-                    "platform": "twitter",
-                    "recency_weight": 0.4,
-                    "popularity_weight": 0.3,
-                    "relevance_weight": 0.3,
-                    "viral_threshold": 10,
-                    "echo_chamber_strength": 0.5,
-                },
-                "reddit_config": {
-                    "platform": "reddit",
-                    "recency_weight": 0.3,
-                    "popularity_weight": 0.4,
-                    "relevance_weight": 0.3,
-                    "viral_threshold": 15,
-                    "echo_chamber_strength": 0.6,
-                },
-                "platform": "parallel",
-                "simulation_requirement": intervention_text or (dec.get("title") or ""),
-            }
+            graph_id = ""
+            try:
+                ont = registry.get_ontology(dec.get("ontology_id") or "") or {}
+                graph_id = ont.get("graph_id") or ""
+            except Exception:
+                pass
+            base_cfg = _generate_shared_base_config(
+                decision_id=decision_id,
+                shared_dir=shared_dir,
+                intervention_text=intervention_text,
+                max_rounds=int(dec.get("max_rounds") or 10),
+                graph_id=graph_id,
+            )
             with open(base_cfg_path, "w", encoding="utf-8") as f:
                 json.dump(base_cfg, f, ensure_ascii=False, indent=2)
+            logger.info(
+                f"shared LLM 配置已写入: decision={decision_id} "
+                f"agents={len(base_cfg.get('agent_configs') or [])} "
+                f"posts={len((base_cfg.get('event_config') or {}).get('initial_posts') or [])}"
+            )
 
         registry.update_decision(decision_id, shared_world_dir=shared_dir)
         _write_prepare_progress(
@@ -767,7 +878,7 @@ class ScenarioRunner:
         )
 
         cfg_path = os.path.join(run_dir, "simulation_config.json")
-        if os.path.isfile(cfg_path) and (graph_id or decision_id or existing_event):
+        if os.path.isfile(cfg_path) and (graph_id or decision_id or existing_event or base_cfg):
             try:
                 with open(cfg_path, encoding="utf-8") as f:
                     cfg = json.load(f)
@@ -775,10 +886,52 @@ class ScenarioRunner:
                     cfg["graph_id"] = graph_id
                 if decision_id:
                     cfg["project_id"] = decision_id
-                # 干预 stub 弱于已有 LLM 编排时，保留后者
-                if existing_event and not _event_config_is_strong(cfg.get("event_config")):
+
+                # materialize 的 apply_to_config 会用方案干预帖覆盖整份 event_config，
+                # 常把 LLM 热点/叙事冲成弱编排。合并：方案帖优先，缺口用 base/已有强编排补齐。
+                base_event = (
+                    existing_event
+                    if _event_config_is_strong(existing_event)
+                    else (
+                        (base_cfg or {}).get("event_config")
+                        if _event_config_is_strong((base_cfg or {}).get("event_config"))
+                        else None
+                    )
+                )
+                cur_event = cfg.get("event_config") if isinstance(cfg.get("event_config"), dict) else {}
+                if base_event and not _event_config_is_strong(cur_event):
+                    merged = dict(base_event)
+                    iv_posts = [
+                        p
+                        for p in (cur_event.get("initial_posts") or [])
+                        if isinstance(p, dict) and str(p.get("content") or "").strip()
+                    ]
+                    base_posts = [
+                        p
+                        for p in (base_event.get("initial_posts") or [])
+                        if isinstance(p, dict) and str(p.get("content") or "").strip()
+                    ]
+                    if iv_posts:
+                        # 方案差异帖在前，再用 base 帖补到 ≥2
+                        seen = {str(p.get("content") or "").strip() for p in iv_posts}
+                        padded = list(iv_posts)
+                        for p in base_posts:
+                            if len(padded) >= 2:
+                                break
+                            c = str(p.get("content") or "").strip()
+                            if c and c not in seen:
+                                padded.append(p)
+                                seen.add(c)
+                        merged["initial_posts"] = padded
+                    cfg["event_config"] = merged
+                    logger.info(
+                        f"合并强 event_config 与方案干预: sim_id={sim_id} "
+                        f"posts={len(merged.get('initial_posts') or [])}"
+                    )
+                elif existing_event and not _event_config_is_strong(cur_event):
                     cfg["event_config"] = existing_event
                     logger.info(f"保留已有强 event_config: sim_id={sim_id}")
+
                 with open(cfg_path, "w", encoding="utf-8") as f:
                     json.dump(cfg, f, ensure_ascii=False, indent=2)
             except Exception:

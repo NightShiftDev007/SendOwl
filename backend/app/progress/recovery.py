@@ -273,9 +273,16 @@ def _recover_report_tasks() -> int:
     from app.decision.report_agent import ReportManager
     from app.engine.simulation_manager import SimulationManager
     from app.config import Config
+    from app.progress.suspend import (
+        is_decision_trashed,
+        is_sim_owner_trashed,
+        resolve_decision_id_for_sim,
+        TRASH_SUSPEND_REASON,
+    )
 
     tm = TaskManager()
     count = 0
+    skipped_trash = 0
     reports_root = getattr(Config, "REPORTS_DIR", None) or os.path.join(
         Config.UPLOAD_FOLDER, "reports"
     )
@@ -299,6 +306,30 @@ def _recover_report_tasks() -> int:
         if st not in ("processing", "pending"):
             continue
 
+        sim_id = meta.get("simulation_id") or (task.metadata or {}).get(
+            "simulation_id"
+        )
+        decision_id = meta.get("decision_id") or resolve_decision_id_for_sim(sim_id)
+
+        # 仅当归属到「未入回收站」的决策时才自动续跑。
+        # 已 trash / 决策已删 / 无法归属 → fail task，等用户进任务显式重试。
+        owner_ok = bool(decision_id) and not is_decision_trashed(decision_id)
+        if not owner_ok or meta.get("cancelled") or (
+            sim_id and is_sim_owner_trashed(sim_id)
+        ):
+            ReportManager.cancel_generate(
+                report_id,
+                reason=TRASH_SUSPEND_REASON,
+                decision_id=decision_id,
+            )
+            tm.fail_task(tid, TRASH_SUSPEND_REASON)
+            skipped_trash += 1
+            logger.info(
+                f"recovery: 跳过无活跃归属的报告 report={report_id} "
+                f"decision={decision_id} cancelled={bool(meta.get('cancelled'))}"
+            )
+            continue
+
         # 已有完整报告则直接 complete
         full_path = ReportManager._get_report_markdown_path(report_id)
         if os.path.isfile(full_path) and os.path.getsize(full_path) > 0:
@@ -308,9 +339,6 @@ def _recover_report_tasks() -> int:
             )
             continue
 
-        sim_id = meta.get("simulation_id") or (task.metadata or {}).get(
-            "simulation_id"
-        )
         graph_id = (task.metadata or {}).get("graph_id")
         requirement = ""
         if sim_id:
@@ -345,6 +373,8 @@ def _recover_report_tasks() -> int:
             logger.info(f"recovery: 续跑报告 report={report_id} task={tid}")
         else:
             tm.fail_task(tid, "recovery: resume_generate 失败")
+    if skipped_trash:
+        logger.info(f"recovery: 因回收站跳过报告 {skipped_trash} 个")
     return count
 
 
@@ -354,6 +384,7 @@ def _recover_n1_prepare_sims() -> int:
     from app.models.task import TaskManager, TaskStatus
     from app.config import Config
     from app.ontology import registry
+    from app.progress.suspend import is_decision_trashed, TRASH_SUSPEND_REASON
 
     mgr = SimulationManager()
     tm = TaskManager()
@@ -384,6 +415,14 @@ def _recover_n1_prepare_sims() -> int:
         document_text = ""
         requirement = ""
         project_id = state.project_id or ""
+        if project_id and str(project_id).startswith("dec_") and is_decision_trashed(
+            project_id
+        ):
+            tm.fail_task(tid, TRASH_SUSPEND_REASON)
+            logger.info(
+                f"recovery: 跳过回收站 N=1 prepare sim={sim_id} decision={project_id}"
+            )
+            continue
         try:
             cfg = mgr.get_simulation_config(sim_id) or {}
             requirement = cfg.get("simulation_requirement") or ""
