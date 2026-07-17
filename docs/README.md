@@ -7,6 +7,8 @@
 | 文档 | 内容 |
 |------|------|
 | [design.md](./design.md) | 定位、概念模型、五层架构、分层设计、引擎两档、场景模板、校准、演进路线、已定/待定 |
+| [gtv-deal-forecast.md](./gtv-deal-forecast.md) | GTV 成交推演试点：谁开单 / 哪套房 / 何时；数据底座、标签、回测、与决策中心衔接 |
+| [policy-org-simulation.md](./policy-org-simulation.md) | 政策机构线：Org Dossier → 通知/函件 → 机构反应；L0–L3 分层与 P1.5 范围 |
 | [mirofish-integration.md](./mirofish-integration.md) | MiroFish 模块复用映射与 monorepo 集成约定 |
 
 ## 运行时（进度 / 恢复）
@@ -27,9 +29,11 @@
 ## 阅读顺序建议
 
 1. 新同学 / 评审方案 → `design.md`
-2. 改进度条 / SSE / 前端 Step → `progress-sse.md`
-3. 改启动恢复 / 子进程 / 建图断点 → `crash-recovery.md`
-4. 改 Step5 采访 / 环境关闭后回顾 → `interview-dual-track.md`
-5. 改图谱读路径 / 快照同步 → `graph-snapshot.md`
-6. 动 MiroFish 遗留模块 → `mirofish-integration.md`
-7. 扩社媒渠道 → `platform-plugins.md`
+2. GTV 成交推演试点 → `gtv-deal-forecast.md`
+3. 政策机构线 → `policy-org-simulation.md`
+4. 改进度条 / SSE / 前端 Step → `progress-sse.md`
+5. 改启动恢复 / 子进程 / 建图断点 → `crash-recovery.md`
+6. 改 Step5 采访 / 环境关闭后回顾 → `interview-dual-track.md`
+7. 改图谱读路径 / 快照同步 → `graph-snapshot.md`
+8. 动 MiroFish 遗留模块 → `mirofish-integration.md`
+9. 扩社媒渠道 → `platform-plugins.md`

@@ -29,6 +29,12 @@ backend/logs/
 *.sqlite
 *.sqlite3
 
+# GTV forecast derived data (PII-stripped local artifacts)
+backend/scripts/gtv_forecast/_data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
 # OS / IDE
 .DS_Store
 Thumbs.db
