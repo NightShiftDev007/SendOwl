@@ -194,6 +194,8 @@ OPINION_SCHEMA: Dict[str, Any] = {
 _TEMPLATES: Dict[str, Dict[str, Any]] = {
     "opinion": OPINION_SCHEMA,
     "opinion_propagation": OPINION_SCHEMA,
+    # 商业成交模板：建图仍走 LLM；此处仅注册名称避免 get_template KeyError
+    "gtv_deal": OPINION_SCHEMA,
 }
 
 
@@ -212,7 +214,17 @@ def list_templates() -> List[str]:
 
 def get_case_dir(template: str = "opinion") -> str:
     """案例材料目录。"""
-    if template in ("opinion", "opinion_propagation"):
+    key = (template or "opinion").strip().lower()
+    if key == "gtv_deal":
+        return os.path.normpath(
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "scripts",
+                "gtv_forecast",
+                "seeds",
+            )
+        )
+    if key in ("opinion", "opinion_propagation"):
         return _OPINION_CASE_DIR
     return _OPINION_CASE_DIR
 
@@ -226,6 +238,8 @@ def get_case_file_paths(template: str = "opinion") -> List[str]:
         os.path.join(case_dir, f)
         for f in sorted(os.listdir(case_dir))
         if f.endswith((".md", ".txt", ".markdown"))
+        # 演示报告缓存不当作本体种子上传
+        and f not in ("demo_report.md",)
     ]
     return paths
 

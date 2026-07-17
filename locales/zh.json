@@ -69,12 +69,22 @@
     "supportedFormats": "PDF · MD · TXT",
     "dragToUpload": "拖拽文件上传",
     "orBrowse": "或点击浏览文件系统",
+    "uploadHintGtv": "补充说明，不是 CRM 全量",
     "inputParams": "输入参数",
     "simulationPrompt": "02 / 推演提示词",
     "promptPlaceholder": "用自然语言描述决策问题，例如：若发布某项公告，舆情会如何演变？",
     "engineBadge": "Engine · SandOwl-V0.1",
     "startEngine": "构建本体",
-    "initializing": "初始化中..."
+    "initializing": "初始化中...",
+    "loadGtvPack": "加载任务说明（摘要包）",
+    "loadingGtvPack": "加载摘要包…",
+    "gtvTemplateBadge": "商业模板 · gtv_deal",
+    "gtvCrmSeedTitle": "成交推演材料（CRM 种子底座）",
+    "gtvCrmSeedDesc": "本机 parquet；推演主读此项",
+    "gtvCrmSeedMissing": "未检测到本地 CRM 种子",
+    "gtvBriefTitle": "任务说明文件（可选）",
+    "gtvBriefDesc": "脱敏聚合摘要，用于说明与图谱，非全库清单",
+    "gtvSeedStats": "房源 {listings} · 经纪人 {brokers} · 签约约 {signs}"
   },
   "main": {
     "layoutGraph": "图谱",
@@ -110,9 +120,13 @@
     "creating": "创建中...",
     "enterEnvSetup": "进入环境搭建",
     "createSimulationFailed": "创建模拟失败: {error}",
-    "createSimulationException": "创建模拟异常: {error}"
+    "createSimulationException": "创建模拟异常: {error}",
+    "gtvGraphHint": "图谱实体来自任务说明摘要，成交推演数据来自 CRM 种子底座"
   },
   "step2": {
+    "gtvMaterialBanner": "材料 = CRM 种子底座 · 本步 = 干预/提示（对材料干什么）",
+    "gtvSeedStatsLine": "CRM 种子：房源 {listings} · 经纪人 {brokers} · 签约约 {signs}",
+    "gtvSeedMissing": "未检测到本地 CRM 种子",
     "simInstanceInit": "模拟实例初始化",
     "simInstanceDesc": "新建simulation实例，拉取模拟世界参数模版",
     "asyncTaskDone": "异步任务已完成",
@@ -209,6 +223,7 @@
     "runLogsCount": "运行日志 ({count})"
   },
   "step3": {
+    "gtvWorldSampleNote": "世界抽样自 CRM 种子底座",
     "startGenerateReport": "开始生成结果报告",
     "statusRunningRound": "{scenario} · R{current}/{total}",
     "roundOf": "第{current}轮/{total}",

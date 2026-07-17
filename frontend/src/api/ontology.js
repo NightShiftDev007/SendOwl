@@ -12,6 +12,16 @@ export function createOntology(formData) {
   )
 }
 
+/** 首页加载 GTV 现实种子演示包 */
+export function fetchGtvDemoPack() {
+  return service.get('/api/ontology/gtv-demo-pack')
+}
+
+/** CRM 种子底座就绪状态（房源/经纪人/签约规模） */
+export function fetchGtvSeedStatus() {
+  return service.get('/api/ontology/gtv-seed-status')
+}
+
 /** 兼容旧名：首页/工作台仍可能调用 generateOntology */
 export function generateOntology(formData) {
   return createOntology(formData)

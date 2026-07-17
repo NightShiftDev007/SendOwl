@@ -69,12 +69,22 @@
     "supportedFormats": "PDF · MD · TXT",
     "dragToUpload": "Drag files to upload",
     "orBrowse": "or click to browse files",
+    "uploadHintGtv": "Supplementary notes — not the full CRM dump",
     "inputParams": "Input Parameters",
     "simulationPrompt": "02 / Simulation Prompt",
     "promptPlaceholder": "Describe the decision question in natural language, e.g. how would public opinion shift after an announcement?",
     "engineBadge": "Engine · SandOwl-V0.1",
     "startEngine": "Build Ontology",
-    "initializing": "Initializing..."
+    "initializing": "Initializing...",
+    "loadGtvPack": "Load task brief (summary pack)",
+    "loadingGtvPack": "Loading summary pack…",
+    "gtvTemplateBadge": "Commercial · gtv_deal",
+    "gtvCrmSeedTitle": "Deal materials (CRM seed base)",
+    "gtvCrmSeedDesc": "Local parquet — the main source for forecasting",
+    "gtvCrmSeedMissing": "Local CRM seed not detected",
+    "gtvBriefTitle": "Task brief files (optional)",
+    "gtvBriefDesc": "Aggregated summary for narrative & graph — not the full listing dump",
+    "gtvSeedStats": "{listings} listings · {brokers} brokers · ~{signs} signs"
   },
   "main": {
     "layoutGraph": "Graph",
@@ -110,9 +120,13 @@
     "creating": "Creating...",
     "enterEnvSetup": "Enter Environment Setup",
     "createSimulationFailed": "Failed to create simulation: {error}",
-    "createSimulationException": "Simulation creation error: {error}"
+    "createSimulationException": "Simulation creation error: {error}",
+    "gtvGraphHint": "Graph entities come from the task brief; deal forecast data comes from the CRM seed base"
   },
   "step2": {
+    "gtvMaterialBanner": "Materials = CRM seed base · This step = interventions / prompts (what to do with materials)",
+    "gtvSeedStatsLine": "CRM seed: {listings} listings · {brokers} brokers · ~{signs} signs",
+    "gtvSeedMissing": "Local CRM seed not detected",
     "simInstanceInit": "Simulation Instance Initialization",
     "simInstanceDesc": "Create a new simulation instance and pull world parameter templates",
     "asyncTaskDone": "Async task completed",
@@ -209,6 +223,7 @@
     "runLogsCount": "Run logs ({count})"
   },
   "step3": {
+    "gtvWorldSampleNote": "World sampled from CRM seed base",
     "startGenerateReport": "Generate Report",
     "statusRunningRound": "{scenario} · R{current}/{total}",
     "roundOf": "R{current}/{total}",

@@ -1,0 +1,576 @@
+{
+  "listings": [
+    {
+      "listing_id": "2034204504226725889",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.9681039406672485,
+      "label": 1,
+      "heat": 4,
+      "days_to_sign": 10.0,
+      "pred_days_p50": 15.615008082074372
+    },
+    {
+      "listing_id": "2046179463575302145",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.9649713331090028,
+      "label": 1,
+      "heat": 2,
+      "days_to_sign": 20.0,
+      "pred_days_p50": 23.485094324932803
+    },
+    {
+      "listing_id": "2034198028015828994",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.9556084617919625,
+      "label": 1,
+      "heat": 3,
+      "days_to_sign": 28.0,
+      "pred_days_p50": 22.809720741984783
+    },
+    {
+      "listing_id": "1990309005232226305",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.9308700312453105,
+      "label": 1,
+      "heat": 2,
+      "days_to_sign": 17.0,
+      "pred_days_p50": 9.172815794245038
+    },
+    {
+      "listing_id": "2019968414360072193",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.9098263260884824,
+      "label": 1,
+      "heat": 2,
+      "days_to_sign": 27.0,
+      "pred_days_p50": 30.231922213229513
+    },
+    {
+      "listing_id": "954846840449011949",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.9089732550046661,
+      "label": 1,
+      "heat": 7,
+      "days_to_sign": 12.0,
+      "pred_days_p50": 19.080656996578913
+    },
+    {
+      "listing_id": "1974422546989289474",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.8689452366481296,
+      "label": 1,
+      "heat": 4,
+      "days_to_sign": 19.0,
+      "pred_days_p50": 20.08865242361769
+    },
+    {
+      "listing_id": "2036731857304989697",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.8610760174944165,
+      "label": 0,
+      "heat": 2,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "1977682270147358722",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.8562247789416382,
+      "label": 1,
+      "heat": 2,
+      "days_to_sign": 27.0,
+      "pred_days_p50": 38.701328994805046
+    },
+    {
+      "listing_id": "1986697764378701825",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.8421098549285224,
+      "label": 1,
+      "heat": 10,
+      "days_to_sign": 35.0,
+      "pred_days_p50": 25.01425699322501
+    },
+    {
+      "listing_id": "2034195130296217602",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.8240661400218748,
+      "label": 1,
+      "heat": 2,
+      "days_to_sign": 47.0,
+      "pred_days_p50": 46.79600816563753
+    },
+    {
+      "listing_id": "1955108921919713281",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.7838645706423814,
+      "label": 1,
+      "heat": 6,
+      "days_to_sign": 18.0,
+      "pred_days_p50": 30.818294947708587
+    },
+    {
+      "listing_id": "2039272493749575681",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.7695260223236714,
+      "label": 1,
+      "heat": 3,
+      "days_to_sign": 42.0,
+      "pred_days_p50": 26.19980991345539
+    },
+    {
+      "listing_id": "1976926680065871874",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.7041563655373205,
+      "label": 0,
+      "heat": 5,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "2009200311639523330",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.7031674324470883,
+      "label": 1,
+      "heat": 9,
+      "days_to_sign": 24.0,
+      "pred_days_p50": 22.695531749164406
+    },
+    {
+      "listing_id": "2036026746615037953",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.6458091431419367,
+      "label": 1,
+      "heat": 3,
+      "days_to_sign": 24.0,
+      "pred_days_p50": 24.682544085542887
+    },
+    {
+      "listing_id": "1995693764787998721",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.625571861945249,
+      "label": 0,
+      "heat": 16,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "2010563281518649345",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.6243723897238317,
+      "label": 1,
+      "heat": 5,
+      "days_to_sign": 46.0,
+      "pred_days_p50": 23.93926312487074
+    },
+    {
+      "listing_id": "2042164639195394050",
+      "listing_type": "office",
+      "city_name": null,
+      "score": 0.6084792346245874,
+      "label": 1,
+      "heat": 1,
+      "days_to_sign": 52.0,
+      "pred_days_p50": 23.604843343304136
+    },
+    {
+      "listing_id": "2046520948574330882",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.607817162690294,
+      "label": 1,
+      "heat": 6,
+      "days_to_sign": 38.0,
+      "pred_days_p50": 26.910009418795205
+    },
+    {
+      "listing_id": "1978412170395299842",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.5993260117458921,
+      "label": 1,
+      "heat": 8,
+      "days_to_sign": 17.0,
+      "pred_days_p50": 40.38654743077564
+    },
+    {
+      "listing_id": "1987798934086533121",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.5867072926403086,
+      "label": 1,
+      "heat": 5,
+      "days_to_sign": 54.0,
+      "pred_days_p50": 35.420251404184555
+    },
+    {
+      "listing_id": "2001229799100235777",
+      "listing_type": "plant",
+      "city_name": "廊坊市",
+      "score": 0.5860938778603756,
+      "label": 0,
+      "heat": 1,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "1966427387402051585",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.5852483449015584,
+      "label": 0,
+      "heat": 4,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "1968882297813000193",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.569056756596671,
+      "label": 0,
+      "heat": 1,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "2044392964903071745",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.5689039486078518,
+      "label": 1,
+      "heat": 1,
+      "days_to_sign": 18.0,
+      "pred_days_p50": 15.70313986469179
+    },
+    {
+      "listing_id": "2043985701987098626",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.5220402670578456,
+      "label": 1,
+      "heat": 1,
+      "days_to_sign": 34.0,
+      "pred_days_p50": 22.898751996871944
+    },
+    {
+      "listing_id": "1966107090388299778",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.5152116920978415,
+      "label": 1,
+      "heat": 1,
+      "days_to_sign": 26.0,
+      "pred_days_p50": 34.17084632436506
+    },
+    {
+      "listing_id": "1995398384342962178",
+      "listing_type": "plant",
+      "city_name": "上海市",
+      "score": 0.5121259499584361,
+      "label": 0,
+      "heat": 1,
+      "days_to_sign": NaN,
+      "pred_days_p50": null
+    },
+    {
+      "listing_id": "2038895056904712193",
+      "listing_type": "plant",
+      "city_name": null,
+      "score": 0.5031998504894495,
+      "label": 1,
+      "heat": 1,
+      "days_to_sign": 52.0,
+      "pred_days_p50": 19.398447143767335
+    }
+  ],
+  "brokers": [
+    {
+      "user_id": "1910171556344135763",
+      "nick_name": "罗昭通",
+      "score": 0.9954304197913735,
+      "label": 1,
+      "label_deals": 12.0,
+      "hist_deals": 27.0,
+      "n_listings": 182
+    },
+    {
+      "user_id": "1910171556344135797",
+      "nick_name": "牛源",
+      "score": 0.9946543315171127,
+      "label": 1,
+      "label_deals": 8.0,
+      "hist_deals": 56.0,
+      "n_listings": 289
+    },
+    {
+      "user_id": "1971452762684772353",
+      "nick_name": "邱晨浩",
+      "score": 0.9933882069001989,
+      "label": 1,
+      "label_deals": 9.0,
+      "hist_deals": 27.0,
+      "n_listings": 139
+    },
+    {
+      "user_id": "1910171556344135774",
+      "nick_name": "唐祖波",
+      "score": 0.9930721458961093,
+      "label": 1,
+      "label_deals": 31.0,
+      "hist_deals": 28.0,
+      "n_listings": 805
+    },
+    {
+      "user_id": "1978280188677558274",
+      "nick_name": "姜湛渊",
+      "score": 0.9930274483719099,
+      "label": 1,
+      "label_deals": 6.0,
+      "hist_deals": 38.0,
+      "n_listings": 227
+    },
+    {
+      "user_id": "1910171556344135787",
+      "nick_name": "翟嘉兴",
+      "score": 0.9908482633290857,
+      "label": 1,
+      "label_deals": 26.0,
+      "hist_deals": 58.0,
+      "n_listings": 153
+    },
+    {
+      "user_id": "1962400181696274434",
+      "nick_name": "王建平",
+      "score": 0.9886464569983413,
+      "label": 1,
+      "label_deals": 37.0,
+      "hist_deals": 42.0,
+      "n_listings": 611
+    },
+    {
+      "user_id": "1910171556344135759",
+      "nick_name": "高丽琴",
+      "score": 0.9880375777241801,
+      "label": 1,
+      "label_deals": 16.0,
+      "hist_deals": 36.0,
+      "n_listings": 587
+    },
+    {
+      "user_id": "1910171556344135792",
+      "nick_name": "梁磊磊",
+      "score": 0.9865402199763432,
+      "label": 1,
+      "label_deals": 20.0,
+      "hist_deals": 49.0,
+      "n_listings": 152
+    },
+    {
+      "user_id": "1910171556344135767",
+      "nick_name": "张亚威",
+      "score": 0.9849063872954715,
+      "label": 1,
+      "label_deals": 6.0,
+      "hist_deals": 39.0,
+      "n_listings": 276
+    },
+    {
+      "user_id": "1955946950662074369",
+      "nick_name": "李振原",
+      "score": 0.9846239085772922,
+      "label": 1,
+      "label_deals": 5.0,
+      "hist_deals": 45.0,
+      "n_listings": 327
+    },
+    {
+      "user_id": "1970402776958226433",
+      "nick_name": "董哲",
+      "score": 0.9842816508723495,
+      "label": 1,
+      "label_deals": 19.0,
+      "hist_deals": 37.0,
+      "n_listings": 178
+    },
+    {
+      "user_id": "1910171556344135741",
+      "nick_name": "秦苏君",
+      "score": 0.9833928115312967,
+      "label": 1,
+      "label_deals": 7.0,
+      "hist_deals": 38.0,
+      "n_listings": 193
+    },
+    {
+      "user_id": "1910171556344135736",
+      "nick_name": "邓春伟",
+      "score": 0.9833889077592602,
+      "label": 1,
+      "label_deals": 10.0,
+      "hist_deals": 56.0,
+      "n_listings": 473
+    },
+    {
+      "user_id": "1962819352712126465",
+      "nick_name": "刘东冬",
+      "score": 0.9826419580521657,
+      "label": 1,
+      "label_deals": 15.0,
+      "hist_deals": 52.0,
+      "n_listings": 178
+    },
+    {
+      "user_id": "1910171556344135766",
+      "nick_name": "凡顺",
+      "score": 0.9805798461772666,
+      "label": 1,
+      "label_deals": 29.0,
+      "hist_deals": 39.0,
+      "n_listings": 123
+    },
+    {
+      "user_id": "1976573025497169921",
+      "nick_name": "兰伟丽",
+      "score": 0.9785599324679505,
+      "label": 1,
+      "label_deals": 28.0,
+      "hist_deals": 36.0,
+      "n_listings": 301
+    },
+    {
+      "user_id": "1980154590212308993",
+      "nick_name": "吴帅",
+      "score": 0.9741441514157215,
+      "label": 1,
+      "label_deals": 6.0,
+      "hist_deals": 39.0,
+      "n_listings": 1058
+    },
+    {
+      "user_id": "1910171556344135819",
+      "nick_name": "蔡亮",
+      "score": 0.9695054047286247,
+      "label": 1,
+      "label_deals": 9.0,
+      "hist_deals": 38.0,
+      "n_listings": 121
+    },
+    {
+      "user_id": "1910171556344135709",
+      "nick_name": "赵吉月",
+      "score": 0.9653347063056316,
+      "label": 1,
+      "label_deals": 7.0,
+      "hist_deals": 43.0,
+      "n_listings": 152
+    },
+    {
+      "user_id": "1964877219999842306",
+      "nick_name": "陈宏莉",
+      "score": 0.9621706849367843,
+      "label": 1,
+      "label_deals": 7.0,
+      "hist_deals": 20.0,
+      "n_listings": 571
+    },
+    {
+      "user_id": "1997924877037551617",
+      "nick_name": "郑亚男",
+      "score": 0.95470221436287,
+      "label": 1,
+      "label_deals": 13.0,
+      "hist_deals": 10.0,
+      "n_listings": 232
+    },
+    {
+      "user_id": "1999379588857147394",
+      "nick_name": "陈派光",
+      "score": 0.9515085430696746,
+      "label": 1,
+      "label_deals": 19.0,
+      "hist_deals": 29.0,
+      "n_listings": 126
+    },
+    {
+      "user_id": "1910171556344135789",
+      "nick_name": "邱爱莉",
+      "score": 0.947175503708579,
+      "label": 1,
+      "label_deals": 5.0,
+      "hist_deals": 19.0,
+      "n_listings": 205
+    },
+    {
+      "user_id": "1910171556344135761",
+      "nick_name": "罗吉男",
+      "score": 0.9466562965824109,
+      "label": 1,
+      "label_deals": 9.0,
+      "hist_deals": 18.0,
+      "n_listings": 172
+    },
+    {
+      "user_id": "1910171556344135704",
+      "nick_name": "曹建兵",
+      "score": 0.9388432042360815,
+      "label": 1,
+      "label_deals": 2.0,
+      "hist_deals": 12.0,
+      "n_listings": 149
+    },
+    {
+      "user_id": "1910171556344135786",
+      "nick_name": "黎俊",
+      "score": 0.9332602281990957,
+      "label": 1,
+      "label_deals": 7.0,
+      "hist_deals": 20.0,
+      "n_listings": 197
+    },
+    {
+      "user_id": "2000857381889585154",
+      "nick_name": "富长金",
+      "score": 0.9264254339269992,
+      "label": 1,
+      "label_deals": 24.0,
+      "hist_deals": 10.0,
+      "n_listings": 96
+    },
+    {
+      "user_id": "1910171556344135812",
+      "nick_name": "陈旭光",
+      "score": 0.9237207357584644,
+      "label": 1,
+      "label_deals": 5.0,
+      "hist_deals": 16.0,
+      "n_listings": 193
+    },
+    {
+      "user_id": "1983725637872730113",
+      "nick_name": "秦天富",
+      "score": 0.9233683104062356,
+      "label": 1,
+      "label_deals": 4.0,
+      "hist_deals": 12.0,
+      "n_listings": 61
+    }
+  ]
+}

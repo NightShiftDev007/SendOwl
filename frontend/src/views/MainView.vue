@@ -250,7 +250,19 @@ const handleNewProject = async () => {
     pending.files.forEach((f) => formData.append('files', f))
     formData.append('simulation_requirement', pending.simulationRequirement)
     formData.append('name', pending.simulationRequirement.slice(0, 40) || '未命名本体')
-    formData.append('template', 'opinion')
+    let template = (pending.template || '').trim() || 'opinion'
+    const req = pending.simulationRequirement || ''
+    if (
+      template === 'opinion' &&
+      (req.includes('[template:gtv_deal]') ||
+        pending.files?.some((f) => String(f.name || '').toLowerCase().includes('gtv_')))
+    ) {
+      template = 'gtv_deal'
+    }
+    formData.append('template', template)
+    if (template === 'gtv_deal') {
+      addLog('Scene template: gtv_deal（商业成交统计引擎）')
+    }
 
     const res = await generateOntology(formData)
     if (res.success) {

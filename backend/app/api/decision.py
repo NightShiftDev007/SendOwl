@@ -169,6 +169,17 @@ def prepare_decision(decision_id: str):
             })
 
         runner = ScenarioRunner()
+        # GTV 商业模板：轻量 prepare 秒级完成，同步返回（避免后台线程 + SSE 空等）
+        try:
+            from app.engine.gtv_adapter import is_gtv_deal
+
+            if is_gtv_deal(decision_id):
+                data = runner.prepare_decision(decision_id, force=force)
+                return jsonify({"success": True, "data": data})
+        except Exception as e:
+            logger.exception("gtv light prepare failed: %s", e)
+            return jsonify({"success": False, "error": str(e)}), 500
+
         # 已完整准备：同步返回缓存，避免无意义后台任务
         try:
             runs = registry.list_runs_for_decision(decision_id) or []

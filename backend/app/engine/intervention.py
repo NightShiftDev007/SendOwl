@@ -30,7 +30,7 @@ class InitialPost:
 
 @dataclass
 class Intervention:
-    """一次干预：一组初始帖 + 可选元数据。"""
+    """一次干预：一组初始帖 + 可选元数据；GTV 场景可附 gtv 杠杆。"""
 
     name: str = ""
     kind: str = "custom"
@@ -40,6 +40,7 @@ class Intervention:
     preferred_poster_keywords: List[str] = field(
         default_factory=lambda: ["交管", "官方", "周明远", "公安", "交通警察"]
     )
+    gtv: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_dict(cls, data: Any) -> "Intervention":
@@ -65,6 +66,9 @@ class Intervention:
                 }
             ]
         posts = [_coerce_post(p) for p in posts_raw]
+        gtv = data.get("gtv")
+        if gtv is not None and not isinstance(gtv, dict):
+            gtv = None
         return cls(
             name=str(data.get("name") or ""),
             kind=str(data.get("kind") or data.get("id") or "custom"),
@@ -77,10 +81,11 @@ class Intervention:
                 data.get("preferred_poster_keywords")
                 or ["交管", "官方", "周明远", "公安", "交通警察"]
             ),
+            gtv=gtv,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "name": self.name,
             "kind": self.kind,
             "initial_posts": [p.to_dict() for p in self.initial_posts],
@@ -88,6 +93,9 @@ class Intervention:
             "narrative_direction": self.narrative_direction,
             "preferred_poster_keywords": self.preferred_poster_keywords,
         }
+        if self.gtv:
+            d["gtv"] = self.gtv
+        return d
 
     def intervention_text(self) -> str:
         parts = [self.name, self.narrative_direction]

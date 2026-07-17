@@ -882,6 +882,32 @@ def prepare_simulation():
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
+
+        # GTV：sim.project_id 常为 decision_id，走轻量 prepare（跳过社媒人设）
+        try:
+            from app.engine.gtv_adapter import is_gtv_deal
+            from app.engine.scenario_runner import ScenarioRunner
+
+            gtv_decision_id = getattr(state, "project_id", None) or ""
+            if str(gtv_decision_id).startswith("dec_") and is_gtv_deal(gtv_decision_id):
+                force_gtv = bool(data.get("force_regenerate", False))
+                payload = ScenarioRunner().prepare_decision(
+                    gtv_decision_id, force=force_gtv
+                )
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "decision_id": gtv_decision_id,
+                        "status": "ready",
+                        "message": payload.get("message") or "商业模板环境已就绪",
+                        "already_prepared": bool(payload.get("already_prepared")),
+                        **payload,
+                    },
+                })
+        except Exception as gtv_exc:
+            logger.exception("gtv prepare via /simulation/prepare failed: %s", gtv_exc)
+            return jsonify({"success": False, "error": str(gtv_exc)}), 500
         
         # 检查是否强制重新生成 / 分阶段重试
         force_regenerate = bool(data.get('force_regenerate', False))
@@ -1931,6 +1957,32 @@ def start_simulation():
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
+
+        # GTV：禁止走 OASIS 单 sim start，改决策级统计引擎
+        try:
+            from app.engine.gtv_adapter import is_gtv_deal, start_gtv_deal
+            from app.engine.scenario_runner import ScenarioRunner
+
+            gtv_decision_id = getattr(state, "project_id", None) or ""
+            if str(gtv_decision_id).startswith("dec_") and is_gtv_deal(gtv_decision_id):
+                payload = start_gtv_deal(
+                    ScenarioRunner(),
+                    gtv_decision_id,
+                    force=bool(force),
+                )
+                return jsonify({
+                    "success": True,
+                    "data": {
+                        "simulation_id": simulation_id,
+                        "decision_id": gtv_decision_id,
+                        "runner_status": "completed",
+                        "status": "completed",
+                        **payload,
+                    },
+                })
+        except Exception as gtv_exc:
+            logger.exception("gtv start via /simulation/start failed: %s", gtv_exc)
+            return jsonify({"success": False, "error": str(gtv_exc)}), 400
 
         force_restarted = False
         

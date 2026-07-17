@@ -69,6 +69,44 @@
             <span class="panel-meta">{{ $t('home.supportedFormats') }}</span>
           </div>
 
+          <div class="demo-pack-row">
+            <button
+              type="button"
+              class="demo-pack-btn"
+              :disabled="loading || loadingDemo"
+              @click.stop="loadGtvDemoPack"
+            >
+              {{ loadingDemo ? $t('home.loadingGtvPack') : $t('home.loadGtvPack') }}
+            </button>
+            <span v-if="pendingTemplate === 'gtv_deal'" class="demo-pack-tag mono">
+              {{ $t('home.gtvTemplateBadge') }}
+            </span>
+          </div>
+
+          <div v-if="pendingTemplate === 'gtv_deal'" class="gtv-seed-layers">
+            <div class="gtv-layer crm" :class="{ missing: gtvSeedStatus && !gtvSeedStatus.parquet_ready }">
+              <div class="gtv-layer-title">{{ $t('home.gtvCrmSeedTitle') }}</div>
+              <div class="gtv-layer-desc">{{ $t('home.gtvCrmSeedDesc') }}</div>
+              <div
+                v-if="gtvSeedStatus?.parquet_ready"
+                class="gtv-layer-stats mono"
+              >
+                {{
+                  $t('home.gtvSeedStats', {
+                    listings: gtvSeedStatus.n_listings ?? '—',
+                    brokers: gtvSeedStatus.n_brokers ?? '—',
+                    signs: gtvSeedStatus.n_signs ?? '—',
+                  })
+                }}
+              </div>
+              <div v-else class="gtv-layer-missing">{{ $t('home.gtvCrmSeedMissing') }}</div>
+            </div>
+            <div class="gtv-layer brief">
+              <div class="gtv-layer-title">{{ $t('home.gtvBriefTitle') }}</div>
+              <div class="gtv-layer-desc">{{ $t('home.gtvBriefDesc') }}</div>
+            </div>
+          </div>
+
           <div
             class="upload-zone"
             :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
@@ -89,7 +127,9 @@
             <div v-if="files.length === 0" class="upload-placeholder">
               <div class="upload-icon">↑</div>
               <div class="upload-title">{{ $t('home.dragToUpload') }}</div>
-              <div class="upload-hint">{{ $t('home.orBrowse') }}</div>
+              <div class="upload-hint">
+                {{ pendingTemplate === 'gtv_deal' ? $t('home.uploadHintGtv') : $t('home.orBrowse') }}
+              </div>
             </div>
             <div v-else class="file-list">
               <div v-for="(file, index) in files" :key="index" class="file-item">
@@ -136,6 +176,7 @@ import HistoryDatabase from '../components/HistoryDatabase.vue'
 import RecycleBin from '../components/RecycleBin.vue'
 import { setPendingUpload } from '../store/pendingUpload.js'
 import { health, listDecisions } from '../api/decision'
+import { fetchGtvDemoPack, fetchGtvSeedStatus } from '../api/ontology'
 import { taskRoute } from '../utils/taskRoute'
 
 const router = useRouter()
@@ -143,12 +184,24 @@ const router = useRouter()
 const formData = ref({ simulationRequirement: '' })
 const files = ref([])
 const loading = ref(false)
+const loadingDemo = ref(false)
+const pendingTemplate = ref('')
+const gtvSeedStatus = ref(null)
 const isDragOver = ref(false)
 const fileInput = ref(null)
 const engineOk = ref(false)
 const stats = ref({ tasks: '—' })
 const trashRefresh = ref(0)
 const historyRefresh = ref(0)
+
+const refreshGtvSeedStatus = async () => {
+  try {
+    const res = await fetchGtvSeedStatus()
+    gtvSeedStatus.value = res?.data || res || null
+  } catch {
+    gtvSeedStatus.value = { parquet_ready: false }
+  }
+}
 
 const onHistoryTrashed = () => {
   trashRefresh.value += 1
@@ -204,15 +257,70 @@ const addFiles = (newFiles) => {
     return ['pdf', 'md', 'txt'].includes(ext)
   })
   files.value.push(...valid)
+  // 手传种子时若文件名带 gtv_，自动打标
+  if (
+    !pendingTemplate.value &&
+    valid.some((f) => String(f.name || '').toLowerCase().includes('gtv_'))
+  ) {
+    pendingTemplate.value = 'gtv_deal'
+  }
 }
 
 const removeFile = (index) => {
   files.value.splice(index, 1)
+  if (
+    pendingTemplate.value === 'gtv_deal' &&
+    !files.value.some((f) => String(f.name || '').toLowerCase().includes('gtv_'))
+  ) {
+    // 演示包被清空后去掉模板标（避免误带到普通任务）
+    if (!formData.value.simulationRequirement.includes('[template:gtv_deal]')) {
+      pendingTemplate.value = ''
+    }
+  }
+}
+
+const loadGtvDemoPack = async () => {
+  if (loading.value || loadingDemo.value) return
+  loadingDemo.value = true
+  try {
+    const res = await fetchGtvDemoPack()
+    const data = res?.data || res
+    const packFiles = data?.files || []
+    const prompt = data?.prompt || ''
+    if (!packFiles.length) throw new Error('演示包为空')
+
+    const fileObjs = packFiles.map(
+      (item) =>
+        new File([item.content || ''], item.name || 'gtv_seed.md', {
+          type: 'text/markdown',
+        }),
+    )
+    files.value = fileObjs
+    formData.value.simulationRequirement = prompt
+    pendingTemplate.value = data?.template || 'gtv_deal'
+    await refreshGtvSeedStatus()
+  } catch (err) {
+    console.error(err)
+    alert(err?.message || '加载任务说明失败')
+  } finally {
+    loadingDemo.value = false
+  }
 }
 
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
-  setPendingUpload(files.value, formData.value.simulationRequirement)
+  let template = pendingTemplate.value || ''
+  const req = formData.value.simulationRequirement || ''
+  if (!template && (req.includes('[template:gtv_deal]') || /GTV.*成交|成交推演/.test(req))) {
+    template = 'gtv_deal'
+  }
+  if (
+    !template &&
+    files.value.some((f) => String(f.name || '').toLowerCase().includes('gtv_'))
+  ) {
+    template = 'gtv_deal'
+  }
+  setPendingUpload(files.value, req, template ? { template } : {})
   // 瞬态入口：MainView 创建 ontology+Decision 后会 replace 到 /tasks/dec_xxx/graph
   router.push(taskRoute(1, 'new'))
 }
@@ -222,6 +330,7 @@ onMounted(async () => {
     const [h] = await Promise.all([
       health().catch(() => null),
       refreshStats(),
+      refreshGtvSeedStatus(),
     ])
     engineOk.value = h?.status === 'ok' || h?.data?.status === 'ok'
   } catch {
@@ -459,6 +568,75 @@ onMounted(async () => {
   font-size: 0.82rem;
   color: var(--ink-muted);
   line-height: 1.45;
+}
+
+.demo-pack-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 0;
+}
+
+.gtv-seed-layers {
+  display: grid;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.gtv-layer {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  background: var(--bg-muted);
+}
+
+.gtv-layer.crm.missing {
+  border-color: #c0392b;
+}
+
+.gtv-layer-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 2px;
+}
+
+.gtv-layer-desc,
+.gtv-layer-stats {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.gtv-layer-missing {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.demo-pack-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease-out, color 0.15s ease-out;
+}
+
+.demo-pack-btn:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.demo-pack-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.demo-pack-tag {
+  font-size: 0.72rem;
+  color: var(--brand);
 }
 
 .upload-zone {

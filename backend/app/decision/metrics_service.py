@@ -286,12 +286,72 @@ def build_compare_payload(decision_id: str) -> Dict[str, Any]:
                 {"cities": [], "lines": [], "mapping_note": ""},
             )
 
-    return {
+    template = "opinion"
+    try:
+        from app.engine.gtv_adapter import decision_template
+
+        template = decision_template(decision_id)
+    except Exception:
+        pass
+
+    scenario_scores = None
+    if template == "gtv_deal":
+        try:
+            from app.engine.gtv_adapter import scenario_scores_path
+
+            sp = scenario_scores_path(decision_id)
+            if os.path.isfile(sp):
+                with open(sp, encoding="utf-8") as f:
+                    scenario_scores = json.load(f)
+                # 把经济量摘要合并进对比 scenarios，便于前端 KPI
+                by_name = {
+                    str(s.get("name") or ""): s
+                    for s in (scenario_scores.get("scenarios") or [])
+                }
+                by_id = {
+                    str(s.get("scenario_id") or ""): s
+                    for s in (scenario_scores.get("scenarios") or [])
+                }
+                for agg, sc in zip(aggregated, scenarios):
+                    hit = by_id.get(str(sc.get("id"))) or by_name.get(str(sc.get("name") or ""))
+                    if not hit:
+                        continue
+                    summary = dict(agg.get("summary") or {})
+                    summary.update(hit.get("summary") or {})
+                    agg["summary"] = summary
+                    agg["delta_vs_baseline"] = hit.get("delta_vs_baseline")
+                    agg["is_baseline"] = hit.get("is_baseline")
+                    agg["listings"] = hit.get("listings") or []
+                    agg["name"] = hit.get("name") or agg.get("scenario_name")
+        except Exception as e:
+            logger.warning("load scenario_scores failed: %s", e)
+
+    payload = {
         "decision_id": decision_id,
         "title": dec.get("title"),
         "status": dec.get("status"),
+        "template": template,
         "scenarios": aggregated,
         "generated_at": __import__("datetime").datetime.now(
             __import__("datetime").timezone.utc
         ).isoformat(),
     }
+    if scenario_scores is not None:
+        payload["scenario_scores"] = scenario_scores
+    if template == "gtv_deal":
+        try:
+            agent_path = os.path.join(
+                Config.DECISION_DIR, decision_id, "report", "agent_results.json"
+            )
+            if os.path.isfile(agent_path):
+                with open(agent_path, encoding="utf-8") as f:
+                    payload["agent_results"] = json.load(f)
+            else:
+                from app.engine.gtv_agent.runner import load_agent_status
+
+                ag = load_agent_status(decision_id)
+                if ag:
+                    payload["agent_status"] = ag
+        except Exception as e:
+            logger.warning("load agent_results failed: %s", e)
+    return payload

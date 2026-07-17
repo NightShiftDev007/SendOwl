@@ -1,11 +1,28 @@
 <template>
   <div class="env-setup-panel">
     <div class="scroll-container">
+      <div v-if="isGtvMode" class="gtv-material-banner">
+        <div class="gtv-material-title">{{ $t('step2.gtvMaterialBanner') }}</div>
+        <div
+          v-if="gtvSeedStatus?.parquet_ready"
+          class="gtv-material-stats mono"
+        >
+          {{
+            $t('step2.gtvSeedStatsLine', {
+              listings: gtvSeedStatus.n_listings ?? '—',
+              brokers: gtvSeedStatus.n_brokers ?? '—',
+              signs: gtvSeedStatus.n_signs ?? '—',
+            })
+          }}
+        </div>
+        <div v-else class="gtv-material-missing">{{ $t('step2.gtvSeedMissing') }}</div>
+      </div>
       <ScenarioEditor
         ref="scenarioEditorRef"
         v-model="scenarios"
         v-model:sample-count="sampleCount"
         v-model:max-rounds="editorMaxRounds"
+        :mode="sceneTemplate"
       />
       <div class="apply-bar">
         <button type="button" class="apply-btn" :disabled="applyingScenarios" @click="applyScenariosAndPrepare">
@@ -719,6 +736,7 @@ import {
   getSimulationConfigRealtime,
 } from '../api/simulation'
 import { getDecision, replaceDecisionScenarios, getDecisionWorld } from '../api/decision'
+import { fetchGtvSeedStatus } from '../api/ontology'
 import { subscribeTask } from '../api/sse'
 import { useProgress, pickEnvelope } from '../composables/useProgress'
 import {
@@ -819,10 +837,14 @@ const scenarios = ref([
     color: '#3498db',
     poster_hint: 'official',
     content: '',
+    gtv: {},
   },
 ])
 const sampleCount = ref(1)
 const editorMaxRounds = ref(10)
+const sceneTemplate = ref('')
+const gtvSeedStatus = ref(null)
+const isGtvMode = computed(() => String(sceneTemplate.value || '').toLowerCase() === 'gtv_deal')
 const applyingScenarios = ref(false)
 /** 是否已确认/准备过至少一次（决定主按钮首次 vs 再次文案） */
 const hasConfirmedOrPrepared = ref(false)
@@ -1639,21 +1661,39 @@ const applyScenariosAndPrepare = async () => {
       addLog('已自动追加 Baseline·不干预 作为对照方案')
     }
 
-    const mapped = toApply.map((s) => ({
-      name: s.name,
-      kind: s.kind || 'custom',
-      color: s.color,
-      hypothesis: s.content || s.hypothesis || '',
-      preferred_poster_keywords: String(s.poster_hint || '')
-        .split(/[,，]/)
-        .map((x) => x.trim())
-        .filter(Boolean),
-      initial_posts:
-        s.initial_posts ||
-        (s.content ? [{ content: s.content, poster_hint: s.poster_hint || 'official' }] : []),
-      content: s.content,
-      poster_hint: s.poster_hint,
-    }))
+    const isGtv = String(sceneTemplate.value || '').toLowerCase() === 'gtv_deal'
+    const mapped = toApply.map((s) => {
+      const base = {
+        name: s.name,
+        kind: s.kind || 'custom',
+        color: s.color,
+        hypothesis: s.content || s.hypothesis || '',
+        preferred_poster_keywords: String(s.poster_hint || '')
+          .split(/[,，]/)
+          .map((x) => x.trim())
+          .filter(Boolean),
+        initial_posts:
+          s.initial_posts ||
+          (s.content ? [{ content: s.content, poster_hint: s.poster_hint || 'official' }] : []),
+        content: s.content,
+        poster_hint: s.poster_hint,
+      }
+      if (isGtv) {
+        const gtv = s.gtv || {}
+        base.gtv = gtv
+        base.intervention = {
+          name: s.name,
+          kind: s.kind || 'custom',
+          narrative_direction: s.name,
+          initial_posts: [],
+          gtv,
+        }
+        // GTV 不走社媒发帖
+        base.initial_posts = []
+        base.content = ''
+      }
+      return base
+    })
 
     addLog(`确认 ${mapped.length} 个方案 × ${sampleCount.value} 采样（原地更新任务）…`)
     const res = await replaceDecisionScenarios(decisionId, {
@@ -2228,6 +2268,17 @@ onMounted(async () => {
   try {
     const detail = await getDecision(workflowId.value).catch(() => null)
     const payload = detail?.data || {}
+    sceneTemplate.value = String(
+      payload.template || payload.decision?.template || '',
+    ).toLowerCase()
+    if (String(sceneTemplate.value) === 'gtv_deal') {
+      try {
+        const seedRes = await fetchGtvSeedStatus()
+        gtvSeedStatus.value = seedRes?.data || seedRes || null
+      } catch {
+        gtvSeedStatus.value = { parquet_ready: false }
+      }
+    }
     const existingScenarios = payload.scenarios || []
     if (existingScenarios.length > 0) {
       scenarios.value = existingScenarios.map((s) => {
@@ -2239,11 +2290,21 @@ onMounted(async () => {
           color: s.color || '#3498db',
           poster_hint: (iv.preferred_poster_keywords || []).join(',') || 'official',
           content: posts[0]?.content || iv.narrative_direction || '',
+          gtv: iv.gtv || s.gtv || {},
         }
       })
       const dec = payload.decision || {}
       if (dec.sample_count) sampleCount.value = Number(dec.sample_count) || 1
       if (dec.max_rounds) editorMaxRounds.value = Number(dec.max_rounds) || 10
+    } else if (sceneTemplate.value === 'gtv_deal') {
+      scenarios.value = [
+        {
+          name: 'Baseline·不干预',
+          kind: 'baseline',
+          color: '#7f8c8d',
+          gtv: {},
+        },
+      ]
     }
 
     const status = String(payload.status || payload.decision?.status || '').toLowerCase()
@@ -2340,6 +2401,30 @@ onUnmounted(() => {
   flex-direction: column;
   background: #FAFAFA;
   font-family: var(--font-sans);
+}
+
+.gtv-material-banner {
+  padding: 12px 14px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+}
+
+.gtv-material-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.gtv-material-stats {
+  font-size: 12px;
+  color: #666;
+}
+
+.gtv-material-missing {
+  font-size: 12px;
+  color: #c0392b;
+  font-weight: 600;
 }
 
 .scroll-container {

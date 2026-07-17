@@ -246,9 +246,13 @@ export async function syncWorkflowFromServer(decisionId) {
         ''
 
       // 默认 false：只有读到强 event_config 才解锁 Step3
+      // gtv_deal 商业模板：轻量 prepare 后即可进 Step3（不依赖社媒编排）
+      const template = String(dec.template || data.template || '').toLowerCase()
       let eventReady = false
       if (status === 'prepare_failed' || status === 'preparing') {
         eventReady = false
+      } else if (template === 'gtv_deal') {
+        eventReady = ['prepared', 'running', 'completed', 'failed'].includes(status)
       } else if (simId) {
         try {
           const cfgRes = await getSimulationConfig(simId)

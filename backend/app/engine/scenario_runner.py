@@ -367,6 +367,9 @@ def _assert_event_config_ready_for_prepare(
 
 def _sim_dir_looks_prepared(sim_id: str) -> bool:
     run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
+    # GTV 商业模板：轻量 stub 即视为已准备
+    if os.path.isfile(os.path.join(run_dir, "gtv_engine.json")):
+        return True
     cfg_path = os.path.join(run_dir, "simulation_config.json")
     if not os.path.isfile(cfg_path):
         return False
@@ -562,6 +565,10 @@ class ScenarioRunner:
                             "poster_hint": sc.get("poster_hint") or "official",
                         }
                     ]
+                if sc.get("gtv"):
+                    intervention["gtv"] = sc.get("gtv")
+            elif isinstance(intervention, dict) and sc.get("gtv") and not intervention.get("gtv"):
+                intervention = {**intervention, "gtv": sc.get("gtv")}
             rec = registry.add_scenario(
                 decision_id=decision_id,
                 name=name,
@@ -1069,10 +1076,16 @@ class ScenarioRunner:
         - N=1 M=1：走 SimulationManager.prepare_simulation（LLM 人设，MiroFish 原体验）
         - N>1 或 M>1：共享世界建一次，注入到各 sim
         - force=True：N>1 清空 shared/ 重做
+        - template=gtv_deal：轻量 prepare（跳过社媒人设/OASIS）
         """
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
+
+        from app.engine.gtv_adapter import is_gtv_deal, prepare_gtv_deal
+
+        if is_gtv_deal(decision_id):
+            return prepare_gtv_deal(self, decision_id, force=force)
 
         scenarios = registry.list_scenarios(decision_id)
         runs = registry.list_runs_for_decision(decision_id)
@@ -1431,6 +1444,11 @@ class ScenarioRunner:
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
+
+        from app.engine.gtv_adapter import is_gtv_deal, start_gtv_deal
+
+        if is_gtv_deal(decision_id):
+            return start_gtv_deal(self, decision_id, force=force)
 
         status = str(dec.get("status") or "").lower()
         target_sim = (only_sim_id or "").strip() or None
@@ -2021,4 +2039,24 @@ class ScenarioRunner:
         if runs:
             status["sim_id"] = runs[0].get("sim_id")
             status["simulation_id"] = runs[0].get("sim_id")
+        # 场景模板挂到 decision，供前端 Step2/3 分支
+        try:
+            from app.engine.gtv_adapter import (
+                decision_template,
+                enrich_gtv_status,
+                load_deal_timeline,
+            )
+
+            tmpl = decision_template(decision_id)
+            if isinstance(status.get("decision"), dict):
+                status["decision"]["template"] = tmpl
+            status["template"] = tmpl
+            if tmpl == "gtv_deal":
+                # 双轨：Agent 时间线只读真实产物，禁止用统计剧本回填冒充过程
+                timeline = load_deal_timeline(decision_id)
+                if timeline:
+                    status["deal_timeline"] = timeline
+                enrich_gtv_status(decision_id, status)
+        except Exception:
+            pass
         return status

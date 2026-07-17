@@ -1,6 +1,9 @@
 <template>
   <div class="workbench-panel">
     <div class="scroll-container">
+      <div v-if="isGtvMode" class="gtv-graph-hint">
+        {{ $t('step1.gtvGraphHint') }}
+      </div>
       <!-- Step 01: Ontology -->
       <div class="step-card" :class="{ 'active': currentPhase === 0, 'completed': currentPhase > 0 }">
         <div class="card-header">
@@ -203,6 +206,22 @@ defineEmits(['next-step'])
 const selectedOntologyItem = ref(null)
 const creatingSimulation = ref(false)
 
+const isGtvMode = computed(() => {
+  const t =
+    props.projectData?.template ||
+    props.projectData?.scene_template ||
+    props.projectData?.meta?.template ||
+    ''
+  const req = String(
+    props.projectData?.simulation_requirement || props.projectData?.name || '',
+  )
+  return (
+    String(t).toLowerCase() === 'gtv_deal' ||
+    req.includes('[template:gtv_deal]') ||
+    /GTV.*成交|成交推演/i.test(req)
+  )
+})
+
 // 建图耗时前端本地计时（每秒平滑跳动，不依赖后端推帧节奏）
 const buildStartAt = ref(0)
 const nowTick = ref(Date.now())
@@ -318,6 +337,16 @@ const formatDate = (dateStr) => {
   flex-direction: column;
   position: relative;
   overflow: hidden;
+}
+
+.gtv-graph-hint {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #555;
 }
 
 .scroll-container {

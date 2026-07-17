@@ -318,6 +318,37 @@ export const prepareSimulation = async (data = {}) => {
     (detail?.decision && Number(detail.decision.sample_count) > 1 ? 2 : 0) ||
     1
 
+  // GTV 商业模板：N=1 也走决策级轻量 prepare（跳过社媒人设/OASIS）
+  const template = String(
+    detail?.template || detail?.decision?.template || '',
+  ).toLowerCase()
+  if (decisionId && template === 'gtv_deal' && stage === 'all') {
+    const { prepareDecision } = await import('./decision')
+    const res = await prepareDecision(decisionId, {
+      ...data,
+      force_regenerate: data.force_regenerate ?? false,
+    })
+    const payload = res?.data || {}
+    const status = String(payload.status || '').toLowerCase()
+    const done =
+      status === 'completed' ||
+      status === 'ready' ||
+      payload.already_prepared ||
+      payload.mode === 'gtv_light'
+    return {
+      success: true,
+      data: {
+        task_id: null,
+        simulation_id: simId,
+        decision_id: decisionId,
+        status: done ? 'completed' : status || 'preparing',
+        progress: done ? 100 : Number(payload.progress) || 0,
+        already_prepared: Boolean(done || payload.already_prepared),
+        ...payload,
+      },
+    }
+  }
+
   // 分阶段重试（profiles / platform_config / event_config）必须走单 sim 异步 prepare，
   // 决策级 prepareDecision 不支持 stage，点重试会变成无感刷新。
   if (stage !== 'all') {
@@ -457,10 +488,18 @@ export const startSimulation = async (data = {}) => {
     (detail?.scenarios || []).flatMap((s) => s.runs || []).length ||
     (detail?.matrix || []).flatMap((m) => m.runs || []).length ||
     0
+  const template = String(
+    detail?.template || detail?.decision?.template || '',
+  ).toLowerCase()
 
-  // 决策级：只要有 dec_* 就走编排器（缓存命中时 detail 可能为空，勿误走单 sim）
-  // 仅当明确只有 1 个 run 时才走单 sim 旁路
-  if (decisionId && String(decisionId).startsWith('dec_') && runCount !== 1) {
+  // 决策级：多 Run 走编排器；N=1 默认可旁路单 sim。
+  // gtv_deal 即使 N=1 也必须走 startDecision（统计引擎，禁止 OASIS /simulation/start）
+  const useDecisionStart =
+    decisionId &&
+    String(decisionId).startsWith('dec_') &&
+    (runCount !== 1 || template === 'gtv_deal')
+
+  if (useDecisionStart) {
     const { startDecision } = await import('./decision')
     const body = {
       background: true,

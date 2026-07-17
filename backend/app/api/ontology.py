@@ -18,6 +18,33 @@ def health():
     return jsonify({"status": "ok", "module": "ontology"})
 
 
+@ontology_bp.get("/gtv-demo-pack")
+def gtv_demo_pack():
+    """首页「加载任务说明（摘要包）」：脱敏 MD + 标准提示词（非 CRM 全库）。"""
+    try:
+        from app.engine.gtv_adapter import load_demo_pack
+
+        data = load_demo_pack()
+        return jsonify({"success": True, "data": data})
+    except FileNotFoundError as e:
+        return jsonify({"success": False, "error": str(e)}), 404
+    except Exception as e:
+        logger.exception("gtv demo pack failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@ontology_bp.get("/gtv-seed-status")
+def gtv_seed_status():
+    """CRM 种子底座就绪状态：房源/经纪人/签约规模摘要。"""
+    try:
+        from app.engine.gtv_adapter import get_seed_status
+
+        return jsonify({"success": True, "data": get_seed_status()})
+    except Exception as e:
+        logger.exception("gtv seed status failed")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @ontology_bp.get("/list")
 def list_ontologies():
     registry.init_schema()

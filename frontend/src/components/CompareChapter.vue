@@ -1,11 +1,15 @@
 <template>
   <div v-if="compare" class="compare-chapter">
     <div class="chapter-head">
-      <span class="mono">方案对比</span>
-      <span class="hint">多方案指标汇总 · mean±std</span>
+      <span class="mono">{{ isGtvReport ? '成交推演报告' : '方案对比' }}</span>
+      <span class="hint">{{
+        isGtvReport
+          ? '商业模板 · 可回测统计预测（非社媒发帖）'
+          : '多方案指标汇总 · mean±std'
+      }}</span>
     </div>
 
-    <div v-if="verdict" class="verdict-bar">
+    <div v-if="showOpinionCompare && verdict" class="verdict-bar">
       <div class="verdict-label mono">结论</div>
       <div class="verdict-body">
         <strong :style="{ color: verdict.color }">{{ verdict.name }}</strong>
@@ -14,7 +18,90 @@
       <div v-if="verdict.delta" class="verdict-delta mono">{{ verdict.delta }}</div>
     </div>
 
-    <div class="kpi-row" v-if="scenarios.length">
+    <div v-if="showGtvCompare" class="gtv-dual-label mono">统计模型对照（历史模型 / what-if）</div>
+    <div class="kpi-row" v-if="showGtvCompare">
+      <div class="kpi-card" v-for="(s, idx) in gtvScenarios" :key="s.scenario_id || s.name || idx">
+        <div class="kpi-head">
+          <span class="dot" :style="{ background: s.color || 'var(--brand)' }"></span>
+          <strong :title="s.name">{{ s.name || `方案${idx + 1}` }}</strong>
+          <span v-if="s.is_baseline" class="muted mono">Baseline</span>
+        </div>
+        <div class="kpi-grid">
+          <div>
+            <div class="muted">预期成交</div>
+            <div class="val">{{ fmtMoney(s.summary?.expected_deals, 2) }}</div>
+          </div>
+          <div>
+            <div class="muted">期望合同额</div>
+            <div class="val">{{ fmtMoney(s.summary?.expected_contract_money, 0) }}</div>
+          </div>
+          <div>
+            <div class="muted">期望佣金</div>
+            <div class="val">{{ fmtMoney(s.summary?.expected_commission, 0) }}</div>
+          </div>
+          <div>
+            <div class="muted">较 Baseline</div>
+            <div class="val" :class="deltaClass(s)">{{ fmtDeltaContract(s) }}</div>
+          </div>
+        </div>
+        <p class="narrative" v-if="s.summary?.negotiate">
+          谈价 p={{ pctPlain(s.summary.negotiate.success_rate) }} · 敏感性分析，非单方改挂牌价
+        </p>
+        <ul v-if="s.delta_vs_baseline?.top_rank_moves?.length" class="rank-moves">
+          <li v-for="m in s.delta_vs_baseline.top_rank_moves.slice(0, 3)" :key="m.listing_id">
+            …{{ String(m.listing_id).slice(-6) }} #{{ m.baseline_rank }}→#{{ m.rank }}
+            （Δ{{ m.delta_rank > 0 ? '+' : '' }}{{ m.delta_rank }}）
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <div v-if="showAgentCompare" class="gtv-dual-label mono">成交 Agent 涌现结果</div>
+    <div class="kpi-row" v-if="showAgentCompare">
+      <div class="kpi-card" v-for="(s, idx) in agentScenarios" :key="s.scenario_id || s.scenario_name || idx">
+        <div class="kpi-head">
+          <span class="dot" :style="{ background: s.color || 'var(--brand)' }"></span>
+          <strong>{{ s.scenario_name || s.name || `方案${idx + 1}` }}</strong>
+        </div>
+        <div class="kpi-grid">
+          <div>
+            <div class="muted">签约落地</div>
+            <div class="val">{{ s.summary?.n_signed ?? '—' }}</div>
+          </div>
+          <div>
+            <div class="muted">谈价 / 直签</div>
+            <div class="val">{{ s.summary?.n_nego_signed ?? 0 }} / {{ s.summary?.n_direct_signed ?? 0 }}</div>
+          </div>
+          <div>
+            <div class="muted">报备 / 锁客</div>
+            <div class="val">{{ s.summary?.n_reported ?? 0 }} / {{ s.summary?.n_locked ?? 0 }}</div>
+          </div>
+          <div>
+            <div class="muted">审批通过</div>
+            <div class="val">{{ s.summary?.n_approved ?? '—' }}</div>
+          </div>
+          <div>
+            <div class="muted">回款</div>
+            <div class="val">{{ s.summary?.n_payment ?? '—' }}</div>
+          </div>
+          <div>
+            <div class="muted">涌现合同额</div>
+            <div class="val">{{ fmtMoney(s.summary?.expected_contract_money, 0) }}</div>
+          </div>
+          <div>
+            <div class="muted">较 Baseline</div>
+            <div class="val">{{ fmtAgentDelta(s) }}</div>
+          </div>
+          <div>
+            <div class="muted">流失</div>
+            <div class="val">{{ s.summary?.n_lost ?? '—' }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p v-if="agentTrackNote" class="gtv-agent-note">{{ agentTrackNote }}</p>
+
+    <div class="kpi-row" v-if="showOpinionCompare">
       <div class="kpi-card" v-for="(s, idx) in scenarios" :key="s.scenario_id || s.name || idx">
         <div class="kpi-head">
           <span class="dot" :style="{ background: s.color || 'var(--brand)' }"></span>
@@ -42,7 +129,7 @@
       </div>
     </div>
 
-    <div class="charts" v-if="scenarios.length">
+    <div class="charts" v-if="showOpinionCompare">
       <div class="chart-card">
         <h3 class="mono">传播规模</h3>
         <div ref="barEl" class="chart"></div>
@@ -53,12 +140,12 @@
       </div>
     </div>
 
-    <div class="chart-card full" v-if="hasCurves">
+    <div class="chart-card full" v-if="showOpinionCompare && hasCurves">
       <h3 class="mono">传播曲线叠加</h3>
       <div ref="curveEl" class="chart tall"></div>
     </div>
 
-    <GeoPropagationMap ref="geoMapRef" v-if="scenarios.length" :scenarios="scenarios" />
+    <GeoPropagationMap ref="geoMapRef" v-if="showOpinionCompare" :scenarios="scenarios" />
 
     <div class="md markdown-body" v-if="markdown" v-html="renderedMd"></div>
     <p v-else class="muted pad">暂无对比报告正文</p>
@@ -96,6 +183,79 @@ const renderedMd = computed(() => renderMarkdown(markdown.value))
 
 const scenarios = computed(() => props.compare?.scenarios || props.compare?.items || [])
 
+const gtvScenarios = computed(() => {
+  const scored = props.compare?.scenario_scores?.scenarios
+  if (Array.isArray(scored) && scored.length) return scored
+  // 兼容：scenarios 上已挂 summary.expected_contract_money
+  return scenarios.value.filter(
+    (s) => s?.summary?.expected_contract_money != null || s?.summary?.expected_deals != null,
+  )
+})
+
+const agentScenarios = computed(() => {
+  const ag = props.compare?.agent_results || props.compare?.agent_status
+  const list = ag?.scenarios
+  return Array.isArray(list) ? list : []
+})
+const showAgentCompare = computed(() => agentScenarios.value.length > 0)
+const agentTrackNote = computed(() => {
+  const ag = props.compare?.agent_results || props.compare?.agent_status
+  if (!ag) return ''
+  if (String(ag.status || '').toLowerCase() === 'failed') {
+    return ag.message || ag.error || 'Agent 轨不可用；上方为统计模型对照。'
+  }
+  return ''
+})
+function fmtAgentDelta(s) {
+  const d = s?.delta_vs_baseline?.expected_contract_money?.abs
+  if (d == null || Number.isNaN(Number(d))) return s?.is_baseline ? '—' : '—'
+  const n = Number(d)
+  return `${n > 0 ? '+' : ''}${fmtMoney(n, 0)}`
+}
+
+/** GTV 报告以 markdown 三榜为主；无有效舆情指标时隐藏空 KPI/热力 */
+const isGtvReport = computed(() => {
+  const md = String(markdown.value || '')
+  if (/商业模板|成交推演|gtv_deal|三榜|what-if/i.test(md)) return true
+  const tmpl = String(
+    props.compare?.template || props.compare?.decision?.template || '',
+  ).toLowerCase()
+  if (tmpl === 'gtv_deal') return true
+  return gtvScenarios.value.length > 0
+})
+
+const showGtvCompare = computed(() => isGtvReport.value && gtvScenarios.value.length > 0)
+
+function fmtMoney(v, digits = 0) {
+  const n = Number(v)
+  if (v == null || Number.isNaN(n)) return '—'
+  return n.toLocaleString('zh-CN', {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  })
+}
+
+function pctPlain(v) {
+  const n = Number(v)
+  if (v == null || Number.isNaN(n)) return '—'
+  return `${(n * 100).toFixed(0)}%`
+}
+
+function fmtDeltaContract(s) {
+  if (s?.is_baseline) return '—'
+  const d = s?.delta_vs_baseline?.expected_contract_money?.abs
+  if (d == null || Number.isNaN(Number(d))) return '—'
+  const n = Number(d)
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${fmtMoney(n, 0)}`
+}
+
+function deltaClass(s) {
+  const d = Number(s?.delta_vs_baseline?.expected_contract_money?.abs)
+  if (!d) return ''
+  return d > 0 ? 'up' : 'down'
+}
+
 function shortScenarioTitle(s, idx = 0) {
   return scenarioLabel(s, idx)
 }
@@ -109,6 +269,15 @@ function num(v) {
   if (typeof v === 'object' && 'mean' in v) return Number(v.mean)
   return Number(v)
 }
+
+const showOpinionCompare = computed(() => {
+  if (isGtvReport.value) return false
+  return scenarios.value.some((s) => {
+    const ta = num(s.summary?.total_actions)
+    const opp = num(s.summary?.stance_share?.opposing)
+    return (ta != null && !Number.isNaN(ta) && ta > 0) || (opp != null && !Number.isNaN(opp))
+  })
+})
 
 function stdOf(v) {
   if (v == null || typeof v !== 'object' || !('std' in v)) return null
@@ -301,7 +470,7 @@ function tightGrid({ top = 28, legend = false } = {}) {
 
 function renderCharts() {
   disposeCharts()
-  if (!scenarios.value.length) return
+  if (!showOpinionCompare.value || !scenarios.value.length) return
 
   const fullNames = scenarios.value.map((s) => s.scenario_name || s.name || '')
   const shortNames = scenarios.value.map((s, i) => scenarioLabel(s, i))
@@ -588,6 +757,32 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--ink-muted);
   line-height: 1.4;
+}
+.rank-moves {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  line-height: 1.45;
+}
+.gtv-dual-label {
+  padding: 4px 14px 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+.gtv-agent-note {
+  margin: 0 14px 12px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+.val.up {
+  color: var(--success, #1a936f);
+}
+.val.down {
+  color: var(--danger, #c0392b);
 }
 .charts {
   display: grid;
