@@ -159,6 +159,10 @@ export function inferMaxReachedFromDecisionPayload(data, extra = {}) {
   // 默认偏保守：未显式确认 eventReady 时，不得凭 prepared 解锁 Step3
   const eventReady = extra.eventReady === true
 
+  // 重做环境 / 方案刚替换：旧 run、旧报告一律作废，后续步骤全部失效
+  if (status === 'preparing' || status === 'prepare_failed') return 2
+  if (status === 'created') return hasOntology || hasScenarios ? 2 : 1
+
   // 有可用报告 → 互动（仍要求至少推演过）
   if (hasReport && (anyCompletedRun || status === 'completed')) return 5
   // 推演整体完成（或至少有完成 run）→ 可进报告
@@ -167,9 +171,8 @@ export function inferMaxReachedFromDecisionPayload(data, extra = {}) {
   if (status === 'running' || anyRunning || anySimStarted) return 3
   // 环境已准备：必须初始激活合格才解锁 Step3
   if (status === 'prepared') return eventReady ? 3 : 2
-  if (status === 'preparing' || status === 'prepare_failed') return 2
   if (status === 'failed' && !anyCompletedRun) return eventReady ? 3 : 2
-  if (hasOntology || hasScenarios || status === 'created') return 2
+  if (hasOntology || hasScenarios) return 2
   return 1
 }
 

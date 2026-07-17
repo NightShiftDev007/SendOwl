@@ -184,6 +184,15 @@ def prepare_decision(decision_id: str):
             pass
 
         registry.update_decision(decision_id, status="preparing")
+        # force 重准备：旧推演结果作废，避免前端仍按 completed run 解锁 Step3+
+        if force:
+            try:
+                for run in registry.list_runs_for_decision(decision_id) or []:
+                    st = str(run.get("status") or "").lower()
+                    if st not in ("pending", "ready", ""):
+                        registry.update_run(run["id"], status="pending")
+            except Exception:
+                logger.exception("reset run status on force prepare failed")
 
         def _worker():
             try:
@@ -192,6 +201,18 @@ def prepare_decision(decision_id: str):
                 logger.exception("prepare decision background failed: %s", exc)
                 try:
                     registry.update_decision(decision_id, status="prepare_failed")
+                except Exception:
+                    pass
+                # 把真实失败原因写进细进度，前端才能展示具体错误而非笼统提示
+                try:
+                    from app.engine.scenario_runner import _write_prepare_progress
+
+                    _write_prepare_progress(
+                        decision_id,
+                        status="failed",
+                        stage="failed",
+                        message=str(exc)[:500],
+                    )
                 except Exception:
                     pass
 
@@ -232,13 +253,27 @@ def start_decision(decision_id: str):
     body = request.get_json(silent=True) or {}
     background = body.get("background", True)
     force = bool(body.get("force", False))
+    only_sim_id = (body.get("only_sim_id") or body.get("sim_id") or "").strip() or None
+    only_run_id = (body.get("only_run_id") or body.get("run_id") or "").strip() or None
+    max_rounds = body.get("max_rounds")
+    try:
+        max_rounds_i = int(max_rounds) if max_rounds is not None else None
+        if max_rounds_i is not None and max_rounds_i <= 0:
+            return jsonify({"success": False, "error": "max_rounds 必须为正整数"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "max_rounds 无效"}), 400
     try:
         data = ScenarioRunner().start_decision(
             decision_id,
             background=bool(background),
             force=force,
+            only_sim_id=only_sim_id,
+            only_run_id=only_run_id,
+            max_rounds_override=max_rounds_i,
         )
         return jsonify({"success": True, "data": data})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         logger.exception("start decision failed")
         return jsonify({"success": False, "error": str(e)}), 500

@@ -334,7 +334,7 @@ class SimulationConfigGenerator:
                 end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
                 batch_jobs.append((batch_idx, start_idx, end_idx, entities[start_idx:end_idx]))
 
-            workers = max(1, min(Config.LLM_CONFIG_BATCH_WORKERS, len(batch_jobs)))
+            workers = max(1, min(Config.llm_parallel_workers(), len(batch_jobs)))
             completed_batches = [0]
             lock = __import__("threading").Lock()
             batch_results: Dict[int, List[AgentActivityConfig]] = {}
@@ -478,7 +478,7 @@ class SimulationConfigGenerator:
             end_idx = min(start_idx + self.AGENTS_PER_BATCH, len(entities))
             batch_jobs.append((batch_idx, start_idx, end_idx, entities[start_idx:end_idx]))
 
-        workers = max(1, min(Config.LLM_CONFIG_BATCH_WORKERS, len(batch_jobs)))
+        workers = max(1, min(Config.llm_parallel_workers(), len(batch_jobs)))
         batch_results: Dict[int, List[AgentActivityConfig]] = {}
         completed = [0]
 
@@ -833,6 +833,9 @@ class SimulationConfigGenerator:
         
         # 使用配置的上下文截断长度
         context_truncated = context[:self.EVENT_CONFIG_CONTEXT_LENGTH]
+        posts_min = max(2, int(getattr(Config, "EVENT_INITIAL_POSTS_MIN", 4) or 4))
+        posts_max = max(posts_min, int(getattr(Config, "EVENT_INITIAL_POSTS_MAX", 6) or 6))
+        topics_min = max(1, int(getattr(Config, "EVENT_HOT_TOPICS_MIN", 3) or 3))
         
         prompt = f"""基于以下模拟需求，生成事件配置。
 
@@ -847,24 +850,33 @@ class SimulationConfigGenerator:
 请生成事件配置JSON：
 - 提取热点话题关键词
 - 描述舆论发展方向
-- 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）**
+- 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）与 stance（立场）**
 
 ## 硬性数量要求（不满足即判失败）
-- hot_topics：至少 1 个非空关键词，建议 2-5 个
+- hot_topics：至少 {topics_min} 个非空关键词，建议 {topics_min}-5 个
 - narrative_direction：非空字符串，概括舆论发展方向
-- initial_posts：至少 2 条，建议 3-5 条；帖子之间角度/立场应有差异
-- 每条 initial_posts 必须含非空 content 与合法 poster_type
+- initial_posts：必须 {posts_min}-{posts_max} 条（不可少于 {posts_min}，不要超过 {posts_max}）
+- 每条 initial_posts 必须含非空 content、合法 poster_type、以及 stance
+- stance 只能是：official / oppose / support / neutral
+- 立场覆盖（必须同时满足）：
+  1) 至少 1 条 official（官方/权威通报）
+  2) 至少 1 条 oppose 或 support（受影响方/利益相关方）
+  3) 至少 1 条 neutral（媒体/专家/旁观者中立观察）
+  4) 全体帖子的 stance 去重后至少覆盖 3 种
+- poster_type 尽量互不相同，且必须从上面的「可用实体类型」中选择
 
 **重要**: poster_type 必须从上面的"可用实体类型"中选择，这样初始帖子才能分配给合适的 Agent 发布。
 例如：官方声明应由 Official/University 类型发布，新闻由 MediaOutlet 发布，学生观点由 Student 发布。
 
 返回JSON格式（不要markdown）：
 {{
-    "hot_topics": ["关键词1", "关键词2"],
+    "hot_topics": ["关键词1", "关键词2", "关键词3"],
     "narrative_direction": "<舆论发展方向描述>",
     "initial_posts": [
-        {{"content": "帖子内容1", "poster_type": "实体类型（必须从可用类型中选择）"}},
-        {{"content": "帖子内容2", "poster_type": "实体类型（必须从可用类型中选择）"}}
+        {{"content": "帖子内容1", "poster_type": "实体类型", "stance": "official"}},
+        {{"content": "帖子内容2", "poster_type": "实体类型", "stance": "oppose"}},
+        {{"content": "帖子内容3", "poster_type": "实体类型", "stance": "neutral"}},
+        {{"content": "帖子内容4", "poster_type": "实体类型", "stance": "support"}}
     ],
     "platform_dynamics": {{
         "twitter": {{
@@ -891,10 +903,14 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
 
         system_prompt = (
             "你是舆论分析专家。返回纯JSON格式。"
-            "必须满足：initial_posts≥2、hot_topics≥1、narrative_direction非空。"
+            f"必须满足：initial_posts={posts_min}-{posts_max}、hot_topics≥{topics_min}、"
+            "narrative_direction非空；每帖含 stance（official/oppose/support/neutral）；"
+            "立场须覆盖 official + (oppose或support) + neutral，且 stance 去重≥3种。"
             "注意 poster_type 必须精确匹配可用实体类型。"
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
+        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. The 'stance' field MUST be one of: official, oppose, support, neutral. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
+
+        _VALID_STANCES = {"official", "oppose", "support", "neutral"}
 
         def _quantity_ok(payload: Dict[str, Any]) -> Optional[str]:
             posts = payload.get("initial_posts") or []
@@ -907,12 +923,67 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
                 p for p in posts
                 if isinstance(p, dict) and str(p.get("content") or "").strip()
             ]
-            if len(nonempty_posts) < 2 or len(topics) < 1 or not narrative:
+            if len(nonempty_posts) < posts_min or len(topics) < topics_min or not narrative:
                 return (
-                    "事件配置 LLM 返回无效（需至少 2 条非空初始帖、1 个热点话题、非空叙事方向），"
+                    f"事件配置 LLM 返回无效（需至少 {posts_min} 条非空初始帖、"
+                    f"{topics_min} 个热点话题、非空叙事方向），"
                     f"实际 posts={len(nonempty_posts)} topics={len(topics)} narrative={bool(narrative)}"
                 )
+
+            stances = []
+            for p in nonempty_posts:
+                s = str(p.get("stance") or "").strip().lower()
+                if s in _VALID_STANCES:
+                    stances.append(s)
+            unique_stances = set(stances)
+
+            if stances:
+                if "official" not in unique_stances:
+                    return (
+                        "事件配置立场覆盖不足：缺少 official（官方/权威）帖；"
+                        f"实际 stances={sorted(unique_stances)}"
+                    )
+                if not (unique_stances & {"oppose", "support"}):
+                    return (
+                        "事件配置立场覆盖不足：缺少 oppose 或 support（受影响方）；"
+                        f"实际 stances={sorted(unique_stances)}"
+                    )
+                if "neutral" not in unique_stances:
+                    return (
+                        "事件配置立场覆盖不足：缺少 neutral（中立观察）；"
+                        f"实际 stances={sorted(unique_stances)}"
+                    )
+                if len(unique_stances) < 3:
+                    return (
+                        "事件配置立场覆盖不足：stance 去重后需至少 3 种；"
+                        f"实际 stances={sorted(unique_stances)}"
+                    )
+            else:
+                # LLM 未回 stance 时按 poster_type 去重兜底
+                poster_types = {
+                    str(p.get("poster_type") or "").strip().lower()
+                    for p in nonempty_posts
+                    if str(p.get("poster_type") or "").strip()
+                }
+                if len(poster_types) < 3:
+                    return (
+                        "事件配置多样性不足：未返回 stance 且 poster_type 去重后不足 3 种；"
+                        f"实际 poster_types={sorted(poster_types)}"
+                    )
             return None
+
+        def _truncate_event_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+            """超上限本地截断，不判失败。"""
+            posts = payload.get("initial_posts") or []
+            if isinstance(posts, list) and len(posts) > posts_max:
+                payload["initial_posts"] = posts[:posts_max]
+                logger.info(
+                    f"初始帖超上限，本地截断: {len(posts)} -> {posts_max}"
+                )
+            topics = payload.get("hot_topics") or []
+            if isinstance(topics, list) and len(topics) > 5:
+                payload["hot_topics"] = topics[:5]
+            return payload
 
         # 数量校验失败时带反馈自动重试（与 JSON/限流重试正交）
         max_quantity_attempts = 3
@@ -926,7 +997,8 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
                     f"## 上一次输出未通过校验\n"
                     f"错误：{last_error}\n"
                     f"上一次输出：\n{json.dumps(prev_result, ensure_ascii=False)[:4000]}\n"
-                    "请补足缺失项（至少 2 条非空初始帖、至少 1 个热点、非空叙事），"
+                    f"请补足缺失项（至少 {posts_min} 条非空初始帖、至少 {topics_min} 个热点、非空叙事；"
+                    "stance 须覆盖 official + (oppose或support) + neutral，且去重≥3种），"
                     "返回完整合规 JSON，不要省略已有合格字段。"
                 )
             try:
@@ -941,7 +1013,7 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
 
             err = _quantity_ok(result)
             if err is None:
-                return result
+                return _truncate_event_payload(result)
 
             last_error = RuntimeError(err)
             prev_result = result
@@ -1225,7 +1297,8 @@ platform_dynamics 说明（按场景判断，勿照抄示例）：
             updated_posts.append({
                 "content": content,
                 "poster_type": post.get("poster_type", "Unknown"),
-                "poster_agent_id": matched_agent_id
+                "poster_agent_id": matched_agent_id,
+                "stance": str(post.get("stance") or "").strip().lower() or "neutral",
             })
             
             logger.info(f"初始帖子分配: poster_type='{poster_type}' -> agent_id={matched_agent_id}")

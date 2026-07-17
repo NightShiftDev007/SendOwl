@@ -5,6 +5,11 @@ import SimulationView from '../views/SimulationView.vue'
 import SimulationRunView from '../views/SimulationRunView.vue'
 import ReportView from '../views/ReportView.vue'
 import InteractionView from '../views/InteractionView.vue'
+import { STAGE_TO_STEP, taskRoute } from '../utils/taskRoute'
+import {
+  getEffectiveMaxReached,
+  syncWorkflowFromServer,
+} from '../store/workflowContext'
 
 /**
  * 统一任务路由：
@@ -55,6 +60,33 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+const ROUTE_STEP = {
+  TaskGraph: 1,
+  TaskEnvironment: 2,
+  TaskSimulation: 3,
+  TaskReport: 4,
+  TaskInteraction: 5,
+}
+
+/** 深链/顶栏之外：不可达步骤一律打回当前最大可达步 */
+router.beforeEach(async (to) => {
+  const decisionId = String(to.params.decisionId || '')
+  if (!decisionId || decisionId === 'new' || !decisionId.startsWith('dec_')) {
+    return true
+  }
+  const step =
+    ROUTE_STEP[to.name] ||
+    STAGE_TO_STEP[String(to.path.split('/').pop() || '')] ||
+    0
+  if (!step || step <= 2) return true
+
+  await syncWorkflowFromServer(decisionId)
+  // 不用 canReachStep：它会把「当前页」始终放行，深链需要严格按 serverMaxReached
+  const max = Math.max(1, Math.min(5, getEffectiveMaxReached() || 1))
+  if (step <= max) return true
+  return taskRoute(max, decisionId)
 })
 
 export default router

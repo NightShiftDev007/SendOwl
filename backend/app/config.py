@@ -40,8 +40,26 @@ class Config:
     LLM_PROFILE_REVIEW_MAX_REGEN = int(os.environ.get('LLM_PROFILE_REVIEW_MAX_REGEN', '3'))
     # 本地 persona 相似度查重阈值（SequenceMatcher ratio，默认 0.60）
     PROFILE_DEDUP_THRESHOLD = float(os.environ.get('PROFILE_DEDUP_THRESHOLD', '0.60'))
-    LLM_CONFIG_BATCH_WORKERS = int(os.environ.get('LLM_CONFIG_BATCH_WORKERS', '3'))
+    # LLM 并行 worker 数（人设生成 + 配置分批共用；防限流，勿过高）
+    # 兼容旧名 LLM_CONFIG_BATCH_WORKERS
+    LLM_PARALLEL_WORKERS = max(
+        1,
+        int(
+            os.environ.get('LLM_PARALLEL_WORKERS')
+            or os.environ.get('LLM_CONFIG_BATCH_WORKERS')
+            or '3'
+        ),
+    )
     LLM_RATE_LIMIT_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_RETRIES', '3'))
+
+    @classmethod
+    def llm_parallel_workers(cls) -> int:
+        """人设并发与配置分批并行的统一入口。"""
+        return max(1, int(cls.LLM_PARALLEL_WORKERS or 3))
+    # 初始激活编排：帖子数量与热点话题下限（生成端硬约束；prepared 强弱门槛仍为 ≥2）
+    EVENT_INITIAL_POSTS_MIN = int(os.environ.get('EVENT_INITIAL_POSTS_MIN', '4'))
+    EVENT_INITIAL_POSTS_MAX = int(os.environ.get('EVENT_INITIAL_POSTS_MAX', '6'))
+    EVENT_HOT_TOPICS_MIN = int(os.environ.get('EVENT_HOT_TOPICS_MIN', '3'))
 
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')

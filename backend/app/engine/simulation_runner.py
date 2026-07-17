@@ -545,12 +545,14 @@ class SimulationRunner:
         minutes_per_round = time_config.get("minutes_per_round", 30)
         total_rounds = int(total_hours * 60 / minutes_per_round)
         
-        # 如果指定了最大轮数，则截断
+        # 如果指定了轮数：可截断也可延长（自定义「超过自动上限」）
         if max_rounds is not None and max_rounds > 0:
             original_rounds = total_rounds
-            total_rounds = min(total_rounds, max_rounds)
+            total_rounds = int(max_rounds)
             if total_rounds < original_rounds:
                 logger.info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+            elif total_rounds > original_rounds:
+                logger.info(f"轮数已延长: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
         
         state = SimulationRunState(
             simulation_id=simulation_id,

@@ -329,7 +329,9 @@ export const prepareSimulation = async (data = {}) => {
           document_text: data.document_text,
           entity_types: data.entity_types,
           use_llm_for_profiles: data.use_llm_for_profiles ?? true,
-          parallel_profile_count: data.parallel_profile_count ?? 5,
+          ...(data.parallel_profile_count != null
+            ? { parallel_profile_count: data.parallel_profile_count }
+            : {}),
           force_regenerate: true,
           stage,
         }),
@@ -371,7 +373,9 @@ export const prepareSimulation = async (data = {}) => {
         document_text: data.document_text,
         entity_types: data.entity_types,
         use_llm_for_profiles: data.use_llm_for_profiles ?? true,
-        parallel_profile_count: data.parallel_profile_count ?? 5,
+        ...(data.parallel_profile_count != null
+          ? { parallel_profile_count: data.parallel_profile_count }
+          : {}),
         force_regenerate: data.force_regenerate ?? false,
         stage: 'all',
       }),
@@ -448,13 +452,30 @@ export const listSimulations = (projectId) => {
 
 export const startSimulation = async (data = {}) => {
   const { simId, decisionId, detail } = await resolveSimContext(data)
-  const scenarioCount =
-    detail?.scenarios?.length || detail?.matrix?.length || 1
+  const runCount =
+    (detail?.runs || []).length ||
+    (detail?.scenarios || []).flatMap((s) => s.runs || []).length ||
+    (detail?.matrix || []).flatMap((m) => m.runs || []).length ||
+    0
 
-  // N>1：编排器批量启动
-  if (scenarioCount > 1 && decisionId) {
+  // 决策级：只要有 dec_* 就走编排器（缓存命中时 detail 可能为空，勿误走单 sim）
+  // 仅当明确只有 1 个 run 时才走单 sim 旁路
+  if (decisionId && String(decisionId).startsWith('dec_') && runCount !== 1) {
     const { startDecision } = await import('./decision')
-    return startDecision(decisionId, { background: true, ...data })
+    const body = {
+      background: true,
+      force: Boolean(data.force),
+      platform: data.platform,
+      enable_graph_memory_update: data.enable_graph_memory_update,
+    }
+    if (data.max_rounds != null && data.max_rounds !== '') {
+      body.max_rounds = Number(data.max_rounds)
+    }
+    if (data.only_sim_id || data.only_run_id) {
+      body.only_sim_id = data.only_sim_id || undefined
+      body.only_run_id = data.only_run_id || undefined
+    }
+    return startDecision(decisionId, body)
   }
 
   return requestWithRetry(
@@ -495,17 +516,21 @@ export const getRunStatus = async (id, options = {}) => {
     const running = String(status || '').toLowerCase() === 'running'
     const totalRounds = data.decision?.max_rounds || 10
 
-    // 优先选中 sim，禁止死取 matrix[0]
+    // 优先选中 sim；否则优先 running，禁止死取已完成的 matrix[0]
     const preferred =
       options.simId ||
       options.sim_id ||
       options.selectedSimId ||
       null
-    const firstSim =
-      preferred ||
-      data.matrix?.[0]?.runs?.[0]?.sim_id ||
-      cacheGet(raw)?.simId ||
+    const matrixRuns = (data.matrix || []).flatMap((m) => m.runs || [])
+    const activeSim =
+      matrixRuns.find((r) => String(r?.status || '').toLowerCase() === 'running')?.sim_id ||
+      matrixRuns.find((r) =>
+        ['pending', 'ready', 'created'].includes(String(r?.status || '').toLowerCase()),
+      )?.sim_id ||
+      matrixRuns[0]?.sim_id ||
       null
+    const firstSim = preferred || activeSim || cacheGet(raw)?.simId || null
     let simStatus = null
     if (firstSim) {
       try {
@@ -517,10 +542,10 @@ export const getRunStatus = async (id, options = {}) => {
     }
 
     const runner = String(simStatus?.runner_status || '').toLowerCase()
-    const simCompleted =
-      completed ||
+    const simRunnerDone =
       runner === 'completed' ||
       runner === 'stopped' ||
+      runner === 'failed' ||
       (simStatus?.twitter_completed && simStatus?.reddit_completed)
 
     return {
@@ -528,19 +553,22 @@ export const getRunStatus = async (id, options = {}) => {
       data: {
         ...data,
         ...(simStatus || {}),
-        // decision.status 保留；完成态另用 runner_status / *_completed
-        status: simCompleted ? 'completed' : status,
+        // 决策级 status 不得被单 sim runner 覆盖（多方案时否则会假完成）
+        status,
+        decision_status: status,
         total_rounds: simStatus?.total_rounds || totalRounds,
-        twitter_running: simStatus?.twitter_running ?? (running && !simCompleted),
-        reddit_running: simStatus?.reddit_running ?? (running && !simCompleted),
-        twitter_completed: simStatus?.twitter_completed ?? simCompleted,
-        reddit_completed: simStatus?.reddit_completed ?? simCompleted,
+        twitter_running: simStatus?.twitter_running ?? false,
+        reddit_running: simStatus?.reddit_running ?? false,
+        twitter_completed: simStatus?.twitter_completed ?? false,
+        reddit_completed: simStatus?.reddit_completed ?? false,
         // 禁止用矩阵 done/total 伪造 ROUND
         twitter_current_round: simStatus?.twitter_current_round ?? 0,
         reddit_current_round: simStatus?.reddit_current_round ?? 0,
         twitter_actions_count: simStatus?.twitter_actions_count ?? 0,
         reddit_actions_count: simStatus?.reddit_actions_count ?? 0,
-        runner_status: simStatus?.runner_status || (simCompleted ? 'completed' : running ? 'running' : 'idle'),
+        runner_status:
+          simStatus?.runner_status ||
+          (completed ? 'completed' : running ? 'running' : simRunnerDone ? runner : 'idle'),
         matrix: data.matrix,
         progress,
         decision_id: raw,

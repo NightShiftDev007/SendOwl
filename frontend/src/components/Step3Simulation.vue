@@ -1,5 +1,44 @@
 <template>
   <div class="simulation-panel">
+    <!-- 决策总控：推演全部 Run -->
+    <div class="decision-bar">
+      <div class="decision-meta">
+        <span class="decision-label">推演全部</span>
+        <span class="decision-progress mono">
+          {{ runProgress.done || 0 }}/{{ runProgress.total || totalRunCount || '—' }}
+        </span>
+        <span class="decision-phase" :class="decisionPhaseClass">{{ decisionPhaseLabel }}</span>
+      </div>
+      <div class="action-controls">
+        <button
+          v-if="phase === 1"
+          class="action-btn danger"
+          :disabled="isStopping || isStarting"
+          @click="handleStopSimulation"
+        >
+          {{ isStopping ? $t('step3.stoppingBtn') : $t('step3.stopSimBtn') }}
+        </button>
+        <button
+          v-if="phase === 2 || phase === 0"
+          class="action-btn secondary"
+          :disabled="isStarting || isStopping"
+          @click="handleRestartAll"
+        >
+          {{ isStarting && restartScope === 'all' ? '启动中…' : (showRunMatrix ? '重新推演全部' : '重新推演') }}
+        </button>
+        <button
+          class="action-btn primary"
+          :disabled="phase !== 2 || isGeneratingReport"
+          @click="handleNextStep"
+        >
+          <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
+          {{ isGeneratingReport ? $t('step3.generatingReportBtn') : $t('step3.startGenerateReportBtn') }}
+          <span v-if="!isGeneratingReport" class="arrow-icon">→</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Scenario × Run 舰队视图（N>1） -->
     <RunMatrixPanel
       :matrix="runMatrix"
       :progress="runProgress"
@@ -7,10 +46,41 @@
       :selected-sim-id="selectedSimId"
       @select="onSelectRun"
     />
-    <!-- Top Control Bar -->
-    <div class="control-bar">
-      <div class="status-group">
-        <!-- Twitter 平台进度 -->
+
+    <!-- Run 检视：平台进度属于当前选中 Run -->
+    <div class="run-inspector">
+      <div class="inspector-head">
+        <div class="inspector-title">
+          <template v-if="showRunMatrix">
+            <span class="inspector-kicker">正在查看</span>
+            <span class="inspector-name">{{ selectedRunLabel }}</span>
+          </template>
+          <template v-else>
+            <span class="inspector-name">推演详情</span>
+          </template>
+        </div>
+        <div class="inspector-actions">
+          <button
+            v-if="showRunMatrix && userPinnedRun && phase === 1 && hasLiveRun"
+            type="button"
+            class="follow-live-btn"
+            @click="followLiveRun"
+          >
+            跟随进行中
+          </button>
+          <button
+            v-if="showRunMatrix && (phase === 2 || phase === 0) && selectedSimId"
+            type="button"
+            class="follow-live-btn"
+            :disabled="isStarting || isStopping"
+            @click="handleRestartSelectedRun"
+          >
+            {{ isStarting && restartScope === 'run' ? '启动中…' : '重跑此 Run' }}
+          </button>
+        </div>
+      </div>
+
+      <div class="platform-row">
         <div class="platform-status twitter" :class="{ active: runStatus.twitter_running, completed: runStatus.twitter_completed }">
           <div class="platform-header">
             <svg class="platform-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -37,7 +107,6 @@
               <span class="stat-value mono">{{ runStatus.twitter_actions_count || 0 }}</span>
             </span>
           </div>
-          <!-- 可用动作提示 -->
           <div class="actions-tooltip">
             <div class="tooltip-title">Available Actions</div>
             <div class="tooltip-actions">
@@ -50,8 +119,7 @@
             </div>
           </div>
         </div>
-        
-        <!-- Reddit 平台进度 -->
+
         <div class="platform-status reddit" :class="{ active: runStatus.reddit_running, completed: runStatus.reddit_completed }">
           <div class="platform-header">
             <svg class="platform-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -78,7 +146,6 @@
               <span class="stat-value mono">{{ runStatus.reddit_actions_count || 0 }}</span>
             </span>
           </div>
-          <!-- 可用动作提示 -->
           <div class="actions-tooltip">
             <div class="tooltip-title">Available Actions</div>
             <div class="tooltip-actions">
@@ -96,42 +163,16 @@
           </div>
         </div>
       </div>
-
-      <div class="action-controls">
-        <button
-          v-if="phase === 1"
-          class="action-btn danger"
-          :disabled="isStopping || isStarting"
-          @click="handleStopSimulation"
-        >
-          {{ isStopping ? $t('step3.stoppingBtn') : $t('step3.stopSimBtn') }}
-        </button>
-        <button
-          v-if="phase === 2 || phase === 0"
-          class="action-btn secondary"
-          :disabled="isStarting || isStopping"
-          @click="handleRestartSimulation"
-        >
-          {{ isStarting ? '启动中…' : '重新推演' }}
-        </button>
-        <button 
-          class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
-          @click="handleNextStep"
-        >
-          <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
-          {{ isGeneratingReport ? $t('step3.generatingReportBtn') : $t('step3.startGenerateReportBtn') }}
-          <span v-if="!isGeneratingReport" class="arrow-icon">→</span>
-        </button>
-      </div>
     </div>
 
-    <!-- Main Content: Dual Timeline -->
+    <!-- 当前 Run 时间线 -->
     <div class="main-content-area" ref="scrollContainer" @scroll="onTimelineScroll">
-      <!-- Timeline Header -->
-      <div class="timeline-header" v-if="allActions.length > 0">
+      <div class="timeline-header" v-if="allActions.length > 0 || selectedRunShort">
         <div class="timeline-stats">
-          <span class="total-count">TOTAL EVENTS: <span class="mono">{{ allActions.length }}</span></span>
+          <span class="total-count">
+            EVENTS<span v-if="selectedRunShort"> · {{ selectedRunShort }}</span>:
+            <span class="mono">{{ allActions.length }}</span>
+          </span>
           <span class="platform-breakdown">
             <span class="breakdown-item twitter">
               <svg class="mini-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -350,9 +391,13 @@ const runMatrix = ref([])
 const runProgress = ref({ done: 0, total: 0 })
 const selectedRunId = ref(null)
 const selectedSimId = ref(null)
+/** 用户点矩阵选中后不再自动跳到其它 Run */
+const userPinnedRun = ref(false)
 const phase = ref(0) // 0: 未开始, 1: 运行中, 2: 已完成
 const isStarting = ref(false)
 const isStopping = ref(false)
+/** 'all' | 'run' — 用于按钮文案与参数 */
+const restartScope = ref('all')
 const startError = ref(null)
 const runStatus = ref({})
 const allActions = ref([]) // 所有动作（增量累积）
@@ -396,6 +441,63 @@ const redditElapsedTime = computed(() => {
   return formatElapsedTime(runStatus.value.reddit_current_round || 0)
 })
 
+const totalRunCount = computed(() =>
+  (runMatrix.value || []).reduce((n, sc) => n + ((sc.runs || []).length), 0),
+)
+
+const showRunMatrix = computed(() => totalRunCount.value > 1)
+
+const selectedRunMeta = computed(() => {
+  for (const sc of runMatrix.value || []) {
+    const runs = sc.runs || []
+    const idx = runs.findIndex(
+      (r) => r.run_id === selectedRunId.value || r.sim_id === selectedSimId.value,
+    )
+    if (idx >= 0) {
+      return {
+        scenarioName: sc.scenario_name || sc.kind || '方案',
+        runIndex: idx + 1,
+        run: runs[idx],
+        color: sc.color,
+      }
+    }
+  }
+  return null
+})
+
+const selectedRunLabel = computed(() => {
+  const m = selectedRunMeta.value
+  if (!m) return selectedSimId.value || '—'
+  return `${m.scenarioName} · R${m.runIndex}`
+})
+
+const selectedRunShort = computed(() => {
+  const m = selectedRunMeta.value
+  if (!m) return ''
+  return `${m.scenarioName} R${m.runIndex}`
+})
+
+const decisionPhaseLabel = computed(() => {
+  if (isStarting.value) return '启动中'
+  if (phase.value === 1) return '运行中'
+  if (phase.value === 2) return '已完成'
+  return '未开始'
+})
+
+const decisionPhaseClass = computed(() => {
+  if (phase.value === 1) return 'is-running'
+  if (phase.value === 2) return 'is-done'
+  return 'is-idle'
+})
+
+const hasLiveRun = computed(() =>
+  (runMatrix.value || []).some((sc) =>
+    (sc.runs || []).some((r) =>
+      ['running', 'starting'].includes(String(r.status || '').toLowerCase()),
+    ),
+  ),
+)
+
 // Methods
 const addLog = (msg) => {
   console.log(`[SandOwl] ${msg}`)
@@ -406,6 +508,10 @@ const addLog = (msg) => {
 const resetAllState = () => {
   phase.value = 0
   runStatus.value = {}
+  runMatrix.value = []
+  runProgress.value = { done: 0, total: 0 }
+  selectedRunId.value = null
+  selectedSimId.value = null
   allActions.value = []
   actionIds.value = new Set()
   stickTimelineToBottom.value = true
@@ -414,6 +520,7 @@ const resetAllState = () => {
   startError.value = null
   isStarting.value = false
   isStopping.value = false
+  userPinnedRun.value = false
   stopPolling()  // 停止之前可能存在的轮询
 }
 
@@ -427,28 +534,46 @@ const attachRunningSimulation = async ({ completed = false } = {}) => {
   await fetchRunStatusDetail()
   startStatusPolling()
   startDetailPolling()
-  if (completed || isRunTerminal(runStatus.value)) {
+  // 仅决策级终态才收口；单 sim runner 完成不算
+  if (completed || isDecisionComplete(runStatus.value)) {
     phase.value = 2
     emit('update-status', 'completed')
+  } else {
+    phase.value = 1
+    emit('update-status', 'processing')
   }
 }
 
-/** 启动推演；force=true 才清日志重开 */
-const doStartSimulation = async ({ force = false } = {}) => {
+/** 启动推演；force=true 才清日志重开；scope=all|run */
+const doStartSimulation = async ({ force = false, scope = 'all' } = {}) => {
   if (!workflowId.value) {
     addLog(t('log.errorMissingSimId'))
     return
   }
 
-  if (force) {
+  restartScope.value = scope === 'run' ? 'run' : 'all'
+
+  if (force && restartScope.value === 'all') {
     resetAllState()
+  } else if (force && restartScope.value === 'run') {
+    // 只清当前检视时间线，保持选中钉住
+    userPinnedRun.value = true
+    allActions.value = []
+    actionIds.value = new Set()
+    prevTwitterRound.value = 0
+    prevRedditRound.value = 0
+    stopPolling()
   } else {
     stopPolling()
   }
   
   isStarting.value = true
   startError.value = null
-  addLog(force ? '强制重新推演…' : t('log.startingDualSim'))
+  if (force && restartScope.value === 'run') {
+    addLog(`强制重跑当前 Run：${selectedSimId.value || selectedRunId.value || '—'}`)
+  } else {
+    addLog(force ? '强制重新推演全部 Run…' : t('log.startingDualSim'))
+  }
   emit('update-status', 'processing')
   
   try {
@@ -457,6 +582,13 @@ const doStartSimulation = async ({ force = false } = {}) => {
       platform: 'parallel',
       force: Boolean(force),
       enable_graph_memory_update: true
+    }
+    if (force && restartScope.value === 'run') {
+      if (!selectedSimId.value && !selectedRunId.value) {
+        throw new Error('未选中要重跑的 Run')
+      }
+      params.only_sim_id = selectedSimId.value || undefined
+      params.only_run_id = selectedRunId.value || undefined
     }
     
     if (props.maxRounds) {
@@ -475,7 +607,11 @@ const doStartSimulation = async ({ force = false } = {}) => {
         return
       }
       if (res.data.force_restarted) {
-        addLog(t('log.oldSimCleared'))
+        addLog(
+          res.data.restart_scope === 'run'
+            ? '已清理当前 Run 日志，开始重跑'
+            : t('log.oldSimCleared'),
+        )
       }
       addLog(t('log.engineStarted'))
       addLog(`  ├─ PID: ${res.data.process_pid || '-'}`)
@@ -511,9 +647,18 @@ const doStartSimulation = async ({ force = false } = {}) => {
   }
 }
 
-const handleRestartSimulation = async () => {
+const handleRestartAll = async () => {
   if (isStarting.value || isStopping.value) return
-  await doStartSimulation({ force: true })
+  await doStartSimulation({ force: true, scope: 'all' })
+}
+
+const handleRestartSelectedRun = async () => {
+  if (isStarting.value || isStopping.value) return
+  if (!selectedSimId.value && !selectedRunId.value) {
+    addLog('请先在矩阵中选中一个 Run')
+    return
+  }
+  await doStartSimulation({ force: true, scope: 'run' })
 }
 
 // 停止模拟
@@ -546,11 +691,44 @@ let statusTimer = null
 let detailTimer = null
 let decisionSse = null
 
-const isRunTerminal = (data) => {
-  if (!data) return false
-  const st = String(data.runner_status || data.status || '').toLowerCase()
-  return ['completed', 'stopped', 'failed', 'done', 'success'].includes(st)
+const TERMINAL_RUN_STATUSES = new Set([
+  'completed',
+  'stalled',
+  'failed',
+  'timeout',
+  'stopped',
+])
+
+/** 矩阵中优先选正在跑的 run，其次 ready/pending，最后第一个 */
+const pickActiveRun = (matrix) => {
+  const runs = (matrix || []).flatMap((m) => m.runs || [])
+  const by = (pred) => runs.find((r) => pred(String(r?.status || '').toLowerCase()))
+  return (
+    by((s) => s === 'running') ||
+    by((s) => s === 'pending' || s === 'ready' || s === 'created') ||
+    runs[0] ||
+    null
+  )
 }
+
+/** 整次决策是否终态（矩阵全部结束），不是「当前选中 Run 跑完」 */
+const isDecisionComplete = (data) => {
+  if (!data) return false
+  const st = String(data.status || data.decision_status || data.decision?.status || '').toLowerCase()
+  if (['completed', 'done', 'success', 'failed', 'stopped', 'prepare_failed'].includes(st)) {
+    return true
+  }
+  const progress = data.progress || runProgress.value || {}
+  const total = Number(progress.total || 0)
+  const done = Number(progress.done || 0)
+  if (total > 0 && done >= total) return true
+  const matrix = data.matrix || runMatrix.value || []
+  const runs = matrix.flatMap((m) => m.runs || [])
+  if (!runs.length) return false
+  return runs.every((r) => TERMINAL_RUN_STATUSES.has(String(r.status || '').toLowerCase()))
+}
+
+const isRunTerminal = (data) => isDecisionComplete(data)
 
 const applyDecisionProgressFrame = (data) => {
   if (!data) return
@@ -592,13 +770,17 @@ const startStatusPolling = () => {
       onDone: async (data) => {
         applyDecisionProgressFrame(data)
         decisionSse = null
-        if (!isRunTerminal(runStatus.value) && phase.value === 1 && !statusTimer) {
-          statusTimer = setInterval(fetchRunStatus, 3000)
+        // 决策未终态时必须降级轮询（防止误关流后 UI 冻住）
+        if (!isDecisionComplete(data || runStatus.value) && phase.value === 1 && !statusTimer) {
+          statusTimer = setInterval(async () => {
+            await fetchRunStatus()
+            await fetchRunStatusDetail()
+          }, 3000)
         }
       },
       onError: (err) => {
         console.warn('[SandOwl] decision SSE error, fallback poll', err)
-        if (!statusTimer && phase.value === 1) {
+        if (!statusTimer && phase.value === 1 && !isDecisionComplete(runStatus.value)) {
           statusTimer = setInterval(async () => {
             await fetchRunStatus()
             await fetchRunStatusDetail()
@@ -677,21 +859,51 @@ const prevTwitterRound = ref(0)
 const prevRedditRound = ref(0)
 
 const onSelectRun = (row) => {
+  userPinnedRun.value = true
   selectedRunId.value = row.run_id
   selectedSimId.value = row.sim_id
   // 切换 Run 时清空时间线，避免混入其他方案动作
   allActions.value = []
   actionIds.value = new Set()
-  addLog(`切换到 Run ${row.run_id} / ${row.sim_id || ''}`)
+  addLog(`查看 Run ${row.run_id} / ${row.sim_id || ''}（仅切换检视，不影响推演范围）`)
   if (phase.value === 1) {
     startStatusPolling()
+    fetchRunStatusDetail()
   } else {
     fetchRunStatus()
     fetchRunStatusDetail()
   }
 }
 
+/** 取消钉住，回到当前进行中的 Run */
+const followLiveRun = () => {
+  userPinnedRun.value = false
+  const next = pickActiveRun(runMatrix.value)
+  if (!next?.sim_id) return
+  if (next.sim_id === selectedSimId.value && next.run_id === selectedRunId.value) {
+    addLog('已在跟随进行中的 Run')
+    return
+  }
+  selectedRunId.value = next.run_id
+  selectedSimId.value = next.sim_id
+  allActions.value = []
+  actionIds.value = new Set()
+  addLog(`跟随进行中：${next.run_id}`)
+  if (phase.value === 1) {
+    startStatusPolling()
+  }
+  fetchRunStatus()
+  fetchRunStatusDetail()
+}
+
 function emitStatusLabel(data) {
+  // 决策已终态时不要把顶栏打回 processing（切 Run / 重拉快照会误触发）
+  if (phase.value === 2 || isDecisionComplete(data)) {
+    emit('update-status', { status: 'completed' })
+    return
+  }
+  if (phase.value === 0 && !isStarting.value) return
+
   const cur = Math.max(
     Number(data?.twitter_current_round || 0),
     Number(data?.reddit_current_round || 0),
@@ -729,15 +941,16 @@ const applyRunStatus = (data) => {
   if (data.matrix) {
     runMatrix.value = data.matrix
     runProgress.value = data.progress || { done: 0, total: 0 }
-    if (!selectedSimId.value && data.sim_id) {
-      selectedSimId.value = data.sim_id
-    }
     if (!selectedRunId.value) {
-      const first = (data.matrix[0]?.runs || [])[0]
-      if (first) {
-        selectedRunId.value = first.run_id
-        selectedSimId.value = first.sim_id || selectedSimId.value
+      const pick = pickActiveRun(data.matrix)
+      if (pick) {
+        selectedRunId.value = pick.run_id
+        selectedSimId.value = pick.sim_id || data.sim_id || selectedSimId.value
+      } else if (data.sim_id) {
+        selectedSimId.value = data.sim_id
       }
+    } else if (!selectedSimId.value && data.sim_id) {
+      selectedSimId.value = data.sim_id
     }
   }
 
@@ -773,15 +986,28 @@ const applyRunStatus = (data) => {
   // 顶栏：方案名 · Rk/n
   emitStatusLabel(data)
 
-  const isCompleted =
-    data.runner_status === 'completed' ||
-    data.runner_status === 'stopped' ||
-    ['completed', 'done', 'success'].includes(String(data.status || '').toLowerCase())
+  const decisionDone = isDecisionComplete(data)
+  const selectedRunDone =
+    ['completed', 'stopped', 'failed'].includes(String(data.runner_status || '').toLowerCase()) ||
+    checkPlatformsCompleted(data)
 
-  const platformsCompleted = checkPlatformsCompleted(data)
+  // 当前 Run 结束但决策未完：未手动钉住时自动切到下一个 running/ready，并保持 SSE
+  if (!decisionDone && selectedRunDone && phase.value === 1 && !userPinnedRun.value) {
+    const next = pickActiveRun(data.matrix || runMatrix.value)
+    if (next?.sim_id && next.sim_id !== selectedSimId.value) {
+      selectedRunId.value = next.run_id
+      selectedSimId.value = next.sim_id
+      allActions.value = []
+      actionIds.value = new Set()
+      addLog(`当前 Run 已结束，切换到 ${next.run_id}`)
+      startStatusPolling()
+      fetchRunStatusDetail()
+    }
+    return
+  }
 
-  if (isCompleted || platformsCompleted) {
-    if (platformsCompleted && !isCompleted) {
+  if (decisionDone) {
+    if (checkPlatformsCompleted(data) && String(data.status || '').toLowerCase() !== 'completed') {
       addLog(t('log.allPlatformsCompleted'))
     }
     addLog(t('log.simCompleted'))
@@ -1039,8 +1265,8 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* --- Control Bar --- */
-.control-bar {
+/* --- Decision bar（推演全部） --- */
+.decision-bar {
   background: #FFF;
   padding: 10px 16px;
   display: flex;
@@ -1051,16 +1277,118 @@ onUnmounted(() => {
   z-index: 10;
   flex: 0 0 auto;
   flex-wrap: wrap;
-  min-height: 56px;
-  height: auto;
+  min-height: 48px;
 }
 
-.status-group {
+.decision-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.decision-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #111;
+}
+
+.decision-progress {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid #EAEAEA;
+  background: #FAFAFA;
+  color: #333;
+}
+
+.decision-phase {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+}
+
+.decision-phase.is-running {
+  color: #e65100;
+}
+
+.decision-phase.is-done {
+  color: #1a936f;
+}
+
+/* --- Run inspector --- */
+.run-inspector {
+  flex: 0 0 auto;
+  border-bottom: 1px solid #EAEAEA;
+  background: #FFF;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px 0;
+}
+
+.inspector-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inspector-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  color: #999;
+  letter-spacing: 0.04em;
+}
+
+.inspector-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.follow-live-btn {
+  flex-shrink: 0;
+  border: 1px solid #ccc;
+  background: #fff;
+  color: #333;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.follow-live-btn:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #999;
+}
+
+.follow-live-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.platform-row {
   display: flex;
   gap: 8px;
-  flex: 1 1 auto;
-  min-width: 0;
+  padding: 8px 16px 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 /* Platform Status Cards */

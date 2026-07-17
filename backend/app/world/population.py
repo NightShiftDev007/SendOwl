@@ -251,7 +251,7 @@ def generate_profiles_from_slice(
             entities,
             use_llm=True,
             graph_id=None,
-            parallel_count=3,
+            parallel_count=Config.llm_parallel_workers(),
             realtime_output_path=reddit_path,
             output_platform="reddit",
             progress_callback=_profile_progress,

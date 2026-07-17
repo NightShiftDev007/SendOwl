@@ -398,32 +398,35 @@ def read_profiles_realtime(simulation_id: str, platform: str = "reddit") -> dict
         except Exception:
             pass
 
-    # N>1：shared 人设 + 切片预期（sim 目录可能尚未同步）
+    # N>1：shared 人设 + 切片预期（sim 目录可能尚未同步 / 注入残缺）
+    # 取人数更多的一份，避免 sim 里 1 条旧文件盖过 shared 全量
     if project_id and str(project_id).startswith("dec_"):
         shared_dir = os.path.join(Config.DECISION_DIR, project_id, "shared")
-        if not profiles:
-            if platform == "reddit":
-                shared_file = os.path.join(shared_dir, "reddit_profiles.json")
-            else:
-                shared_file = os.path.join(shared_dir, "twitter_profiles.csv")
-            if os.path.isfile(shared_file):
-                try:
+        if platform == "reddit":
+            shared_file = os.path.join(shared_dir, "reddit_profiles.json")
+        else:
+            shared_file = os.path.join(shared_dir, "twitter_profiles.csv")
+        if os.path.isfile(shared_file):
+            try:
+                shared_profiles = []
+                if platform == "reddit":
+                    with open(shared_file, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                    if isinstance(raw, list):
+                        shared_profiles = raw
+                    elif isinstance(raw, dict):
+                        shared_profiles = raw.get("profiles") or raw.get("agents") or []
+                else:
+                    with open(shared_file, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        shared_profiles = list(reader)
+                if len(shared_profiles) > len(profiles or []):
                     file_stat = os.stat(shared_file)
                     file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
                     file_exists = True
-                    if platform == "reddit":
-                        with open(shared_file, "r", encoding="utf-8") as f:
-                            raw = json.load(f)
-                        if isinstance(raw, list):
-                            profiles = raw
-                        elif isinstance(raw, dict):
-                            profiles = raw.get("profiles") or raw.get("agents") or []
-                    else:
-                        with open(shared_file, "r", encoding="utf-8") as f:
-                            reader = csv.DictReader(f)
-                            profiles = list(reader)
-                except (json.JSONDecodeError, Exception) as e:
-                    logger.warning(f"读取 shared profiles 失败: {e}")
+                    profiles = shared_profiles
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"读取 shared profiles 失败: {e}")
 
         try:
             from app.ontology import registry as ont_registry
@@ -760,17 +763,32 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         }
 
     # 统一收口：以磁盘为准回写摘要，再判定是否已准备
+    # 注意：preparing 中途绝不当 already_prepared（否则 1 条人设就跳过重生）
     try:
         manager = SimulationManager()
         state = manager.finalize_prepare(simulation_id)
         status = state.status.value if hasattr(state.status, "value") else str(state.status)
         config_generated = bool(state.config_generated)
+        profiles_n = int(state.profiles_count or 0)
+        agents_n = 0
+        try:
+            cfg = manager.get_simulation_config(simulation_id) or {}
+            agents_n = len(cfg.get("agent_configs") or [])
+        except Exception:
+            agents_n = 0
+        profiles_ok = profiles_n > 0 and (
+            agents_n <= 0 or profiles_n >= max(2, int(agents_n * 0.8))
+        )
 
-        prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
-        if status in prepared_statuses and (config_generated or state.profiles_count > 0):
+        prepared_statuses = ["ready", "running", "completed", "stopped", "failed"]
+        if (
+            status in prepared_statuses
+            and config_generated
+            and profiles_ok
+        ):
             logger.info(
                 f"模拟 {simulation_id} 检测结果: 已准备完成 "
-                f"(status={status}, config_generated={config_generated})"
+                f"(status={status}, config_generated={config_generated}, profiles={profiles_n})"
             )
             return True, {
                 "status": status,
@@ -824,7 +842,7 @@ def prepare_simulation():
             "simulation_id": "sim_xxxx",                   // 必填，模拟ID
             "entity_types": ["Student", "PublicFigure"],  // 可选，指定实体类型
             "use_llm_for_profiles": true,                 // 可选，是否用LLM生成人设
-            "parallel_profile_count": 5,                  // 可选，并行生成人设数量，默认5
+            "parallel_profile_count": null,               // 可选；默认读 LLM_PARALLEL_WORKERS
             "force_regenerate": false,                    // 可选，强制重新生成，默认false
             "stage": "all"                               // 可选: all|profiles|platform_config|event_config
         }
@@ -913,7 +931,11 @@ def prepare_simulation():
         
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
+        raw_workers = data.get('parallel_profile_count')
+        if raw_workers is None or raw_workers == '':
+            parallel_profile_count = Config.llm_parallel_workers()
+        else:
+            parallel_profile_count = max(1, int(raw_workers))
         # ========== 同步获取实体数量（在后台任务启动前） ==========
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
         try:

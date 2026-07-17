@@ -467,7 +467,6 @@ def _recover_n1_prepare_sims() -> int:
                     document_text=doc or "",
                     use_llm_for_profiles=True,
                     progress_callback=progress_callback,
-                    parallel_profile_count=3,
                     stage="all",
                 )
                 tm.complete_task(

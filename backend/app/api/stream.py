@@ -481,6 +481,13 @@ def _pick_sim_from_snap(snap: Dict[str, Any], preferred_sim: Optional[str] = Non
         return preferred_sim
     if snap.get("sim_id"):
         return str(snap["sim_id"])
+    # 优先附着正在跑的 run，避免默认 matrix[0] 已完成后整页假完成
+    for m in snap.get("matrix") or []:
+        for r in m.get("runs") or []:
+            if str((r or {}).get("status") or "").lower() == "running":
+                sid = (r or {}).get("sim_id")
+                if sid:
+                    return str(sid)
     for m in snap.get("matrix") or []:
         for r in m.get("runs") or []:
             sid = (r or {}).get("sim_id")
@@ -551,13 +558,15 @@ def _enrich_decision_run_snap(
                 arts["sim_id"] = sid
                 env = dict(env)
                 env["artifacts"] = arts
-                # 推演中 envelope status
+                # envelope.status 跟决策级，不因单个 sim runner 写成 completed
+                dec_st = str(out.get("status") or "").lower()
                 rv = str(out.get("runner_status") or "").lower()
-                if rv == "completed":
-                    env["status"] = "completed"
-                    env["raw_status"] = "completed"
-                    env["progress"] = 100
-                elif rv in ("running", "starting"):
+                if _decision_terminal(dec_st):
+                    env["status"] = dec_st
+                    env["raw_status"] = dec_st
+                    if dec_st in ("completed", "done", "success"):
+                        env["progress"] = 100
+                elif dec_st == "running" or rv in ("running", "starting"):
                     env["status"] = "running"
                     env["raw_status"] = out.get("status") or "running"
                 out["envelope"] = env
@@ -614,12 +623,9 @@ def decision_events(decision_id: str):
                 )
                 last_key = _decision_dedupe_key(snap)
                 yield _sse_format("progress", snap)
+                # 关流只看决策终态，不因单个 sim runner_status 提前 done
                 status = str(snap.get("status") or "").lower()
-                runner = str(snap.get("runner_status") or "").lower()
-                if _decision_terminal(status) or (
-                    runner in ("completed", "stopped", "failed")
-                    and status != "preparing"
-                ):
+                if _decision_terminal(status):
                     yield _sse_format("done", snap)
                     return
             except Exception as e:
@@ -644,11 +650,7 @@ def decision_events(decision_id: str):
                         last_key = key
                         yield _sse_format("progress", snap)
                     status = str(snap.get("status") or "").lower()
-                    runner = str(snap.get("runner_status") or "").lower()
-                    if _decision_terminal(status) or (
-                        runner in ("completed", "stopped", "failed")
-                        and status != "preparing"
-                    ):
+                    if _decision_terminal(status):
                         yield _sse_format("done", snap)
                         return
                     last_heartbeat = time.time()
@@ -664,11 +666,7 @@ def decision_events(decision_id: str):
                             last_key = key
                             yield _sse_format("progress", snap)
                         status = str(snap.get("status") or "").lower()
-                        runner = str(snap.get("runner_status") or "").lower()
-                        if _decision_terminal(status) or (
-                            runner in ("completed", "stopped", "failed")
-                            and status != "preparing"
-                        ):
+                        if _decision_terminal(status):
                             yield _sse_format("done", snap)
                             return
                     except Exception:

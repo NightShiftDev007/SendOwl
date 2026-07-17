@@ -238,7 +238,7 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3,
+        parallel_profile_count: Optional[int] = None,
         stage: str = "all",
     ) -> SimulationState:
         """
@@ -253,6 +253,11 @@ class SimulationManager:
         stage = (stage or "all").strip().lower()
         if stage not in ("all", "profiles", "platform_config", "event_config"):
             raise ValueError(f"不支持的 prepare stage: {stage}")
+
+        if parallel_profile_count is None or int(parallel_profile_count) <= 0:
+            parallel_profile_count = Config.llm_parallel_workers()
+        else:
+            parallel_profile_count = max(1, int(parallel_profile_count))
 
         state = self._load_simulation_state(simulation_id)
         if not state:
@@ -279,28 +284,45 @@ class SimulationManager:
                     except Exception:
                         profiles_n = 0
                 config_ready = False
+                cfg0: Dict[str, Any] = {}
                 if os.path.isfile(config_path_early):
                     try:
                         with open(config_path_early, encoding="utf-8") as f:
-                            cfg0 = json.load(f)
+                            cfg0 = json.load(f) or {}
+                        from app.engine.scenario_runner import _event_config_is_strong
+
+                        # 弱 event_config 不算就绪，否则复用后又被 prepared 门槛打回，死循环
                         config_ready = bool(
-                            cfg0.get("time_config") and (cfg0.get("agent_configs") or [])
+                            cfg0.get("time_config")
+                            and (cfg0.get("agent_configs") or [])
+                            and _event_config_is_strong(cfg0.get("event_config"))
                         )
                     except Exception:
                         config_ready = False
-                if profiles_n > 0 and config_ready:
+                        cfg0 = {}
+                agents_n = len(cfg0.get("agent_configs") or [])
+                # 人设须达配置规模（禁止 1/19 残缺被当成可 resume）
+                profiles_complete = profiles_n > 0 and (
+                    agents_n <= 0 or profiles_n >= max(2, int(agents_n * 0.8))
+                )
+                if profiles_complete and config_ready:
                     logger.info(
                         f"resume prepare: profiles+config 已齐，直接 finalize sim={simulation_id}"
                     )
                     if progress_callback:
                         progress_callback("generating_config", 100, "复用已有配置", current=3, total=3)
                     return self.finalize_prepare(simulation_id)
-                if profiles_n > 0 and not config_ready:
+                if profiles_complete and not config_ready:
                     logger.info(
                         f"resume prepare: 人设已有({profiles_n})，仅生成配置 sim={simulation_id}"
                     )
                     # 下面仍走 all，但跳过 profiles 段
                     stage = "all_skip_profiles"
+                elif profiles_n > 0 and not profiles_complete:
+                    logger.info(
+                        f"resume prepare: 人设残缺({profiles_n}/{agents_n or '?'})，重新生成 "
+                        f"sim={simulation_id}"
+                    )
 
             # 补全 graph_id（多方案 sim 的 state 常为空）
             graph_id = self._resolve_graph_id(state)
@@ -493,7 +515,13 @@ class SimulationManager:
                     )
 
                 if stage == "profiles":
-                    return self.finalize_prepare(simulation_id)
+                    state = self.finalize_prepare(simulation_id)
+                    # 仅人设阶段：finalize 不再因「有人设」升 READY，这里显式收口
+                    if state.profiles_count > 0 and state.status == SimulationStatus.PREPARING:
+                        state.status = SimulationStatus.READY
+                        state.error = None
+                        self._save_simulation_state(state)
+                    return state
             
             # ========== 阶段3: LLM智能生成模拟配置 ==========
             config_generator = SimulationConfigGenerator()
@@ -908,7 +936,13 @@ class SimulationManager:
                 logger.warning(f"finalize_prepare 回写 config 失败: {e}")
 
         # ---- status ----
-        if state.config_generated or profiles_n > 0:
+        # 仅配置齐套才从 PREPARING→READY；禁止「有 1 条人设就算完成」
+        # （profiles-only 分阶段重试：config 尚未齐时保持 PREPARING，由上层继续跑配置）
+        agents_n = len(agents)
+        profiles_ok = profiles_n > 0 and (
+            agents_n <= 0 or profiles_n >= max(2, int(agents_n * 0.8))
+        )
+        if state.config_generated and profiles_ok:
             if state.status in (
                 SimulationStatus.CREATED,
                 SimulationStatus.PREPARING,
@@ -916,6 +950,10 @@ class SimulationManager:
             ):
                 state.status = SimulationStatus.READY
                 state.error = None
+        elif state.config_generated and not profiles_ok and profiles_n > 0:
+            # 配置在、人设残缺：保持/回到 PREPARING，避免 already_prepared 误判
+            if state.status == SimulationStatus.READY:
+                state.status = SimulationStatus.PREPARING
 
         self._save_simulation_state(state)
         after = (
@@ -996,7 +1034,10 @@ class SimulationManager:
             if runs and all((r.get("status") or "") in done_statuses for r in runs):
                 # 弱初始激活不得解锁 Step3：与 scenario_runner 门槛一致
                 try:
-                    from app.engine.scenario_runner import _event_config_is_strong
+                    from app.engine.scenario_runner import (
+                        _event_config_is_strong,
+                        propagate_strong_event_config,
+                    )
 
                     cfg = self.get_simulation_config(sim_id) or {}
                     if not _event_config_is_strong(cfg.get("event_config")):
@@ -1006,6 +1047,11 @@ class SimulationManager:
                             f"event_config 弱 → prepare_failed"
                         )
                         return
+                    # 单 sim 修好后，把强编排补到共享 base 与其余弱 sim，
+                    # 否则多方案里只有当前 sim 达标
+                    propagate_strong_event_config(
+                        decision_id, cfg.get("event_config"), source_sim_id=sim_id
+                    )
                 except Exception as e:
                     logger.debug(f"sync_prepare_to_registry event check skip: {e}")
                 registry.update_decision(decision_id, status="prepared")

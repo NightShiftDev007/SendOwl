@@ -1222,12 +1222,14 @@ async def run_twitter_simulation(
     minutes_per_round = time_config.get("minutes_per_round", 30)
     total_rounds = (total_hours * 60) // minutes_per_round
     
-    # 如果指定了最大轮数，则截断
+    # 如果指定了轮数：可截断也可延长
     if max_rounds is not None and max_rounds > 0:
         original_rounds = total_rounds
-        total_rounds = min(total_rounds, max_rounds)
+        total_rounds = int(max_rounds)
         if total_rounds < original_rounds:
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+        elif total_rounds > original_rounds:
+            log_info(f"轮数已延长: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
     
     start_time = datetime.now()
     
@@ -1421,12 +1423,14 @@ async def run_reddit_simulation(
     minutes_per_round = time_config.get("minutes_per_round", 30)
     total_rounds = (total_hours * 60) // minutes_per_round
     
-    # 如果指定了最大轮数，则截断
+    # 如果指定了轮数：可截断也可延长
     if max_rounds is not None and max_rounds > 0:
         original_rounds = total_rounds
-        total_rounds = min(total_rounds, max_rounds)
+        total_rounds = int(max_rounds)
         if total_rounds < original_rounds:
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
+        elif total_rounds > original_rounds:
+            log_info(f"轮数已延长: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
     
     start_time = datetime.now()
     
@@ -1565,9 +1569,11 @@ async def main():
     log_manager.info(f"  - 每轮时间: {minutes_per_round}分钟")
     log_manager.info(f"  - 配置总轮数: {config_total_rounds}")
     if args.max_rounds:
-        log_manager.info(f"  - 最大轮数限制: {args.max_rounds}")
+        log_manager.info(f"  - 指定轮数: {args.max_rounds}")
         if args.max_rounds < config_total_rounds:
             log_manager.info(f"  - 实际执行轮数: {args.max_rounds} (已截断)")
+        elif args.max_rounds > config_total_rounds:
+            log_manager.info(f"  - 实际执行轮数: {args.max_rounds} (已延长)")
     log_manager.info(f"  - Agent数量: {len(config.get('agent_configs', []))}")
     
     log_manager.info("日志结构:")

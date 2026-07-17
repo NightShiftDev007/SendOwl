@@ -192,6 +192,8 @@ def apply_to_config(
 
     posts = []
     for p in iv.initial_posts:
+        if not str(p.content or "").strip():
+            continue
         poster_id = p.poster_agent_id
         if poster_id is None:
             kws = p.poster_keywords or keywords
@@ -205,7 +207,9 @@ def apply_to_config(
         )
 
     cfg.setdefault("event_config", {})
-    cfg["event_config"]["initial_posts"] = posts
+    # 无干预帖时保留原有（LLM 编排的）initial_posts，不能清空
+    if posts:
+        cfg["event_config"]["initial_posts"] = posts
     if iv.hot_topics:
         cfg["event_config"]["hot_topics"] = iv.hot_topics
     if iv.narrative_direction:

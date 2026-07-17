@@ -56,7 +56,11 @@ def digest_profiles(profiles: Optional[List[Any]], limit: int = DIGEST_LIMIT) ->
             {
                 "name": p.get("name") or p.get("username") or "",
                 "username": p.get("username") or "",
-                "entity_type": p.get("entity_type") or p.get("profession") or "",
+                "profession": p.get("profession") or "",
+                "entity_type": p.get("entity_type")
+                or p.get("source_entity_type")
+                or p.get("profession")
+                or "",
                 "bio": bio,
                 "interested_topics": topics,
                 "topics_count": len(topics),
@@ -105,20 +109,23 @@ def load_profiles_digest_for_decision(
     sim_id: Optional[str] = None,
     limit: int = DIGEST_LIMIT,
 ) -> Dict[str, Any]:
-    """从 shared / sim 读 reddit_profiles，返回 count + digest。"""
+    """从 shared / sim 读 reddit_profiles，返回 count + digest。
+
+    取人数最多的一份：注入初期 sim 可能只有残缺条数，不能盖过 shared 全量。
+    """
     resolved = sim_id or resolve_sim_id_for_decision(decision_id)
-    search_dirs: List[str] = []
-    if resolved:
-        search_dirs.append(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, resolved))
+    candidates: List[str] = []
     if decision_id and str(decision_id).startswith("dec_"):
-        search_dirs.append(os.path.join(Config.DECISION_DIR, decision_id, "shared"))
+        candidates.append(os.path.join(Config.DECISION_DIR, decision_id, "shared"))
+    if resolved:
+        candidates.append(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, resolved))
 
     profiles: List[Dict[str, Any]] = []
-    for d in search_dirs:
+    for d in candidates:
         path = os.path.join(d, "reddit_profiles.json")
-        profiles = _load_profiles_list(path)
-        if profiles:
-            break
+        loaded = _load_profiles_list(path)
+        if len(loaded) > len(profiles):
+            profiles = loaded
 
     topics_total = 0
     for p in profiles:
@@ -139,13 +146,32 @@ def load_profiles_digest_for_sim(
     *,
     limit: int = DIGEST_LIMIT,
 ) -> Dict[str, Any]:
-    """从单个 sim 目录读人设 digest。"""
+    """从单个 sim 目录读人设 digest；若归属 decision，与 shared 取人数更多者。"""
     if not simulation_id:
         return {"profile_count": 0, "profiles_digest": [], "topics_count": 0}
     path = os.path.join(
         Config.OASIS_SIMULATION_DATA_DIR, simulation_id, "reddit_profiles.json"
     )
     profiles = _load_profiles_list(path)
+
+    # N>1：sim 注入残缺时回源 shared
+    try:
+        state_path = os.path.join(
+            Config.OASIS_SIMULATION_DATA_DIR, simulation_id, "state.json"
+        )
+        if os.path.isfile(state_path):
+            with open(state_path, encoding="utf-8") as f:
+                st = json.load(f) or {}
+            project_id = str(st.get("project_id") or "")
+            if project_id.startswith("dec_"):
+                shared_info = load_profiles_digest_for_decision(
+                    project_id, sim_id=simulation_id, limit=limit
+                )
+                if int(shared_info.get("profile_count") or 0) > len(profiles):
+                    return shared_info
+    except Exception:
+        pass
+
     topics_total = 0
     for p in profiles:
         topics = p.get("interested_topics") or p.get("topics") or []

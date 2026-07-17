@@ -5,7 +5,7 @@
         <span class="mono title">Scenario × Run</span>
         <span class="progress mono">{{ progress.done }}/{{ progress.total }}</span>
       </div>
-      <span class="hint">点击 Run 切换时间线</span>
+      <span class="hint">点击查看该 Run 详情（推演范围仍是全部）</span>
     </div>
 
     <div class="scenario-list">
@@ -28,11 +28,15 @@
             class="run-pill"
             :class="[
               run.status,
-              { selected: run.run_id === selectedRunId || run.sim_id === selectedSimId },
+              {
+                selected: run.run_id === selectedRunId || run.sim_id === selectedSimId,
+                live: isLive(run),
+              },
             ]"
             :title="pillTitle(run)"
             @click="select(run, sc)"
           >
+            <span v-if="isLive(run)" class="live-dot" aria-hidden="true"></span>
             <span class="pill-idx">R{{ idx + 1 }}</span>
             <span class="pill-seed mono">{{ run.seed }}</span>
             <span class="pill-status">{{ pillStatus(run) }}</span>
@@ -78,6 +82,11 @@ const activeScenarioId = computed(() => {
   return scenarios.value[0]?.scenario_id
 })
 
+function isLive(run) {
+  const s = String(run?.status || '').toLowerCase()
+  return s === 'running' || s === 'starting'
+}
+
 function shortStatus(status) {
   const s = String(status || '').toLowerCase()
   if (s === 'completed' || s === 'done') return 'done'
@@ -102,6 +111,7 @@ function pillStatus(run) {
 
 function pillTitle(run) {
   const parts = [
+    '查看详情',
     run?.run_id,
     `seed ${run?.seed}`,
     run?.status,
@@ -109,6 +119,7 @@ function pillTitle(run) {
   const cur = Number(run?.current_round || 0)
   const tot = Number(run?.total_rounds || 0)
   if (tot > 0) parts.push(`round ${cur}/${tot}`)
+  if (isLive(run)) parts.push('进行中')
   if (run?.error) parts.push(String(run.error))
   return parts.filter(Boolean).join(' · ')
 }
@@ -248,6 +259,32 @@ function select(run, sc) {
   line-height: 1;
   color: var(--ink, #222);
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  position: relative;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand, #ff5722);
+  flex-shrink: 0;
+  animation: live-pulse 1.2s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  0% { opacity: 1; transform: scale(1); }
+  70% { opacity: 0.35; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+.run-pill.live:not(.selected) {
+  border-color: color-mix(in srgb, var(--brand, #ff5722) 45%, #e0e0e0);
 }
 
 .run-pill:hover {

@@ -214,11 +214,110 @@ def _generate_shared_base_config(
     cfg["platform"] = cfg.get("platform") or "parallel"
     cfg["simulation_requirement"] = intervention_text or cfg.get("simulation_requirement") or ""
 
+    # 首轮弱结果：单独重跑一次事件编排，再判死刑
+    if not _event_config_is_strong(cfg.get("event_config")):
+        logger.warning(
+            f"shared event_config 首轮偏弱，重试初始激活编排 decision={decision_id}"
+        )
+        try:
+            cfg = generator.regenerate_event_config(
+                existing_config=cfg,
+                simulation_requirement=intervention_text or (dec.get("title") or decision_id),
+                document_text=document_text or "",
+                entities=entities,
+            )
+        except Exception as e:
+            logger.warning(f"shared event_config 重试失败: {e}")
     if not _event_config_is_strong(cfg.get("event_config")):
         raise RuntimeError(
             "LLM 初始激活编排结果无效（需≥2条初始帖、≥1个热点、非空叙事）"
         )
     return cfg
+
+
+def propagate_strong_event_config(
+    decision_id: str,
+    event_config: Dict[str, Any],
+    source_sim_id: str = "",
+) -> int:
+    """单 sim 分阶段重试修好 event_config 后，补齐共享 base 与其余弱 sim。
+
+    合并策略与注入一致：保留目标 sim 自己的干预帖在前，热点/叙事取强配置。
+    返回修补的 sim 数。
+    """
+    if not _event_config_is_strong(event_config):
+        return 0
+    fixed = 0
+
+    shared_base = os.path.join(
+        Config.DECISION_DIR, decision_id, "shared", "base_simulation_config.json"
+    )
+    if os.path.isfile(shared_base):
+        try:
+            with open(shared_base, encoding="utf-8") as f:
+                base = json.load(f) or {}
+            if not _event_config_is_strong(base.get("event_config")):
+                base["event_config"] = event_config
+                with open(shared_base, "w", encoding="utf-8") as f:
+                    json.dump(base, f, ensure_ascii=False, indent=2)
+                logger.info(f"propagate event_config → shared base: {decision_id}")
+        except Exception as e:
+            logger.warning(f"propagate 到 shared base 失败: {e}")
+
+    try:
+        runs = registry.list_runs_for_decision(decision_id) or []
+    except Exception:
+        runs = []
+    for run in runs:
+        sim_id = run.get("sim_id")
+        if not sim_id or sim_id == source_sim_id:
+            continue
+        cfg_path = os.path.join(
+            Config.OASIS_SIMULATION_DATA_DIR, sim_id, "simulation_config.json"
+        )
+        if not os.path.isfile(cfg_path):
+            continue
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f) or {}
+            cur = cfg.get("event_config") if isinstance(cfg.get("event_config"), dict) else {}
+            if _event_config_is_strong(cur):
+                continue
+            merged = dict(event_config)
+            own_posts = [
+                p
+                for p in (cur.get("initial_posts") or [])
+                if isinstance(p, dict) and str(p.get("content") or "").strip()
+            ]
+            if own_posts:
+                seen = {str(p.get("content") or "").strip() for p in own_posts}
+                padded = list(own_posts)
+                posts_min = max(2, int(getattr(Config, "EVENT_INITIAL_POSTS_MIN", 4) or 4))
+                source_posts = [
+                    p
+                    for p in (merged.get("initial_posts") or [])
+                    if isinstance(p, dict) and str(p.get("content") or "").strip()
+                ]
+                pad_target = min(posts_min, len(own_posts) + len(source_posts))
+                for p in source_posts:
+                    if len(padded) >= pad_target:
+                        break
+                    c = str(p.get("content") or "").strip()
+                    if c and c not in seen:
+                        padded.append(p)
+                        seen.add(c)
+                merged["initial_posts"] = padded
+            cfg["event_config"] = merged
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            fixed += 1
+        except Exception as e:
+            logger.warning(f"propagate 到 sim={sim_id} 失败: {e}")
+    if fixed:
+        logger.info(
+            f"propagate event_config: decision={decision_id} 修补 {fixed} 个弱 sim"
+        )
+    return fixed
 
 
 def _read_event_config_from_sim(sim_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -274,7 +373,27 @@ def _sim_dir_looks_prepared(sim_id: str) -> bool:
     try:
         with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
-        return bool(cfg.get("time_config") and (cfg.get("agent_configs") or []))
+        # 弱 event_config 不算已准备，否则缓存路径会永久跳过修复
+        if not (
+            cfg.get("time_config")
+            and (cfg.get("agent_configs") or [])
+            and _event_config_is_strong(cfg.get("event_config"))
+        ):
+            return False
+        # 人设也要齐：禁止「只有配置、人设残缺」被当成已准备
+        agents_n = len(cfg.get("agent_configs") or [])
+        profiles_n = 0
+        reddit = os.path.join(run_dir, "reddit_profiles.json")
+        if os.path.isfile(reddit):
+            with open(reddit, encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, list):
+                profiles_n = len(raw)
+        if profiles_n <= 0:
+            return False
+        if agents_n > 0 and profiles_n < max(2, int(agents_n * 0.8)):
+            return False
+        return True
     except Exception:
         return False
 
@@ -912,11 +1031,13 @@ class ScenarioRunner:
                         if isinstance(p, dict) and str(p.get("content") or "").strip()
                     ]
                     if iv_posts:
-                        # 方案差异帖在前，再用 base 帖补到 ≥2
+                        # 方案差异帖在前，再用 base 帖补到 EVENT_INITIAL_POSTS_MIN
                         seen = {str(p.get("content") or "").strip() for p in iv_posts}
                         padded = list(iv_posts)
+                        posts_min = max(2, int(getattr(Config, "EVENT_INITIAL_POSTS_MIN", 4) or 4))
+                        pad_target = min(posts_min, len(iv_posts) + len(base_posts))
                         for p in base_posts:
-                            if len(padded) >= 2:
+                            if len(padded) >= pad_target:
                                 break
                             c = str(p.get("content") or "").strip()
                             if c and c not in seen:
@@ -1013,7 +1134,7 @@ class ScenarioRunner:
                 simulation_requirement=req,
                 document_text=document_text,
                 use_llm_for_profiles=True,
-                parallel_profile_count=3,
+                parallel_profile_count=Config.llm_parallel_workers(),
             )
             # 若有干预，再 patch 到 config
             # N=1 默认方案的 initial_posts 往往是创建时塞入的需求原文 stub，
@@ -1146,7 +1267,10 @@ class ScenarioRunner:
     def get_world_assets(
         self, decision_id: str, prefer_sim_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """读取 profiles / config：优先单 sim，其次共享世界。"""
+        """读取 profiles / config：合并 sim 与 shared，取更完整的一份。
+
+        禁止「sim 有 1 条残缺人设 / stub config 就 break」，否则会盖过 shared 全量。
+        """
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
@@ -1157,17 +1281,30 @@ class ScenarioRunner:
             if len(runs) == 1:
                 sim_id = runs[0].get("sim_id")
 
-        search_dirs: List[str] = []
-        if sim_id:
-            search_dirs.append(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id))
         shared_dir = dec.get("shared_world_dir") or os.path.join(
             Config.DECISION_DIR, decision_id, "shared"
         )
-        search_dirs.append(shared_dir)
+        # shared 优先扫描，再补 sim（最终仍按完整度择优）
+        search_dirs: List[str] = [shared_dir]
+        if sim_id:
+            search_dirs.append(os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id))
 
         profiles: List[Dict[str, Any]] = []
         config: Dict[str, Any] = {}
         used_dir = None
+
+        def _cfg_score(cfg: Dict[str, Any]) -> int:
+            if not isinstance(cfg, dict) or not cfg:
+                return 0
+            score = 0
+            if cfg.get("time_config"):
+                score += 2
+            agents = cfg.get("agent_configs") or []
+            if agents:
+                score += min(len(agents), 50)
+            if _event_config_is_strong(cfg.get("event_config")):
+                score += 10
+            return score
 
         for d in search_dirs:
             if not d or not os.path.isdir(d):
@@ -1208,11 +1345,13 @@ class ScenarioRunner:
                 with open(cfg_path, encoding="utf-8") as f:
                     local_cfg = json.load(f)
 
-            if local_profiles or local_cfg:
+            if len(local_profiles) > len(profiles):
                 profiles = local_profiles
-                config = local_cfg
                 used_dir = d
-                break
+            if _cfg_score(local_cfg) > _cfg_score(config):
+                config = local_cfg
+                if not used_dir:
+                    used_dir = d
 
         normalized: List[Dict[str, Any]] = []
         for i, p in enumerate(profiles):
@@ -1259,7 +1398,12 @@ class ScenarioRunner:
             "assets_dir": used_dir,
             "profiles": normalized,
             "config": config,
-            "ready": bool(normalized or config),
+            "ready": bool(
+                normalized
+                and config.get("time_config")
+                and (config.get("agent_configs") or [])
+                and _event_config_is_strong(config.get("event_config"))
+            ),
             "slice_node_count": slice_node_count,
             "has_slice": bool(slice_node_count),
         }
@@ -1270,18 +1414,33 @@ class ScenarioRunner:
         background: bool = True,
         force: bool = False,
         revive_worker: bool = False,
+        only_sim_id: Optional[str] = None,
+        only_run_id: Optional[str] = None,
+        max_rounds_override: Optional[int] = None,
     ) -> Dict[str, Any]:
         """启动决策推演。
 
         revive_worker=True（Phase C）：即便 status=running 也重起 worker 线程
         （进程重启后 daemon 线程已丢；内部会 skip completed / attach 活 sim）。
         N=1 旁路启动后 registry 已是 running：env 已死时 worker 会重启该 run——预期行为。
+
+        force + only_sim_id/only_run_id：只重置并重跑指定 Run；其余 completed 保持不动。
+        force 且未指定：重置全部 Run。
+        max_rounds_override：Step2 自定义轮数（可高于 time_config 自动上限）。
         """
         dec = registry.get_decision(decision_id)
         if not dec:
             raise ValueError(f"决策不存在: {decision_id}")
 
         status = str(dec.get("status") or "").lower()
+        target_sim = (only_sim_id or "").strip() or None
+        target_run = (only_run_id or "").strip() or None
+        scoped = bool(target_sim or target_run)
+        rounds_override = (
+            int(max_rounds_override)
+            if max_rounds_override is not None and int(max_rounds_override) > 0
+            else None
+        )
 
         # 已在推演且非 force：默认 attach；revive 时继续往下起 worker
         if status == "running" and not force and not revive_worker:
@@ -1291,17 +1450,23 @@ class ScenarioRunner:
             snap["message"] = "推演进行中，已附着现有运行"
             return snap
 
-        # force：停掉仍在跑的 run / env，再重开
+        # force：停掉目标 run / env，清理日志，重置为 ready
         if force:
             runs = registry.list_runs_for_decision(decision_id) or []
+            reset_ids: List[str] = []
             for run in runs:
+                if target_sim and str(run.get("sim_id") or "") != target_sim:
+                    continue
+                if target_run and str(run.get("id") or "") != target_run:
+                    continue
                 sim_id = run.get("sim_id")
                 st = str(run.get("status") or "").lower()
-                if sim_id and st in ("running", "starting"):
-                    try:
-                        SimulationRunner.stop_simulation(sim_id)
-                    except Exception as e:
-                        logger.warning(f"force stop {sim_id}: {e}")
+                if sim_id:
+                    if st in ("running", "starting"):
+                        try:
+                            SimulationRunner.stop_simulation(sim_id)
+                        except Exception as e:
+                            logger.warning(f"force stop {sim_id}: {e}")
                     try:
                         SimulationRunner.close_simulation_env(sim_id)
                     except Exception as e:
@@ -1310,7 +1475,24 @@ class ScenarioRunner:
                         SimulationRunner.cleanup_simulation_logs(sim_id)
                     except Exception as e:
                         logger.warning(f"force cleanup logs {sim_id}: {e}")
-                    registry.update_run(run["id"], status="ready", error=None)
+                registry.update_run(
+                    run["id"],
+                    status="ready",
+                    error=None,
+                    started_at=None,
+                    finished_at=None,
+                    metrics_json=None,
+                )
+                reset_ids.append(run["id"])
+            if scoped and not reset_ids:
+                raise ValueError(
+                    f"未找到要重跑的 Run（sim_id={target_sim} run_id={target_run}）"
+                )
+            logger.info(
+                f"force restart decision={decision_id}: "
+                f"已重置 {len(reset_ids)} 个 run 为 ready"
+                + (f" (scoped sim={target_sim} run={target_run})" if scoped else " (全部)")
+            )
 
         registry.update_decision(decision_id, status="running")
         try:
@@ -1323,7 +1505,7 @@ class ScenarioRunner:
         if background:
             t = threading.Thread(
                 target=self._run_decision_worker,
-                args=(decision_id,),
+                args=(decision_id, rounds_override),
                 daemon=True,
             )
             t.start()
@@ -1331,16 +1513,28 @@ class ScenarioRunner:
                 "decision_id": decision_id,
                 "status": "running",
                 "force_restarted": bool(force),
+                "restart_scope": "run" if scoped else "all",
+                "only_sim_id": target_sim,
+                "only_run_id": target_run,
+                "max_rounds": rounds_override,
                 "attached": False,
             }
 
-        return self._run_decision_worker(decision_id)
+        return self._run_decision_worker(decision_id, rounds_override)
 
-    def _run_decision_worker(self, decision_id: str) -> Dict[str, Any]:
+    def _run_decision_worker(
+        self,
+        decision_id: str,
+        max_rounds_override: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """串行启动各 Run 对应的真 Simulation。"""
         try:
             dec = registry.get_decision(decision_id)
-            max_rounds = int(dec.get("max_rounds") or 10)
+            max_rounds = int(
+                max_rounds_override
+                if max_rounds_override is not None
+                else (dec.get("max_rounds") or 10)
+            )
             scenarios = registry.list_scenarios(decision_id)
 
             # 若尚未 prepare，先 prepare
@@ -1472,7 +1666,7 @@ class ScenarioRunner:
 
                         SimulationRunner.start_simulation(
                             simulation_id=sim_id,
-                            platform="twitter",
+                            platform="parallel",
                             max_rounds=max_rounds,
                             enable_graph_memory_update=False,
                             no_wait=False,  # wait 模式：跑完可采访
@@ -1538,9 +1732,8 @@ class ScenarioRunner:
             for sc in registry.list_scenarios(decision_id):
                 for run in registry.list_runs_for_scenario(sc["id"]):
                     st = (run.get("status") or "").lower()
-                    # ready = 已准备未开跑；若 run_state 已终态则上面应已写成 completed
-                    # 勿把单纯 ready 当成「推演未完成」导致 decision 假 running
-                    if st in ("pending", "running", "created"):
+                    # ready/pending 等均视为未跑完（force 重开后会落到 ready）
+                    if st in ("pending", "running", "created", "ready", "starting"):
                         leftover.append(run["id"])
             registry.update_decision(
                 decision_id,
