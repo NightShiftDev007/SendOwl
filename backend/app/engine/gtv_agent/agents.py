@@ -105,7 +105,8 @@ def decide_round_batch(
         "set_rent_start, record_payment, settle_commission, reject, walk_away, timeout。"
         "谈价=与业主协商，禁止写成公司单方改挂牌价。"
         "prefer_direct=true 时走 buy_at_list；negotiate_enabled 或干预谈价时走谈价多轮。"
-        "带看次数未达 min_shows 前优先 complete_show；靠近末轮可 walk_away 或推进审批落地。"
+        "带看次数未达 min_shows 前优先 complete_show；靠近末轮必须推进漏斗或 walk_away，禁止原地跟进空转。"
+        "consult 阶段：follow_count 已达 min_follows 后本轮必须 submit_report，禁止再 follow_up/inquire。"
         "quality_score≥0.65：意向后更易直签/谈成；quality_score<0.35：多跟进/多带看，末轮更易流失。"
         "严格输出 JSON：{\"actions\":[{\"thread_id\",\"actor\",\"action\",\"text\","
         "\"concession_pct\",\"contract_money\",\"commission\",\"rent_start_days\",\"payment_ratio\"}]}"
@@ -117,8 +118,8 @@ def decide_round_batch(
         "intervention": gtv,
         "threads": compact,
         "hint": (
-            "每条线程恰好一条 action；text 用中文短句，必须点名房源名称+listing_id、"
-            "经纪人昵称+broker_id、地址/位置，以及当前阶段（基于 CRM 种子底座推演，非历史回放）。"
+            "每条线程恰好一条 action；必须推动漏斗前进（或明确流失），禁止同一阶段反复 follow_up。"
+            "text 用中文短句，必须点名房源名称+listing_id、经纪人昵称+broker_id、地址/位置，以及当前阶段。"
         ),
     }
     try:
@@ -152,7 +153,77 @@ def decide_round_batch(
                     "text": f"{t.broker_name} 继续跟进 {t.client_name}",
                 }
             )
-    return actions
+    # LLM 易在 consult 空转 follow_up：纠偏为规则推进，保证漏斗能涌现签约/流失
+    return _coerce_llm_actions(actions, active, round_no=round_no, total_rounds=total_rounds)
+
+
+_STALL_ACTIONS = frozenset(
+    {"follow_up", "inquire", "consult", "boost_touch", "timeout"}
+)
+
+
+def _needs_progress_coerce(t: DealThread, action: str, *, late: bool) -> bool:
+    """判断 LLM 动作是否会让漏斗空转。"""
+    act = (action or "").strip().lower()
+    if t.stage == "consult" and t.follow_count >= t.min_follows:
+        if act in _STALL_ACTIONS or act in ("", "follow_up", "inquire"):
+            return True
+    if t.stage == "show" and t.show_count >= t.min_shows and act in ("complete_show", "show"):
+        return True
+    if t.stage in ("clue", "project") and act in _STALL_ACTIONS and t.follow_count >= 1:
+        return True
+    # 末段仍未过意向：强制用规则推进，避免 16 轮全卡咨询
+    if late and t.stage in ("clue", "project", "consult", "report", "lock", "schedule", "show"):
+        if act in _STALL_ACTIONS:
+            return True
+    return False
+
+
+def _coerce_llm_actions(
+    actions: List[Dict[str, Any]],
+    threads: List[DealThread],
+    *,
+    round_no: int,
+    total_rounds: int,
+) -> List[Dict[str, Any]]:
+    by_id = {t.thread_id: t for t in threads}
+    late = round_no >= max(3, total_rounds - 4)
+    out: List[Dict[str, Any]] = []
+    for a in actions:
+        if not isinstance(a, dict):
+            continue
+        tid = str(a.get("thread_id") or "")
+        t = by_id.get(tid)
+        if not t:
+            out.append(a)
+            continue
+        act = str(a.get("action") or "follow_up")
+        if _needs_progress_coerce(t, act, late=late):
+            rule_act, rule_text, actor = _rule_one(t, late=late)
+            out.append(
+                {
+                    **a,
+                    "actor": actor,
+                    "action": rule_act,
+                    "text": rule_text,
+                    "concession_pct": a.get("concession_pct") or t.concession_pct or 0.05,
+                    "rent_start_days": a.get("rent_start_days") or t.rent_start_days or 7,
+                    "payment_ratio": a.get("payment_ratio") if a.get("payment_ratio") is not None else 1.0,
+                    "source": "llm_coerced",
+                }
+            )
+            logger.info(
+                "LLM 空转纠偏 thread=%s stage=%s %s→%s round=%s",
+                tid,
+                t.stage,
+                act,
+                rule_act,
+                round_no,
+            )
+        else:
+            a.setdefault("source", "llm")
+            out.append(a)
+    return out
 
 
 def _rule_batch(threads: List[DealThread], round_no: int, total_rounds: int) -> List[Dict[str, Any]]:

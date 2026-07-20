@@ -213,6 +213,67 @@ def scenario_scores_path(decision_id: str) -> str:
     return os.path.join(Config.DECISION_DIR, decision_id, "report", "scenario_scores.json")
 
 
+def clear_gtv_run_artifacts(decision_id: str) -> Dict[str, Any]:
+    """重新推演前同步清空上一局 sidecar，避免前端轮询读到旧时间线。"""
+    from app.engine.gtv_agent.runner import agent_status_path, deal_actions_path
+
+    report_dir = os.path.join(Config.DECISION_DIR, decision_id, "report")
+    os.makedirs(report_dir, exist_ok=True)
+    empty_tl = {
+        "template": TEMPLATE_GTV,
+        "engine": "gtv_agent",
+        "events": [],
+        "event_count": 0,
+        "note": "等待成交 Agent 全流程写入（CRM 种子底座）…",
+        "generated_at": _utc_now(),
+    }
+    cleared: List[str] = []
+    try:
+        with open(deal_timeline_path(decision_id), "w", encoding="utf-8") as f:
+            json.dump(empty_tl, f, ensure_ascii=False, indent=2)
+        cleared.append("deal_timeline.json")
+    except Exception as e:
+        logger.warning("clear deal_timeline failed: %s", e)
+
+    for rel, path in (
+        ("deal_actions.jsonl", deal_actions_path(decision_id)),
+        ("agent_results.json", os.path.join(report_dir, "agent_results.json")),
+        ("agent_status.json", agent_status_path(decision_id)),
+        ("compare_report.md", compare_report_path(decision_id)),
+        ("scenario_scores.json", scenario_scores_path(decision_id)),
+    ):
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                cleared.append(rel)
+        except Exception as e:
+            logger.warning("clear %s failed: %s", rel, e)
+
+    # 占位 agent_status，避免 enrich 仍吐旧 completed 摘要
+    try:
+        with open(agent_status_path(decision_id), "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "status": "running",
+                    "track": "agent",
+                    "engine": "gtv_agent",
+                    "current_round": 0,
+                    "total_rounds": int(os.environ.get("GTV_AGENT_ROUNDS", "16")),
+                    "message": "成交 Agent 轨准备中（已清空上一局）",
+                    "updated_at": _utc_now(),
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+        if "agent_status.json" not in cleared:
+            cleared.append("agent_status.json")
+    except Exception as e:
+        logger.warning("reset agent_status failed: %s", e)
+
+    return {"cleared": cleared, "deal_timeline": empty_tl}
+
+
 def build_deal_timeline(
     max_listings: int = 6,
     listings: Optional[List[Dict[str, Any]]] = None,
@@ -761,6 +822,31 @@ def _merge_dual_report(
 _DUAL_GEN: Dict[str, int] = {}
 
 
+def _dual_gen_path(decision_id: str) -> str:
+    return os.path.join(Config.DECISION_DIR, decision_id, "report", "dual_gen.json")
+
+
+def _read_dual_gen(decision_id: str) -> int:
+    """跨进程可读的双轨代数（Flask reloader 会丢内存 _DUAL_GEN）。"""
+    path = _dual_gen_path(decision_id)
+    if not os.path.isfile(path):
+        return int(_DUAL_GEN.get(decision_id) or 0)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return int(data.get("gen") or 0)
+    except Exception:
+        return int(_DUAL_GEN.get(decision_id) or 0)
+
+
+def _write_dual_gen(decision_id: str, gen: int) -> None:
+    path = _dual_gen_path(decision_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"gen": int(gen), "updated_at": _utc_now()}, f, ensure_ascii=False)
+    _DUAL_GEN[decision_id] = int(gen)
+
+
 def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
     """后台：统计轨 → Agent 轨 → 合并报告。"""
     from app.engine.gtv_agent.runner import run_agent_track
@@ -768,7 +854,8 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
     from scripts.gtv_forecast.scoring import render_compare_markdown
 
     def _stale() -> bool:
-        return _DUAL_GEN.get(decision_id) != gen
+        # 磁盘 gen 优先：热重载后旧 daemon 线程仍可能存活，不能只看内存
+        return _read_dual_gen(decision_id) != gen
 
     total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "16"))
     now = _utc_now()
@@ -881,7 +968,11 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
                 listings=listings,
                 brokers=brokers,
                 on_progress=on_progress,
+                should_abort=_stale,
             )
+            if _stale():
+                logger.info("GTV dual stale after agent decision=%s gen=%s", decision_id, gen)
+                return
             if agent_out.get("status") != "failed":
                 tl = agent_out.get("timeline") or {}
                 path = deal_timeline_path(decision_id)
@@ -899,6 +990,17 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
         agent_by_name = {
             str(s.get("scenario_name")): s for s in (agent_out.get("scenarios") or [])
         }
+        # 实际跑到的轮次（可能因全部 settle/lost 提前结束，或跑满 total_rounds）
+        agent_rounds = 0
+        for s in agent_out.get("scenarios") or []:
+            for e in s.get("events") or []:
+                try:
+                    agent_rounds = max(agent_rounds, int(e.get("round") or e.get("day") or 0))
+                except Exception:
+                    pass
+        if not agent_rounds:
+            agent_rounds = int(agent_out.get("current_round") or total_rounds)
+
         for run in runs:
             sc = sc_by_id.get(str(run.get("scenario_id") or "")) or primary
             ag = agent_by_name.get(str((sc or {}).get("name") or ""))
@@ -915,6 +1017,8 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
                     "report_source": src,
                     "stat_mode": multi.get("mode"),
                     "agent_status": agent_out.get("status"),
+                    "agent_rounds": agent_rounds,
+                    "agent_total_rounds": total_rounds,
                     "expected_deals": summary.get("expected_deals"),
                     "expected_contract_money": summary.get("expected_contract_money"),
                     "expected_commission": summary.get("expected_commission"),
@@ -923,23 +1027,60 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
                 },
             )
 
+        # 再次确认：finalize 前旧 worker 不得把决策打成 completed
+        if _stale():
+            logger.info("GTV dual stale at finalize decision=%s gen=%s", decision_id, gen)
+            return
+
+        from app.engine.gtv_agent.runner import write_agent_status
+
+        # 与决策终态对齐：显式写 agent_status（含实际轮次 / 是否提前收官）
+        if agent_out.get("status") != "failed":
+            write_agent_status(
+                decision_id,
+                {
+                    "status": "completed",
+                    "track": "agent",
+                    "engine": "gtv_agent",
+                    "current_round": agent_rounds,
+                    "total_rounds": total_rounds,
+                    "early_stop": bool(agent_out.get("early_stop")),
+                    "message": agent_out.get("message")
+                    or f"成交 Agent 已完成 R{agent_rounds}/{total_rounds}",
+                    "dual_gen": gen,
+                },
+            )
+
         _write_run_states(
             decision_id,
-            current_round=total_rounds,
+            current_round=agent_rounds,
             total_rounds=total_rounds,
             status="completed",
-            message="GTV 双轨推演完成",
+            message=f"GTV 双轨推演完成（Agent {agent_rounds}/{total_rounds} 轮）",
         )
         registry.update_decision(decision_id, status="completed")
         logger.info(
-            "GTV 双轨完成 decision=%s report=%s agent=%s stat=%s",
+            "GTV 双轨完成 decision=%s report=%s agent=%s rounds=%s/%s stat=%s",
             decision_id,
             report_path,
             agent_out.get("status"),
+            agent_rounds,
+            total_rounds,
             multi.get("mode"),
         )
     except Exception as e:
+        # 被新一轮推演取代时，禁止把决策打成 failed（否则新 worker 会被污染）
+        if _stale() or "已取消" in str(e) or "被新的重新推演取代" in str(e):
+            logger.info(
+                "GTV dual aborted (stale/superseded) decision=%s gen=%s err=%s",
+                decision_id,
+                gen,
+                e,
+            )
+            return
         logger.exception("GTV 双轨失败 decision=%s", decision_id)
+        if _stale():
+            return
         registry.update_decision(decision_id, status="failed")
         _write_run_states(
             decision_id,
@@ -1018,6 +1159,9 @@ def start_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict[s
     if status in (None, "", "created", "pending", "prepare_failed") or force:
         prepare_gtv_deal(runner, decision_id, force=force)
 
+    # 启动前同步清空上一局时间线/Agent 产物（必须在返回前完成，否则前端会立刻读到旧数据）
+    cleared = clear_gtv_run_artifacts(decision_id)
+
     total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "16"))
     registry.update_decision(decision_id, status="running")
     now = _utc_now()
@@ -1031,8 +1175,8 @@ def start_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict[s
         message="GTV 双轨启动：统计轨 + Agent 轨",
     )
 
-    gen = int(_DUAL_GEN.get(decision_id) or 0) + 1
-    _DUAL_GEN[decision_id] = gen
+    gen = _read_dual_gen(decision_id) + 1
+    _write_dual_gen(decision_id, gen)
     t = threading.Thread(
         target=_dual_track_worker,
         args=(runner, decision_id, gen),
@@ -1049,6 +1193,15 @@ def start_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict[s
     snap["engine"] = "gtv_dual"
     snap["total_rounds"] = total_rounds
     snap["current_round"] = 0
+    snap["force_restarted"] = bool(force)
+    snap["deal_timeline"] = cleared.get("deal_timeline")
+    snap["scenario_scores"] = None
+    snap["agent_status"] = {
+        "status": "running",
+        "current_round": 0,
+        "total_rounds": total_rounds,
+        "message": "成交 Agent 轨准备中（已清空上一局）",
+    }
     return snap
 
 
@@ -1066,9 +1219,16 @@ def enrich_gtv_status(decision_id: str, status: Dict[str, Any]) -> Dict[str, Any
         if os.path.isfile(scores_path):
             with open(scores_path, encoding="utf-8") as f:
                 status["scenario_scores"] = json.load(f)
+        else:
+            # 显式 null：重新推演清空后前端应丢掉旧统计卡
+            status["scenario_scores"] = None
         tl = load_deal_timeline(decision_id)
-        if tl:
-            status["deal_timeline"] = tl
+        status["deal_timeline"] = tl or {
+            "template": TEMPLATE_GTV,
+            "engine": "gtv_agent",
+            "events": [],
+            "event_count": 0,
+        }
         status["engine"] = status.get("engine") or "gtv_dual"
     except Exception as e:
         logger.debug("enrich_gtv_status: %s", e)

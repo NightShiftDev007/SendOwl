@@ -165,18 +165,37 @@ def attach_listing_quality_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         out["has_crown_block"] = pd.to_numeric(out["has_crown_block"], errors="coerce").fillna(0)
 
-    # 地址拼接
-    parts = []
-    for c in ("province_name", "city_name", "region_name", "street_name"):
-        if c in out.columns:
-            parts.append(out[c].fillna("").astype(str))
-    if parts:
-        addr = parts[0]
-        for p in parts[1:]:
-            addr = addr + p
-        out["address"] = addr.str.strip()
-    else:
-        out["address"] = out.get("city_name", pd.Series([""] * len(out))).fillna("").astype(str)
+    # 地址拼接（省市同名时不重复拼，避免「上海市上海市」）
+    prov = (
+        out["province_name"].fillna("").astype(str)
+        if "province_name" in out.columns
+        else pd.Series([""] * len(out), index=out.index)
+    )
+    city = (
+        out["city_name"].fillna("").astype(str)
+        if "city_name" in out.columns
+        else pd.Series([""] * len(out), index=out.index)
+    )
+    region = (
+        out["region_name"].fillna("").astype(str)
+        if "region_name" in out.columns
+        else pd.Series([""] * len(out), index=out.index)
+    )
+    street = (
+        out["street_name"].fillna("").astype(str)
+        if "street_name" in out.columns
+        else pd.Series([""] * len(out), index=out.index)
+    )
+    head = city.where(city.str.len() > 0, prov)
+    # 省与市相同，或市名已以省名开头时，不再前置省
+    use_prov = np.array(
+        [
+            bool(p) and p != c and not (c.startswith(p) if p else False)
+            for p, c in zip(prov.tolist(), city.tolist())
+        ],
+        dtype=bool,
+    )
+    out["address"] = (pd.Series(np.where(use_prov, prov, ""), index=out.index) + head + region + street).str.strip()
 
     if "listing_name" not in out.columns:
         name = out.get("name")

@@ -49,7 +49,9 @@
         </p>
         <ul v-if="s.delta_vs_baseline?.top_rank_moves?.length" class="rank-moves">
           <li v-for="m in s.delta_vs_baseline.top_rank_moves.slice(0, 3)" :key="m.listing_id">
-            …{{ String(m.listing_id).slice(-6) }} #{{ m.baseline_rank }}→#{{ m.rank }}
+            {{ m.listing_name || String(m.listing_id) }}
+            <span class="muted mono">ID {{ m.listing_id }}</span>
+            #{{ m.baseline_rank }}→#{{ m.rank }}
             （Δ{{ m.delta_rank > 0 ? '+' : '' }}{{ m.delta_rank }}）
           </li>
         </ul>

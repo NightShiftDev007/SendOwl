@@ -86,7 +86,7 @@
           <span class="gtv-badge" :class="decisionPhaseClass">{{ decisionPhaseLabel }}</span>
         </div>
         <p class="gtv-progress-desc">
-          {{ $t('step3.gtvWorldSampleNote') }} · 时间线双轨：左 Agent 全流程 · 右统计模型对照（非社媒发帖 · 谈价≠公司改挂牌价）
+          {{ $t('step3.gtvWorldSampleNote') }} · Agent 走漏斗时间线 · 统计轨用方案 KPI / 三榜对照（非社媒发帖 · 谈价≠公司改挂牌价）
         </p>
         <div class="gtv-round-row mono">
           <span>Agent R{{ gtvCurrentRound }}/{{ gtvTotalRounds }}</span>
@@ -171,12 +171,12 @@
               <span class="stat-value mono">{{ scenarioScores?.mode || '—' }}</span>
             </span>
             <span class="stat">
-              <span class="stat-label">ACTS</span>
-              <span class="stat-value mono">{{ statActionsCount }}</span>
+              <span class="stat-label">方案</span>
+              <span class="stat-value mono">{{ gtvStatScenarioCount }}</span>
             </span>
           </div>
           <div class="actions-tooltip">
-            <div class="tooltip-title">统计对照</div>
+            <div class="tooltip-title">统计对照（非时间线）</div>
             <div class="tooltip-actions">
               <span class="tooltip-action">三榜</span>
               <span class="tooltip-action">期望合同</span>
@@ -272,23 +272,135 @@
       </div>
     </div>
 
-    <!-- 当前 Run 时间线（GTV 双轨也走同一时间线：左 Agent / 右统计） -->
+    <!-- GTV：统计面板（KPI/榜单）+ Agent 时间线；其它模板仍为双平台时间线 -->
     <div class="main-content-area" ref="scrollContainer" @scroll="onTimelineScroll">
+      <section v-if="isGtvMode" class="gtv-stat-panel">
+        <div class="gtv-stat-head">
+          <div class="gtv-stat-title">
+            <span class="mono">统计模型对照</span>
+            <span class="gtv-stat-sub">历史模型 what-if · 非漏斗过程 · 非因果</span>
+          </div>
+          <span v-if="scenarioScores" class="gtv-stat-mode mono">{{ scenarioScores.mode || 'model' }}</span>
+          <span v-else class="gtv-stat-mode mono is-wait">打分中…</span>
+        </div>
+
+        <div v-if="!scenarioScores" class="gtv-stat-empty">
+          <div class="gtv-stat-skel"></div>
+          <p>统计轨出分后在此展示方案经济量与三榜，不写入时间线。</p>
+        </div>
+
+        <template v-else>
+          <div v-if="gtvStatScenarios.length > 1" class="gtv-stat-tabs" role="tablist">
+            <button
+              v-for="(s, idx) in gtvStatScenarios"
+              :key="s.scenario_id || s.name || idx"
+              type="button"
+              role="tab"
+              class="gtv-stat-tab"
+              :class="{ active: idx === gtvStatScenarioIdx }"
+              :aria-selected="idx === gtvStatScenarioIdx"
+              @click="gtvStatScenarioIdx = idx"
+            >
+              {{ shortStatScenarioName(s, idx) }}
+            </button>
+          </div>
+
+          <div v-if="selectedStatScenario" class="gtv-stat-kpis">
+            <div class="gtv-kpi">
+              <span class="gtv-kpi-label">预期成交</span>
+              <span class="gtv-kpi-val mono">{{ fmtStat(selectedStatScenario.summary?.expected_deals, 2) }}</span>
+            </div>
+            <div class="gtv-kpi">
+              <span class="gtv-kpi-label">期望合同额</span>
+              <span class="gtv-kpi-val mono">{{ fmtStat(selectedStatScenario.summary?.expected_contract_money, 0) }}</span>
+            </div>
+            <div class="gtv-kpi">
+              <span class="gtv-kpi-label">期望佣金</span>
+              <span class="gtv-kpi-val mono">{{ fmtStat(selectedStatScenario.summary?.expected_commission, 0) }}</span>
+            </div>
+            <div class="gtv-kpi">
+              <span class="gtv-kpi-label">较 Baseline</span>
+              <span
+                class="gtv-kpi-val mono"
+                :class="statDeltaClass(selectedStatScenario)"
+              >{{ fmtStatContractDelta(selectedStatScenario) }}</span>
+            </div>
+          </div>
+
+          <div class="gtv-stat-boards">
+            <div class="gtv-board">
+              <div class="gtv-board-head mono">房源榜 Top{{ Math.min(8, selectedStatListings.length || 8) }}</div>
+              <table v-if="selectedStatListings.length" class="gtv-board-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>房源</th>
+                    <th>类型</th>
+                    <th>城市</th>
+                    <th>成交分</th>
+                    <th>质量</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, ri) in selectedStatListings" :key="row.listing_id || ri">
+                    <td class="mono">{{ ri + 1 }}</td>
+                    <td>
+                      <div class="gtv-board-name">{{ row.listing_name || '—' }}</div>
+                      <div class="gtv-board-id mono" :title="row.listing_id">{{ row.listing_id || '' }}</div>
+                      <div v-if="row.address" class="gtv-board-addr">{{ row.address }}</div>
+                    </td>
+                    <td>{{ listingTypeZh(row.listing_type) }}</td>
+                    <td>{{ row.city_name || '—' }}</td>
+                    <td class="mono">{{ fmtStat(row.score, 3) }}</td>
+                    <td class="mono">{{ row.quality_score != null ? fmtStat(row.quality_score, 2) : '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-else class="gtv-board-empty">暂无房源榜</p>
+            </div>
+
+            <div class="gtv-board">
+              <div class="gtv-board-head mono">经纪人榜 Top{{ Math.min(5, selectedStatBrokers.length || 5) }}</div>
+              <table v-if="selectedStatBrokers.length" class="gtv-board-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>经纪人</th>
+                    <th>成交分</th>
+                    <th>历史开单</th>
+                    <th>在管</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, bi) in selectedStatBrokers" :key="row.user_id || bi">
+                    <td class="mono">{{ bi + 1 }}</td>
+                    <td>
+                      <div class="gtv-board-name">{{ row.nick_name || row.user_name || '—' }}</div>
+                      <div class="gtv-board-id mono" :title="row.user_id">{{ row.user_id || '' }}</div>
+                    </td>
+                    <td class="mono">{{ fmtStat(row.score, 3) }}</td>
+                    <td class="mono">{{ fmtStat(row.hist_deals, 0) }}</td>
+                    <td class="mono">{{ fmtStat(row.n_listings, 0) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-else class="gtv-board-empty">暂无经纪人榜</p>
+            </div>
+          </div>
+        </template>
+      </section>
+
       <div class="timeline-header" v-if="allActions.length > 0 || selectedRunShort || isGtvMode">
         <div class="timeline-stats">
           <span class="total-count">
-            EVENTS<span v-if="selectedRunShort"> · {{ selectedRunShort }}</span>:
-            <span class="mono">{{ allActions.length }}</span>
+            <template v-if="isGtvMode">Agent 漏斗事件</template>
+            <template v-else>EVENTS<span v-if="selectedRunShort"> · {{ selectedRunShort }}</span></template>
+            <template v-if="!isGtvMode">:</template>
+            <span class="mono">{{ isGtvMode ? agentActionsCount : allActions.length }}</span>
           </span>
           <span v-if="isGtvMode" class="platform-breakdown">
             <span class="breakdown-item twitter">
-              <span class="gtv-track-tag">Agent</span>
-              <span class="mono">{{ agentActionsCount }}</span>
-            </span>
-            <span class="breakdown-divider">/</span>
-            <span class="breakdown-item reddit">
-              <span class="gtv-track-tag">统计</span>
-              <span class="mono">{{ statActionsCount }}</span>
+              <span class="gtv-track-tag">时间线仅 Agent</span>
             </span>
           </span>
           <span v-else class="platform-breakdown">
@@ -306,7 +418,7 @@
       </div>
       
       <!-- Timeline Feed -->
-      <div class="timeline-feed">
+      <div class="timeline-feed" :class="{ 'gtv-agent-feed': isGtvMode }">
         <div class="timeline-axis"></div>
         
         <TransitionGroup name="timeline-item">
@@ -382,9 +494,9 @@
                     <span class="gtv-entity-v">{{ action.action_args?.quality_highlights || (action.action_args?.quality_score != null ? `质量分 ${Number(action.action_args.quality_score).toFixed(2)}` : '—') }}</span>
                   </div>
                 </div>
-                <!-- GTV 双轨：Agent / 统计事件正文 -->
+                <!-- GTV Agent 漏斗事件正文 -->
                 <div
-                  v-if="(action.action_type === 'DEAL_ACTION' || action.action_type === 'STAT_SCORE') && action.action_args?.content"
+                  v-if="action.action_type === 'DEAL_ACTION' && action.action_args?.content"
                   class="content-text main-text"
                 >
                   {{ action.action_args.content }}
@@ -506,7 +618,7 @@
 
         <div v-if="allActions.length === 0" class="waiting-state">
           <div class="pulse-ring"></div>
-          <span>{{ isGtvMode ? '等待双轨事件写入时间线…' : 'Waiting for agent actions...' }}</span>
+          <span>{{ isGtvMode ? '等待成交 Agent 漏斗事件…' : 'Waiting for agent actions...' }}</span>
         </div>
       </div>
     </div>
@@ -583,7 +695,15 @@ const agentTrackFailed = computed(
   () => String(agentStatus.value?.status || '').toLowerCase() === 'failed',
 )
 const gtvProgressPercent = computed(() => {
-  if (phase.value === 2) return 100
+  const agSt = String(agentStatus.value?.status || '').toLowerCase()
+  // Agent 仍在跑时绝不以 100% 冒充整局完成（统计出分 ≠ Agent 跑完）
+  if (agSt === 'running') {
+    const tot = gtvTotalRounds.value || 16
+    const cur = gtvCurrentRound.value || 0
+    if (tot > 0 && cur > 0) return Math.min(95, Math.round((cur / tot) * 100))
+    return scenarioScores.value ? 35 : 15
+  }
+  if (phase.value === 2 || agSt === 'completed' || agSt === 'failed') return 100
   if (phase.value === 1) {
     const tot = gtvTotalRounds.value || 16
     const cur = gtvCurrentRound.value || 0
@@ -606,6 +726,34 @@ function fmtDelta(v) {
   const n = Number(v)
   return `${n > 0 ? '+' : ''}${fmtStat(n, 0)}`
 }
+function listingTypeZh(t) {
+  return (
+    { plant: '厂房', warehouse: '仓库', office: '办公' }[String(t || '').toLowerCase()] ||
+    t ||
+    '房源'
+  )
+}
+function shortStatScenarioName(s, idx) {
+  const raw = String(s?.name || '').trim()
+  if (s?.is_baseline || /baseline/i.test(String(s?.kind || ''))) return 'Baseline·不干预'
+  if (!raw) return `方案${idx + 1}`
+  const first = raw.split(/\n/)[0].trim()
+  if (first.length > 28 || /推演下一阶段|现实种子/.test(first)) {
+    return s?.kind === 'custom' ? `方案${idx + 1}` : `${first.slice(0, 24)}…`
+  }
+  return first
+}
+function fmtStatContractDelta(s) {
+  if (!s || s.is_baseline) return '—'
+  const delta = s.delta_vs_baseline?.expected_contract_money?.abs
+  return fmtDelta(delta)
+}
+function statDeltaClass(s) {
+  const delta = Number(s?.delta_vs_baseline?.expected_contract_money?.abs)
+  if (Number.isNaN(delta) || delta === 0) return ''
+  return delta > 0 ? 'is-up' : 'is-down'
+}
+const gtvStatScenarioIdx = ref(0)
 const isStarting = ref(false)
 const isStopping = ref(false)
 /** 'all' | 'run' — 用于按钮文案与参数 */
@@ -638,8 +786,27 @@ const agentActionsCount = computed(() => {
   return allActions.value.filter((a) => a.platform === 'agent').length
 })
 
-const statActionsCount = computed(() => {
-  return allActions.value.filter((a) => a.platform === 'stat').length
+const gtvStatScenarios = computed(() => scenarioScores.value?.scenarios || [])
+const gtvStatScenarioCount = computed(() => gtvStatScenarios.value.length)
+const selectedStatScenario = computed(() => {
+  const list = gtvStatScenarios.value
+  if (!list.length) return null
+  const idx = Math.min(Math.max(0, gtvStatScenarioIdx.value), list.length - 1)
+  return list[idx]
+})
+const selectedStatListings = computed(() =>
+  (selectedStatScenario.value?.listings || []).slice(0, 8),
+)
+const selectedStatBrokers = computed(() =>
+  (selectedStatScenario.value?.brokers || []).slice(0, 5),
+)
+
+watch(gtvStatScenarios, (list) => {
+  if (!list?.length) {
+    gtvStatScenarioIdx.value = 0
+    return
+  }
+  if (gtvStatScenarioIdx.value >= list.length) gtvStatScenarioIdx.value = 0
 })
 
 // 格式化模拟流逝时间（根据轮次和每轮分钟数计算）
@@ -848,16 +1015,24 @@ const doStartSimulation = async ({ force = false, scope = 'all' } = {}) => {
       if (res.data.engine === 'gtv_dual' || res.data.engine === 'gtv_forecast' || isGtvMode.value) {
         addLog('  ├─ 引擎: gtv_dual（Agent 过程 + 统计对照）')
       }
-      if (res.data.deal_timeline) {
-        dealTimeline.value = res.data.deal_timeline
+      // 重新推演：以服务端清空后的 sidecar 为准（空时间线），勿保留旧事件
+      if (force && isGtvMode.value) {
+        dealTimeline.value = res.data.deal_timeline || { events: [], event_count: 0 }
+        scenarioScores.value = res.data.scenario_scores ?? null
+        agentStatus.value = res.data.agent_status || null
+        syncGtvTimelineActions()
+      } else {
+        if (res.data.deal_timeline) {
+          dealTimeline.value = res.data.deal_timeline
+        }
+        if (res.data.scenario_scores) {
+          scenarioScores.value = res.data.scenario_scores
+        }
+        if (res.data.agent_status) {
+          agentStatus.value = res.data.agent_status
+        }
+        if (isGtvMode.value) syncGtvTimelineActions()
       }
-      if (res.data.scenario_scores) {
-        scenarioScores.value = res.data.scenario_scores
-      }
-      if (res.data.agent_status) {
-        agentStatus.value = res.data.agent_status
-      }
-      if (isGtvMode.value) syncGtvTimelineActions()
 
       runStatus.value = res.data
       // 双轨：running 时进入轮询；仅终态才收口
@@ -968,6 +1143,23 @@ const pickActiveRun = (matrix) => {
 /** 整次决策是否终态（矩阵全部结束），不是「当前选中 Run 跑完」 */
 const isDecisionComplete = (data) => {
   if (!data) return false
+  // GTV 双轨：决策被误标 completed 时，若 Agent 仍在跑则不算结束
+  if (isGtvMode.value) {
+    const ag = data.agent_status || agentStatus.value || {}
+    const agSt = String(ag.status || '').toLowerCase()
+    if (agSt === 'running') return false
+    if (agSt === 'failed') return true
+    if (agSt === 'completed') return true
+    // 尚无 agent_status：仅统计出分不算整局完成
+    const st = String(data.status || data.decision_status || data.decision?.status || '').toLowerCase()
+    if (st === 'running') return false
+    if (['failed', 'stopped', 'prepare_failed'].includes(st)) return true
+    // completed 但无 agent 终态 → 仍等 sidecar（避免 R6 误显示已完成）
+    if (st === 'completed' || st === 'done' || st === 'success') {
+      return Boolean(data.scenario_scores || scenarioScores.value) && agSt === 'completed'
+    }
+    return false
+  }
   const st = String(data.status || data.decision_status || data.decision?.status || '').toLowerCase()
   if (['completed', 'done', 'success', 'failed', 'stopped', 'prepare_failed'].includes(st)) {
     return true
@@ -1335,8 +1527,13 @@ const refreshGtvSidecars = async () => {
   try {
     const detail = await getDecision(workflowId.value).catch(() => null)
     const payload = detail?.data || {}
-    if (payload.deal_timeline) dealTimeline.value = payload.deal_timeline
-    if (payload.scenario_scores) scenarioScores.value = payload.scenario_scores
+    if (payload.deal_timeline) {
+      dealTimeline.value = payload.deal_timeline
+    }
+    // 允许 null：重新推演清空后要丢掉旧统计事件
+    if (Object.prototype.hasOwnProperty.call(payload, 'scenario_scores')) {
+      scenarioScores.value = payload.scenario_scores
+    }
     if (payload.agent_status) agentStatus.value = payload.agent_status
     const cur = Number(payload.current_round ?? payload.agent_status?.current_round)
     const tot = Number(payload.total_rounds ?? payload.agent_status?.total_rounds)
@@ -1424,117 +1621,86 @@ const getActionTypeClass = (type) => {
   return classes[type] || 'badge-default'
 }
 
-/** 将 GTV sidecar（Agent 动作 + 统计打分）增量写入与社媒相同的时间线 */
-const pushTimelineAction = (action) => {
-  const actionId = action._uniqueId
-  if (!actionId || actionIds.value.has(actionId)) return false
-  actionIds.value.add(actionId)
-  allActions.value.push(action)
-  return true
-}
-
+/** 将 GTV Agent sidecar 写入时间线（统计轨不进时间线，走上方 KPI/榜单面板） */
 const syncGtvTimelineActions = () => {
   if (!isGtvMode.value) return
-  let added = 0
+
+  // 清掉历史误写入的 stat 伪事件
+  const kept = allActions.value.filter(
+    (a) => a.platform !== 'agent' && a.platform !== 'stat',
+  )
+  const next = [...kept]
+  const nextIds = new Set(kept.map((a) => a._uniqueId).filter(Boolean))
+  const push = (action) => {
+    const actionId = action._uniqueId
+    if (!actionId || nextIds.has(actionId)) return false
+    nextIds.add(actionId)
+    next.push(action)
+    return true
+  }
+
   const events = dealTimeline.value?.events || []
   events.forEach((ev, idx) => {
     const rid = ev.round ?? ev.day ?? 0
     const actionId = `gtv-agent:${rid}:${ev.thread_id || ''}:${ev.action || ''}:${idx}:${String(ev.text || '').slice(0, 48)}`
-    if (
-      pushTimelineAction({
-        _uniqueId: actionId,
-        platform: 'agent',
-        action_type: 'DEAL_ACTION',
-        agent_name: ev.broker_name || ev.broker || ev.actor || '成交 Agent',
-        agent_id: ev.broker_id || ev.thread_id || ev.listing_id || `T${idx}`,
-        round_num: rid,
-        timestamp: ev.ts || dealTimeline.value?.generated_at || new Date().toISOString(),
-        action_args: {
-          content: ev.text || `${ev.stage_label || ev.stage || '动作'}`,
-          stage: ev.stage,
-          stage_label: ev.stage_label || ev.stage || '动作',
-          from_stage: ev.from_stage,
-          from_stage_label: ev.from_stage_label || ev.from_stage || '',
-          city: ev.city,
-          address: ev.address || '',
-          amap_address: ev.amap_address || '',
-          longitude: ev.longitude,
-          latitude: ev.latitude,
-          quality_score: ev.quality_score,
-          quality_highlights: ev.quality_highlights || '',
-          listing_id: ev.listing_id,
-          listing_name: ev.listing_name || '',
-          listing_type: ev.listing_type || '',
-          listing_label: ev.listing_label || '',
-          broker_id: ev.broker_id || '',
-          broker_name: ev.broker_name || ev.broker || '',
-          broker_label: ev.broker_label || '',
-          path: ev.path || '',
-        },
-      })
-    ) {
-      added++
-    }
+    push({
+      _uniqueId: actionId,
+      platform: 'agent',
+      action_type: 'DEAL_ACTION',
+      agent_name: ev.broker_name || ev.broker || ev.actor || '成交 Agent',
+      agent_id: ev.broker_id || ev.thread_id || ev.listing_id || `T${idx}`,
+      round_num: rid,
+      timestamp: ev.ts || dealTimeline.value?.generated_at || new Date().toISOString(),
+      action_args: {
+        content: ev.text || `${ev.stage_label || ev.stage || '动作'}`,
+        stage: ev.stage,
+        stage_label: ev.stage_label || ev.stage || '动作',
+        from_stage: ev.from_stage,
+        from_stage_label: ev.from_stage_label || ev.from_stage || '',
+        city: ev.city,
+        address: ev.address || '',
+        amap_address: ev.amap_address || '',
+        longitude: ev.longitude,
+        latitude: ev.latitude,
+        quality_score: ev.quality_score,
+        quality_highlights: ev.quality_highlights || '',
+        listing_id: ev.listing_id,
+        listing_name: ev.listing_name || '',
+        listing_type: ev.listing_type || '',
+        listing_label: ev.listing_label || '',
+        broker_id: ev.broker_id || '',
+        broker_name: ev.broker_name || ev.broker || '',
+        broker_label: ev.broker_label || '',
+        path: ev.path || '',
+      },
+    })
   })
 
   if (agentTrackFailed.value) {
     const msg =
       agentStatus.value?.message ||
       agentStatus.value?.error ||
-      '成交 Agent 轨不可用（通常因未配置 LLM）；统计轨仍可对照。'
-    if (
-      pushTimelineAction({
-        _uniqueId: 'gtv-agent:failed',
-        platform: 'agent',
-        action_type: 'DEAL_ACTION',
-        agent_name: '成交 Agent',
-        round_num: 0,
-        timestamp: new Date().toISOString(),
-        action_args: {
-          content: msg,
-          stage_label: '不可用',
-        },
-      })
-    ) {
-      added++
-    }
+      '成交 Agent 轨不可用（通常因未配置 LLM）；统计轨仍可在上方面板对照。'
+    push({
+      _uniqueId: 'gtv-agent:failed',
+      platform: 'agent',
+      action_type: 'DEAL_ACTION',
+      agent_name: '成交 Agent',
+      round_num: 0,
+      timestamp: new Date().toISOString(),
+      action_args: {
+        content: msg,
+        stage_label: '不可用',
+      },
+    })
   }
 
-  const scored = scenarioScores.value?.scenarios || []
-  scored.forEach((s, idx) => {
-    const sid = s.scenario_id || s.name || idx
-    const sum = s.summary || {}
-    const delta = s.delta_vs_baseline?.expected_contract_money?.abs
-    const deltaText =
-      s.is_baseline || delta == null || Number.isNaN(Number(delta))
-        ? ''
-        : ` · 较 Baseline ${fmtDelta(delta)}`
-    const content =
-      `${s.name || `方案${idx + 1}`}：预期成交 ${fmtStat(sum.expected_deals, 2)}，` +
-      `期望合同额 ${fmtStat(sum.expected_contract_money, 0)}，` +
-      `期望佣金 ${fmtStat(sum.expected_commission, 0)}` +
-      deltaText +
-      `（${scenarioScores.value?.mode || 'stat'} · 历史模型敏感性，非因果）`
-    if (
-      pushTimelineAction({
-        _uniqueId: `gtv-stat:${sid}`,
-        platform: 'stat',
-        action_type: 'STAT_SCORE',
-        agent_name: '统计模型',
-        agent_id: String(sid),
-        round_num: 0,
-        timestamp: scenarioScores.value?.generated_at || new Date().toISOString(),
-        action_args: {
-          content,
-          stage_label: s.is_baseline ? 'Baseline' : 'what-if',
-        },
-      })
-    ) {
-      added++
-    }
-  })
-
-  if (added > 0) nextTick(scrollTimelineToBottom)
+  const prevLen = allActions.value.length
+  allActions.value = next
+  actionIds.value = nextIds
+  if (next.length !== prevLen || next.length > kept.length) {
+    nextTick(scrollTimelineToBottom)
+  }
 }
 
 const truncateContent = (content, maxLength = 100) => {
@@ -1639,7 +1805,7 @@ onMounted(async () => {
     if (payload.scenario_scores) scenarioScores.value = payload.scenario_scores
     if (payload.agent_status) agentStatus.value = payload.agent_status
     if (isGtvMode.value) {
-      addLog('商业模板 gtv_deal：双轨推演（时间线：左 Agent / 右统计）')
+      addLog('商业模板 gtv_deal：双轨推演（Agent 时间线 + 统计 KPI/榜单）')
       syncGtvTimelineActions()
     }
     const status = String(payload.status || payload.decision?.status || '').toLowerCase()
@@ -1814,6 +1980,186 @@ onUnmounted(() => {
   color: #888;
   font-weight: 400;
 }
+
+/* GTV 统计轨：KPI + 榜单（非时间线） */
+.gtv-stat-panel {
+  margin: 0 16px 8px;
+  padding: 14px 16px 16px;
+  border: 1px solid #e5e5e5;
+  background: #fafafa;
+}
+.gtv-stat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.gtv-stat-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #222;
+}
+.gtv-stat-sub {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #777;
+}
+.gtv-stat-mode {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: #1f7a4c;
+  padding-top: 2px;
+}
+.gtv-stat-mode.is-wait {
+  color: #c45c26;
+}
+.gtv-stat-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0 4px;
+}
+.gtv-stat-empty p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #666;
+  line-height: 1.45;
+}
+.gtv-stat-skel {
+  height: 6px;
+  width: min(240px, 60%);
+  background: linear-gradient(90deg, #ececec 0%, #f5f5f5 45%, #ececec 100%);
+  background-size: 200% 100%;
+  animation: gtv-skel 1.2s ease-out infinite;
+}
+@keyframes gtv-skel {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+.gtv-stat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.gtv-stat-tab {
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #444;
+  font-size: 0.75rem;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out;
+}
+.gtv-stat-tab:hover {
+  border-color: #bbb;
+  background: #f7f7f7;
+}
+.gtv-stat-tab.active {
+  background: #111;
+  border-color: #111;
+  color: #fff;
+}
+.gtv-stat-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.gtv-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid #e8e8e8;
+}
+.gtv-kpi-label {
+  font-size: 0.72rem;
+  color: #888;
+  font-weight: 600;
+}
+.gtv-kpi-val {
+  font-size: 1rem;
+  color: #111;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.gtv-kpi-val.is-up { color: #1f7a4c; }
+.gtv-kpi-val.is-down { color: #b42318; }
+.gtv-stat-boards {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 14px;
+}
+.gtv-board-head {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+}
+.gtv-board-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  background: #fff;
+}
+.gtv-board-table th,
+.gtv-board-table td {
+  text-align: left;
+  padding: 7px 8px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+.gtv-board-table th {
+  color: #888;
+  font-weight: 600;
+  font-size: 0.7rem;
+  background: #f3f3f3;
+}
+.gtv-board-table tbody tr:hover td {
+  background: #fafafa;
+}
+.gtv-board-name {
+  color: #222;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.gtv-board-id {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  color: #999;
+  word-break: break-all;
+}
+.gtv-board-addr {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: #777;
+  line-height: 1.35;
+}
+.gtv-board-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #888;
+  padding: 10px 0;
+}
+@media (max-width: 900px) {
+  .gtv-stat-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .gtv-stat-boards {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gtv-stat-skel { animation: none; }
+}
+
 .decision-phase.is-done {
   color: #1a936f;
 }
@@ -2165,6 +2511,31 @@ onUnmounted(() => {
   min-height: 100%;
   max-width: 900px;
   margin: 0 auto;
+}
+
+/* GTV：Agent 单轨时间线（不再左右对开） */
+.timeline-feed.gtv-agent-feed {
+  max-width: 760px;
+  margin: 0;
+  padding-left: 16px;
+  padding-right: 24px;
+}
+.timeline-feed.gtv-agent-feed .timeline-axis {
+  left: 22px;
+  transform: none;
+}
+.timeline-feed.gtv-agent-feed .timeline-marker {
+  left: 22px;
+}
+.timeline-feed.gtv-agent-feed .timeline-item.agent {
+  justify-content: flex-start;
+  padding-right: 0;
+  padding-left: 40px;
+}
+.timeline-feed.gtv-agent-feed .timeline-item.agent .timeline-card {
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .timeline-axis {

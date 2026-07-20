@@ -81,6 +81,7 @@ def run_agent_for_scenario(
     listings: Optional[List[Dict]] = None,
     brokers: Optional[List[Dict]] = None,
     on_round: Optional[Callable[[int, Dict[str, Any]], None]] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """跑单一方案的 Agent 轨。"""
     name = str(scenario.get("name") or "方案")
@@ -110,7 +111,12 @@ def run_agent_for_scenario(
     if not llm_available() and not use_rule:
         raise RuntimeError("LLM_API_KEY 未配置，成交 Agent 轨不可用")
 
+    last_round = 0
     for r in range(1, total_rounds + 1):
+        if should_abort and should_abort():
+            logger.info("Agent 轨中止（新一轮推演已启动）decision=%s round=%s", decision_id, r)
+            raise RuntimeError("GTV Agent 轨已取消（被新的重新推演取代）")
+        last_round = r
         actions = decide_round_batch(
             threads,
             round_no=r,
@@ -196,6 +202,9 @@ def run_agent_for_scenario(
         "timeline": _timeline_from_events(events),
         "intervention_gtv": gtv,
         "engine": "gtv_agent",
+        "current_round": last_round,
+        "total_rounds": total_rounds,
+        "early_stop": bool(last_round and last_round < total_rounds),
         "world_meta": {
             "seed_note": world.get("seed_note"),
             "used_demo_fallback": world.get("used_demo_fallback"),
@@ -211,6 +220,7 @@ def run_agent_track(
     listings: Optional[List[Dict]] = None,
     brokers: Optional[List[Dict]] = None,
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """多方案 Agent 轨。"""
     ap = deal_actions_path(decision_id)
@@ -258,6 +268,8 @@ def run_agent_track(
                         }
                     )
 
+            if should_abort and should_abort():
+                raise RuntimeError("GTV Agent 轨已取消（被新的重新推演取代）")
             one = run_agent_for_scenario(
                 decision_id,
                 sc,
@@ -265,6 +277,7 @@ def run_agent_track(
                 listings=listings,
                 brokers=brokers,
                 on_round=_on_round,
+                should_abort=should_abort,
             )
             results.append(one)
             all_events = list(one.get("events") or [])
@@ -300,15 +313,33 @@ def run_agent_track(
                 r["is_baseline"] = True
 
         primary_events = (results[0].get("events") if results else []) or all_events
+        actual_rounds = 0
+        for r in results:
+            try:
+                actual_rounds = max(actual_rounds, int(r.get("current_round") or 0))
+            except Exception:
+                pass
+            for e in r.get("events") or []:
+                try:
+                    actual_rounds = max(actual_rounds, int(e.get("round") or e.get("day") or 0))
+                except Exception:
+                    pass
+        if not actual_rounds:
+            actual_rounds = total_rounds
+        early = any(bool(r.get("early_stop")) for r in results)
+        msg = "成交 Agent 全流程推演已完成"
+        if early and actual_rounds < total_rounds:
+            msg = f"成交 Agent 已完成（线索全部收官，提前结束于 R{actual_rounds}/{total_rounds}）"
         out = {
             "status": "completed",
             "track": "agent",
             "engine": "gtv_agent",
-            "current_round": total_rounds,
+            "current_round": actual_rounds,
             "total_rounds": total_rounds,
+            "early_stop": early and actual_rounds < total_rounds,
             "scenarios": results,
             "timeline": _timeline_from_events(primary_events),
-            "message": "成交 Agent 全流程推演已完成",
+            "message": msg,
             "llm": llm_available(),
         }
         write_agent_status(decision_id, {k: out[k] for k in out if k != "scenarios"})

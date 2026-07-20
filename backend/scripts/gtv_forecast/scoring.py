@@ -381,6 +381,7 @@ def _delta_vs_baseline(scenario_result: dict[str, Any], baseline: dict[str, Any]
             rank_moves.append(
                 {
                     "listing_id": lid,
+                    "listing_name": r.get("listing_name") or "",
                     "rank": i + 1,
                     "baseline_rank": base_rank[lid] + 1,
                     "delta_rank": base_rank[lid] - i,
@@ -443,6 +444,43 @@ def score_scenarios(scenarios: list[dict[str, Any]], *, t0: pd.Timestamp | None 
     )
 
 
+_TYPE_ZH = {
+    "plant": "厂房",
+    "warehouse": "仓库",
+    "office": "办公",
+    "厂房": "厂房",
+    "仓库": "仓库",
+    "办公": "办公",
+}
+
+
+def _listing_type_zh(raw: Any) -> str:
+    """内部码 plant/warehouse/office → 厂房/仓库/办公。"""
+    key = str(raw or "").strip().lower()
+    if not key:
+        return "—"
+    return _TYPE_ZH.get(key) or _TYPE_ZH.get(str(raw).strip()) or "—"
+
+
+def _md_cell(s: Any, *, max_len: int = 48) -> str:
+    """Markdown 表格单元格：去管道符、适当截断。"""
+    t = str(s or "").replace("|", "｜").replace("\n", " ").strip()
+    if len(t) > max_len:
+        return t[: max_len - 1] + "…"
+    return t or "—"
+
+
+def _listing_label(row: dict[str, Any]) -> str:
+    """房源展示：名称 + 完整 ID（禁止截成后 8 位）。"""
+    lid = str(row.get("listing_id") or "").strip()
+    name = str(row.get("listing_name") or "").strip()
+    if name and lid:
+        return f"{_md_cell(name, max_len=36)}（ID:{lid}）"
+    if name:
+        return _md_cell(name, max_len=48)
+    return lid or "—"
+
+
 def render_compare_markdown(multi: dict[str, Any]) -> str:
     """由多方案打分结果生成 Step4 对比报告正文。"""
     lines = [
@@ -493,15 +531,20 @@ def render_compare_markdown(multi: dict[str, Any]) -> str:
                 f"佣金 {float(fb.get('expected_commission') or 0):,.0f}"
             )
         lines.append("")
-        lines.append("| 排名 | 房源 | 业态 | 城市 | 成交分 | 期望合同先验 |")
-        lines.append("|---:|---|---|---|---:|---:|")
+        lines.append("#### 房源榜（Top10）")
+        lines.append("")
+        lines.append("| 排名 | 房源 | 房源类型 | 城市 | 地址 | 质量分 | 成交分 | 期望合同先验 |")
+        lines.append("|---:|---|---|---|---|---:|---:|---:|")
         for i, row in enumerate((sc.get("listings") or [])[:10]):
+            q = row.get("quality_score")
             lines.append(
-                "| {rank} | `{lid}` | {lt} | {city} | {score:.3f} | {cm} |".format(
+                "| {rank} | {label} | {lt} | {city} | {addr} | {q} | {score:.3f} | {cm} |".format(
                     rank=i + 1,
-                    lid=str(row.get("listing_id") or "")[-8:],
-                    lt=row.get("listing_type") or "",
-                    city=row.get("city_name") or "—",
+                    label=_listing_label(row),
+                    lt=_listing_type_zh(row.get("listing_type")),
+                    city=_md_cell(row.get("city_name"), max_len=16),
+                    addr=_md_cell(row.get("address") or row.get("amap_address"), max_len=28),
+                    q=f"{float(q):.2f}" if q is not None else "—",
                     score=float(row.get("score") or 0),
                     cm=(
                         f"{float(row['prior_contract_money']):,.0f}"
@@ -511,12 +554,31 @@ def render_compare_markdown(multi: dict[str, Any]) -> str:
                 )
             )
         lines.append("")
+        lines.append("#### 经纪人榜（Top10）")
+        lines.append("")
+        lines.append("| 排名 | 经纪人 | 用户ID | 成交分 | 历史开单 | 在管房源 |")
+        lines.append("|---:|---|---|---:|---:|---:|")
+        for i, row in enumerate((sc.get("brokers") or [])[:10]):
+            nick = _md_cell(row.get("nick_name") or row.get("user_name") or "经纪人", max_len=24)
+            uid = str(row.get("user_id") or "")
+            lines.append(
+                "| {rank} | {nick} | `{uid}` | {score:.3f} | {hd} | {nl} |".format(
+                    rank=i + 1,
+                    nick=nick,
+                    uid=uid,
+                    score=float(row.get("score") or 0),
+                    hd=int(row.get("hist_deals") or 0),
+                    nl=int(row.get("n_listings") or 0),
+                )
+            )
+        lines.append("")
         dlt = sc.get("delta_vs_baseline")
         if dlt and dlt.get("top_rank_moves"):
             lines.append("相对 Baseline 榜单升降（节选）：")
             for m in dlt["top_rank_moves"][:5]:
+                label = _listing_label(m) if m.get("listing_name") else str(m.get("listing_id") or "")
                 lines.append(
-                    f"- `…{str(m.get('listing_id'))[-6:]}` "
+                    f"- {label} "
                     f"#{m.get('baseline_rank')}→#{m.get('rank')} "
                     f"（Δrank={m.get('delta_rank'):+d}）"
                 )
