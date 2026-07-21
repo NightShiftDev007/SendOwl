@@ -132,20 +132,15 @@
             </span>
           </div>
           <div class="actions-tooltip">
-            <div class="tooltip-title">漏斗动作</div>
+            <div class="tooltip-title">线索抢签 · GTV 阶段</div>
             <div class="tooltip-actions">
-              <span class="tooltip-action">线索</span>
-              <span class="tooltip-action">项目</span>
-              <span class="tooltip-action">跟进</span>
-              <span class="tooltip-action">报备</span>
-              <span class="tooltip-action">锁客</span>
-              <span class="tooltip-action">约看</span>
+              <span class="tooltip-action">未推进</span>
+              <span class="tooltip-action">夯实</span>
+              <span class="tooltip-action">房源匹配</span>
               <span class="tooltip-action">带看</span>
-              <span class="tooltip-action">意向</span>
-              <span class="tooltip-action">谈价|直签</span>
-              <span class="tooltip-action">审批</span>
-              <span class="tooltip-action">计租</span>
-              <span class="tooltip-action">回款</span>
+              <span class="tooltip-action">谈判</span>
+              <span class="tooltip-action">签约</span>
+              <span class="tooltip-action">先签先赢</span>
             </div>
           </div>
         </div>
@@ -446,6 +441,11 @@
                     <svg v-else-if="action.platform === 'twitter'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
                     <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                   </div>
+                  <span
+                    v-if="action.action_args?.role_outcome_label || action.action_args?.role_outcome"
+                    class="gtv-role-tag"
+                    :class="'role-' + (action.action_args.role_outcome || 'none')"
+                  >{{ action.action_args.role_outcome_label || action.action_args.role_outcome }}</span>
                   <div class="action-badge" :class="getActionTypeClass(action.action_type)">
                     {{ action.action_args?.stage_label || getActionTypeLabel(action.action_type) }}
                   </div>
@@ -458,6 +458,11 @@
                   v-if="action.action_type === 'DEAL_ACTION' && (action.action_args?.listing_id || action.action_args?.broker_id)"
                   class="gtv-entity-meta"
                 >
+                  <div v-if="action.action_args?.clue_id" class="gtv-entity-row">
+                    <span class="gtv-entity-k">线索</span>
+                    <span class="gtv-entity-v mono">{{ action.action_args.clue_id }}</span>
+                    <span v-if="action.action_args?.client_name" class="gtv-entity-from">{{ action.action_args.client_name }}</span>
+                  </div>
                   <div class="gtv-entity-row">
                     <span class="gtv-entity-k">状态</span>
                     <span class="gtv-entity-v mono">{{ action.action_args?.stage_label || action.action_args?.stage || '—' }}</span>
@@ -474,6 +479,10 @@
                   <div v-if="action.action_args?.broker_id || action.action_args?.broker_name" class="gtv-entity-row">
                     <span class="gtv-entity-k">经纪人</span>
                     <span class="gtv-entity-v">{{ action.action_args.broker_name || action.agent_name || '—' }}</span>
+                    <span
+                      v-if="action.action_args?.persona_label || action.action_args?.persona_archetype"
+                      class="gtv-entity-id mono"
+                    >{{ action.action_args.persona_label || action.action_args.persona_archetype }}</span>
                     <span v-if="action.action_args?.broker_id" class="gtv-entity-id mono" :title="action.action_args.broker_id">ID {{ action.action_args.broker_id }}</span>
                   </div>
                   <div class="gtv-entity-row">
@@ -494,12 +503,19 @@
                     <span class="gtv-entity-v">{{ action.action_args?.quality_highlights || (action.action_args?.quality_score != null ? `质量分 ${Number(action.action_args.quality_score).toFixed(2)}` : '—') }}</span>
                   </div>
                 </div>
-                <!-- GTV Agent 漏斗事件正文 -->
+                <!-- GTV Agent 漏斗事件正文 + 决策理由（理由始终展示） -->
                 <div
                   v-if="action.action_type === 'DEAL_ACTION' && action.action_args?.content"
                   class="content-text main-text"
                 >
                   {{ action.action_args.content }}
+                </div>
+                <div
+                  v-if="action.action_type === 'DEAL_ACTION'"
+                  class="gtv-reason"
+                >
+                  <span class="gtv-reason-k">理由</span>
+                  <span class="gtv-reason-v">{{ action.action_args?.reason || '（本步未返回理由，请重新推演以生成）' }}</span>
                 </div>
 
                 <!-- CREATE_POST: 发布帖子 -->
@@ -1653,6 +1669,7 @@ const syncGtvTimelineActions = () => {
       timestamp: ev.ts || dealTimeline.value?.generated_at || new Date().toISOString(),
       action_args: {
         content: ev.text || `${ev.stage_label || ev.stage || '动作'}`,
+        reason: ev.reason || '',
         stage: ev.stage,
         stage_label: ev.stage_label || ev.stage || '动作',
         from_stage: ev.from_stage,
@@ -1671,7 +1688,14 @@ const syncGtvTimelineActions = () => {
         broker_id: ev.broker_id || '',
         broker_name: ev.broker_name || ev.broker || '',
         broker_label: ev.broker_label || '',
+        persona_label: ev.persona_label || '',
+        persona_archetype: ev.persona_archetype || ev.persona_label || '',
         path: ev.path || '',
+        clue_id: ev.clue_id || ev.deal_group_id || '',
+        deal_group_id: ev.deal_group_id || ev.clue_id || '',
+        client_name: ev.client_name || '',
+        role_outcome: ev.role_outcome || '',
+        role_outcome_label: ev.role_outcome_label || '',
       },
     })
   })
@@ -2676,6 +2700,55 @@ onUnmounted(() => {
   color: #666;
   font-size: 0.72rem;
   word-break: break-all;
+}
+
+.gtv-reason {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f3f6f4;
+  border-left: 2px solid #1f7a4c;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.gtv-reason-k {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: #1f7a4c;
+  letter-spacing: 0.04em;
+}
+.gtv-reason-v {
+  color: #333;
+  min-width: 0;
+}
+.gtv-role-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border: 1px solid #ddd;
+  color: #555;
+}
+.gtv-role-tag.role-winner {
+  border-color: #1f7a4c;
+  color: #1f7a4c;
+  background: #eef7f2;
+}
+.gtv-role-tag.role-contributor {
+  border-color: #2b6cb0;
+  color: #2b6cb0;
+  background: #eef4fb;
+}
+.gtv-role-tag.role-loser {
+  border-color: #b42318;
+  color: #b42318;
+  background: #fdf2f1;
+}
+.gtv-role-tag.role-lost {
+  border-color: #888;
+  color: #666;
 }
 
 .gtv-entity-from {

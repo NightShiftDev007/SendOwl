@@ -139,4 +139,8 @@ class LLMClient:
         try:
             return json.loads(cleaned_response)
         except json.JSONDecodeError:
-            raise ValueError(f"LLM返回的JSON格式无效: {cleaned_response}")
+            # 常见于输出被 max_tokens 截断；错误信息只截前 200 字避免刷屏
+            preview = cleaned_response[:200].replace("\n", " ")
+            raise ValueError(
+                f"LLM返回的JSON格式无效（可能被截断，len={len(cleaned_response)}）: {preview}"
+            )

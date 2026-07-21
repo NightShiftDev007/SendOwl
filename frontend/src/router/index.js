@@ -57,8 +57,15 @@ const routes = [
   },
 ]
 
+/** Vite base 保持 /；仅在经 nginx /SandOwl/ 穿透时用子路径 history */
+function routerBase() {
+  if (typeof window === 'undefined') return '/'
+  const p = window.location.pathname || '/'
+  return p === '/SandOwl' || p.startsWith('/SandOwl/') ? '/SandOwl/' : '/'
+}
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(routerBase()),
   routes,
 })
 

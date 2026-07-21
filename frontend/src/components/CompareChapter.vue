@@ -58,6 +58,40 @@
       </div>
     </div>
 
+    <div v-if="showDualAlign" class="gtv-dual-label mono">双轨对照（统计预期 vs Agent）</div>
+    <div class="kpi-row" v-if="showDualAlign">
+      <div class="kpi-card" v-for="(row, idx) in dualAlignRows" :key="row.name || idx">
+        <div class="kpi-head">
+          <span class="dot" :style="{ background: 'var(--brand)' }"></span>
+          <strong>{{ row.name }}</strong>
+          <span class="muted mono" v-if="row.cfg">{{ row.cfg }}</span>
+        </div>
+        <div class="kpi-grid">
+          <div>
+            <div class="muted">统计预期成交</div>
+            <div class="val">{{ row.statDeals }}</div>
+          </div>
+          <div>
+            <div class="muted">Agent 线索成交</div>
+            <div class="val">{{ row.agentDeals }}</div>
+          </div>
+          <div>
+            <div class="muted">差额</div>
+            <div class="val">{{ row.gap }}</div>
+          </div>
+          <div>
+            <div class="muted">合同额 统计→Agent</div>
+            <div class="val">{{ row.money }}</div>
+          </div>
+          <div>
+            <div class="muted">Top10 重合 房/经</div>
+            <div class="val">{{ row.overlap }}</div>
+          </div>
+        </div>
+        <p class="narrative muted" v-if="row.note">{{ row.note }}</p>
+      </div>
+    </div>
+
     <div v-if="showAgentCompare" class="gtv-dual-label mono">成交 Agent 涌现结果</div>
     <div class="kpi-row" v-if="showAgentCompare">
       <div class="kpi-card" v-for="(s, idx) in agentScenarios" :key="s.scenario_id || s.scenario_name || idx">
@@ -67,24 +101,16 @@
         </div>
         <div class="kpi-grid">
           <div>
-            <div class="muted">签约落地</div>
-            <div class="val">{{ s.summary?.n_signed ?? '—' }}</div>
+            <div class="muted">线索成交</div>
+            <div class="val">{{ s.summary?.n_clue_deals ?? s.summary?.n_signed ?? '—' }}</div>
           </div>
           <div>
-            <div class="muted">谈价 / 直签</div>
+            <div class="muted">谈判 / 直签</div>
             <div class="val">{{ s.summary?.n_nego_signed ?? 0 }} / {{ s.summary?.n_direct_signed ?? 0 }}</div>
           </div>
           <div>
-            <div class="muted">报备 / 锁客</div>
-            <div class="val">{{ s.summary?.n_reported ?? 0 }} / {{ s.summary?.n_locked ?? 0 }}</div>
-          </div>
-          <div>
-            <div class="muted">审批通过</div>
-            <div class="val">{{ s.summary?.n_approved ?? '—' }}</div>
-          </div>
-          <div>
-            <div class="muted">回款</div>
-            <div class="val">{{ s.summary?.n_payment ?? '—' }}</div>
+            <div class="muted">协作 / 落败</div>
+            <div class="val">{{ s.summary?.n_contributor ?? 0 }} / {{ s.summary?.n_lost ?? 0 }}</div>
           </div>
           <div>
             <div class="muted">涌现合同额</div>
@@ -94,11 +120,16 @@
             <div class="muted">较 Baseline</div>
             <div class="val">{{ fmtAgentDelta(s) }}</div>
           </div>
-          <div>
-            <div class="muted">流失</div>
-            <div class="val">{{ s.summary?.n_lost ?? '—' }}</div>
-          </div>
         </div>
+        <ul v-if="(s.summary?.deals || []).length" class="gtv-deal-winners">
+          <li v-for="(d, di) in (s.summary.deals || []).slice(0, 6)" :key="d.clue_id || di">
+            <span class="mono">{{ d.clue_id }}</span>
+            胜出 <strong>{{ d.winner_broker || '—' }}</strong>
+            <span class="muted" v-if="(d.coop_brokers || []).length">
+              · 协作 {{ (d.coop_brokers || []).map((c) => c.broker_name).join('、') }}
+            </span>
+          </li>
+        </ul>
       </div>
     </div>
     <p v-if="agentTrackNote" class="gtv-agent-note">{{ agentTrackNote }}</p>
@@ -208,6 +239,40 @@ const agentTrackNote = computed(() => {
   }
   return ''
 })
+const dualAlignRows = computed(() => {
+  return agentScenarios.value.map((s) => {
+    const al = s?.stat_align || {}
+    const ed = al.stat_expected_deals
+    const ad = al.agent_clue_deals ?? s?.summary?.n_clue_deals ?? s?.summary?.n_signed
+    const gap = al.deal_gap
+    const ecm = al.stat_expected_contract_money
+    const acm = al.agent_contract_money ?? s?.summary?.expected_contract_money
+    const ovL = al.listing_overlap_top10
+    const ovB = al.broker_overlap_top10
+    const nClue = al.n_clues
+    const k = al.brokers_per_clue
+    return {
+      name: s.scenario_name || s.name || '方案',
+      cfg: nClue != null && k != null ? `${nClue}线索×${k}经纪` : '',
+      statDeals: ed == null || Number.isNaN(Number(ed)) ? '—' : Number(ed).toFixed(2),
+      agentDeals: ad == null ? '—' : String(ad),
+      gap:
+        gap == null || Number.isNaN(Number(gap))
+          ? '—'
+          : `${Number(gap) > 0 ? '+' : ''}${Number(gap).toFixed(2)}`,
+      money:
+        ecm == null && acm == null
+          ? '—'
+          : `${fmtMoney(ecm, 0)} → ${fmtMoney(acm, 0)}`,
+      overlap:
+        ovL == null && ovB == null ? '—' : `${ovL ?? '—'}/${ovB ?? '—'}`,
+      note: al.seed_note || '',
+    }
+  })
+})
+const showDualAlign = computed(
+  () => showAgentCompare.value && dualAlignRows.value.some((r) => r.statDeals !== '—' || r.cfg),
+)
 function fmtAgentDelta(s) {
   const d = s?.delta_vs_baseline?.expected_contract_money?.abs
   if (d == null || Number.isNaN(Number(d))) return s?.is_baseline ? '—' : '—'
@@ -779,6 +844,16 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--ink-muted);
   line-height: 1.45;
+}
+.gtv-deal-winners {
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink, #222);
+}
+.gtv-deal-winners .muted {
+  color: var(--ink-muted, #888);
 }
 .val.up {
   color: var(--success, #1a936f);

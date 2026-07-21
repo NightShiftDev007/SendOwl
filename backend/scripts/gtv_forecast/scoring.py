@@ -198,8 +198,27 @@ def _score_frames(
         top_b["nick_name"] = top_b["nick_name"].fillna(top_b.get("user_name"))
     broker_rows = _records(
         top_b,
-        ["user_id", "nick_name", "score", "label", "label_deals", "hist_deals", "n_listings"],
+        [
+            "user_id",
+            "nick_name",
+            "score",
+            "label",
+            "label_deals",
+            "hist_deals",
+            "n_listings",
+            "hist_rate",
+            "port_heat",
+            "port_show",
+        ],
     )
+    for br in broker_rows:
+        if br.get("hist_rate") is None:
+            try:
+                hd = float(br.get("hist_deals") or 0)
+                nl = float(br.get("n_listings") or 0)
+                br["hist_rate"] = hd / (nl + 1.0)
+            except Exception:
+                br["hist_rate"] = 0.0
 
     # 时间榜：按预测成交天数升序（越快越前）
     timing = (

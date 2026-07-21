@@ -83,7 +83,9 @@
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">02</span>
-            <span class="step-title">{{ $t('step2.generateAgentPersona') }}</span>
+            <span class="step-title">{{
+              isGtvMode ? $t('step2.gtvGenerateBrokerPersona') : $t('step2.generateAgentPersona')
+            }}</span>
           </div>
           <div class="step-status">
             <button
@@ -100,7 +102,11 @@
         <div class="card-content">
           <p class="api-note">POST /api/simulation/prepare</p>
           <p class="description">
-            {{ $t('step2.generateAgentPersonaDesc') }}
+            {{
+              isGtvMode
+                ? $t('step2.gtvGenerateBrokerPersonaDesc')
+                : $t('step2.generateAgentPersonaDesc')
+            }}
           </p>
           <p v-if="stepFlags.profiles === 'failed'" class="orchestration-empty-hint">
             {{ lastStageError || $t('log.prepareFailed', { error: $t('common.unknownError') }) }}
@@ -154,7 +160,9 @@
           <!-- Profiles List Preview -->
           <div v-if="profiles.length > 0" class="profiles-preview">
             <div class="preview-header">
-              <span class="preview-title">{{ $t('step2.generatedAgentPersonas') }}</span>
+              <span class="preview-title">{{
+                isGtvMode ? $t('step2.gtvGeneratedBrokerPersonas') : $t('step2.generatedAgentPersonas')
+              }}</span>
             </div>
             <div class="profiles-list">
               <div 
@@ -164,13 +172,18 @@
                 @click="selectProfile(profile)"
               >
                 <div class="profile-header">
-                  <span class="profile-realname">{{ profile.username || 'Unknown' }}</span>
-                  <span class="profile-username">@{{ profile.name || `agent_${idx}` }}</span>
+                  <span class="profile-realname">{{ profile.name || profile.username || 'Unknown' }}</span>
+                  <span class="profile-username">@{{ profile.username || profile.name || `agent_${idx}` }}</span>
                 </div>
                 <div class="profile-meta">
+                  <span
+                    v-if="isGtvMode && (profile.archetype || profile.persona_label)"
+                    class="profile-profession gtv-archetype"
+                  >{{ profile.archetype || profile.persona_label }}</span>
                   <span class="profile-profession">{{ profile.profession || profile.entity_type || $t('step2.unknownProfession') }}</span>
                 </div>
-                <p class="profile-bio">{{ profile.bio || $t('step2.noBio') }}</p>
+                <p v-if="isGtvMode && profile.style" class="profile-bio muted">{{ profile.style }}</p>
+                <p class="profile-bio">{{ profile.bio || profile.persona || $t('step2.noBio') }}</p>
                 <div v-if="profile.interested_topics?.length" class="profile-topics">
                   <span 
                     v-for="topic in profile.interested_topics.slice(0, 3)" 
@@ -192,7 +205,9 @@
         <div class="card-header">
           <div class="step-info">
             <span class="step-num">03</span>
-            <span class="step-title">{{ $t('step2.dualPlatformConfig') }}</span>
+            <span class="step-title">{{
+              isGtvMode ? $t('step2.gtvSkipPlatformTitle') : $t('step2.dualPlatformConfig')
+            }}</span>
           </div>
           <div class="step-status">
             <button
@@ -924,6 +939,8 @@ const prepareStageSteps = computed(() => {
 })
 
 const isWeakEventConfig = computed(() => {
+  // 商业模板跳过社媒初始激活编排，不按舆情弱配置判定
+  if (isGtvMode.value) return false
   const cfg = simulationConfig.value
   if (!cfg?.event_config) return false
   const reasoning = String(cfg.generation_reasoning || '')
@@ -1077,11 +1094,15 @@ function evaluateStepFlagsFromConfig() {
   if (hasProfiles.value) {
     stepFlags.value.profiles = 'ok'
   }
-  if (hasPlatformConfig.value) {
+  if (hasPlatformConfig.value || isGtvMode.value) {
     stepFlags.value.platform = 'ok'
   }
-  if (simulationConfig.value?.event_config) {
-    stepFlags.value.events = isWeakEventConfig.value ? 'failed' : 'ok'
+  if (simulationConfig.value?.event_config || isGtvMode.value) {
+    stepFlags.value.events = isGtvMode.value
+      ? 'ok'
+      : isWeakEventConfig.value
+        ? 'failed'
+        : 'ok'
   }
 }
 
@@ -1290,7 +1311,10 @@ const applyProfilesDigest = (digest, { generating = true, allowShrink = false } 
       profession: p.profession || prev?.profession || p.entity_type || '',
       entity_type: p.entity_type || prev?.entity_type || '',
       bio: p.bio || prev?.bio || '',
-      persona: prev?.persona || p.bio || '',
+      persona: p.persona || prev?.persona || p.bio || '',
+      archetype: p.archetype || prev?.archetype || p.persona_label || '',
+      persona_label: p.persona_label || prev?.persona_label || p.archetype || '',
+      style: p.style || prev?.style || '',
       interested_topics: topics.length ? topics : prev?.interested_topics || [],
     }
   })
@@ -2896,6 +2920,12 @@ onUnmounted(() => {
   background: #F0F0F0;
   padding: 2px 8px;
   border-radius: 3px;
+}
+
+.profile-profession.gtv-archetype {
+  color: #1a5c3a;
+  background: #e6f4ec;
+  margin-right: 6px;
 }
 
 .profile-bio {

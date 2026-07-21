@@ -1,8 +1,8 @@
 """
 GTV 成交推演场景适配器（template=gtv_deal）。
 
-- Step2：轻量 prepare，跳过 Cast / 人设 / OASIS 双平台
-- Step3：在线打分 + 干预 what-if + 多方案差分；无模型时回退静态缓存
+- Step2：准备经纪人人设（规则骨架 + LLM 润色）并落盘；跳过社媒 Cast / OASIS 双平台
+- Step3：在线打分 + 干预 what-if + 多方案差分；Agent 轨复用 Step2 人设
 """
 
 from __future__ import annotations
@@ -258,7 +258,7 @@ def clear_gtv_run_artifacts(decision_id: str) -> Dict[str, Any]:
                     "track": "agent",
                     "engine": "gtv_agent",
                     "current_round": 0,
-                    "total_rounds": int(os.environ.get("GTV_AGENT_ROUNDS", "16")),
+                    "total_rounds": int(os.environ.get("GTV_AGENT_ROUNDS", "12")),
                     "message": "成交 Agent 轨准备中（已清空上一局）",
                     "updated_at": _utc_now(),
                 },
@@ -280,7 +280,7 @@ def build_deal_timeline(
     brokers: Optional[List[Dict[str, Any]]] = None,
     scenario_name: str = "",
 ) -> Dict[str, Any]:
-    """基于三榜构造成交漏斗叙事：咨询 → 带看 → 意向 → 签约。
+    """基于三榜构造成交漏斗叙事：未推进→夯实→房源匹配→带看→谈判→签约。
 
     不是 OASIS 发帖；事件日程按预测成交天数相对排布，供 Step3 时间线展示。
     """
@@ -303,12 +303,11 @@ def build_deal_timeline(
 
     events: List[Dict[str, Any]] = []
     if not listings:
-        # 无榜时仍给一条可读说明，避免 Step3 空白
         events.append(
             {
                 "day": 0,
-                "stage": "consult",
-                "stage_label": "客户咨询",
+                "stage": "idle",
+                "stage_label": "未推进",
                 "text": "等待三榜数据以展开房源漏斗推演",
                 "broker": "",
                 "city": "",
@@ -340,10 +339,11 @@ def build_deal_timeline(
             except (TypeError, ValueError):
                 horizon = 20
             horizon = max(7, min(60, horizon))
-            d_consult = 0 + (i % 3)
-            d_show = max(d_consult + 2, int(horizon * 0.35))
-            d_intent = max(d_show + 2, int(horizon * 0.7))
-            d_sign = max(d_intent + 1, horizon)
+            d_idle = 0 + (i % 3)
+            d_match = max(d_idle + 1, int(horizon * 0.2))
+            d_show = max(d_match + 2, int(horizon * 0.4))
+            d_nego = max(d_show + 2, int(horizon * 0.7))
+            d_sign = max(d_nego + 1, horizon)
             base = {
                 "listing_id": lid,
                 "listing_type": ltype,
@@ -354,10 +354,19 @@ def build_deal_timeline(
             events.append(
                 {
                     **base,
-                    "day": d_consult,
-                    "stage": "consult",
-                    "stage_label": "客户咨询",
-                    "text": f"客户咨询{city}{type_zh}（…{short_id}）· 匹配经纪人 {nick}",
+                    "day": d_idle,
+                    "stage": "idle",
+                    "stage_label": "未推进",
+                    "text": f"项目未推进 · {city}{type_zh}（…{short_id}）· 经纪人 {nick}",
+                }
+            )
+            events.append(
+                {
+                    **base,
+                    "day": d_match,
+                    "stage": "match",
+                    "stage_label": "房源匹配",
+                    "text": f"夯实后房源匹配 · {city}{type_zh}（…{short_id}）· {nick}",
                 }
             )
             events.append(
@@ -372,10 +381,10 @@ def build_deal_timeline(
             events.append(
                 {
                     **base,
-                    "day": d_intent,
-                    "stage": "intent",
-                    "stage_label": "意向推进",
-                    "text": f"进入意向谈判 · 预测成交分 {base['score'] if base['score'] is not None else '—'} · 约 {horizon} 天窗口",
+                    "day": d_nego,
+                    "stage": "negotiate",
+                    "stage_label": "谈判",
+                    "text": f"进入谈判 · 预测成交分 {base['score'] if base['score'] is not None else '—'} · 约 {horizon} 天窗口",
                 }
             )
             signed = int(listing.get("label") or 0) == 1
@@ -383,12 +392,12 @@ def build_deal_timeline(
                 {
                     **base,
                     "day": d_sign,
-                    "stage": "sign" if signed else "hold",
-                    "stage_label": "签合同成交" if signed else "窗口内未成交",
+                    "stage": "signed" if signed else "lost",
+                    "stage_label": "签约" if signed else "流失",
                     "text": (
-                        f"审批通过签约 · {city}{type_zh}（…{short_id}）· 经纪人 {nick}"
+                        f"签约 · {city}{type_zh}（…{short_id}）· 经纪人 {nick}"
                         if signed
-                        else f"预测窗口结束未签约 · {city}{type_zh}（…{short_id}）仍可跟进"
+                        else f"预测窗口结束未签约 · {city}{type_zh}（…{short_id}）"
                     ),
                 }
             )
@@ -400,7 +409,7 @@ def build_deal_timeline(
         "generated_at": _utc_now(),
         "source": resolve_leaderboards_path() or "",
         "scenario_name": scenario_name,
-        "note": "成交漏斗推演叙事（咨询→带看→意向→签约），基于在线打分/缓存三榜，非社媒发帖模拟",
+        "note": "成交漏斗推演叙事（未推进→夯实→房源匹配→带看→谈判→签约），基于在线打分/缓存三榜",
         "event_count": len(events),
         "events": events,
     }
@@ -433,27 +442,66 @@ def load_deal_timeline(decision_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _write_gtv_stub_sim(sim_id: str, title: str) -> None:
-    """写入可通过 _sim_dir_looks_prepared / eventReady 门槛的最小 stub。"""
+def _load_broker_pool_for_personas(limit: int = 30) -> List[Dict[str, Any]]:
+    """Step2 造卡用经纪池：轻量打分 / parquet，失败则空列表。"""
+    try:
+        from app.engine.gtv_agent.world import try_load_listings_from_parquet
+
+        _listings, brokers = try_load_listings_from_parquet(max(40, limit))
+        if brokers:
+            # 按 score 降序
+            brokers = sorted(
+                brokers,
+                key=lambda r: float(r.get("score") or r.get("hist_deals") or 0),
+                reverse=True,
+            )
+            return brokers[:limit]
+    except Exception as e:
+        logger.warning("加载经纪池失败: %s", e)
+    try:
+        from scripts.gtv_forecast.scoring import score_with_intervention
+
+        scored = score_with_intervention({})
+        brokers = list(scored.get("brokers") or [])
+        return brokers[:limit]
+    except Exception as e:
+        logger.warning("轻量打分取经纪失败: %s", e)
+    return []
+
+
+def _write_gtv_sim_with_personas(
+    sim_id: str,
+    title: str,
+    profiles: List[Dict[str, Any]],
+) -> None:
+    """写入 GTV sim：真实经纪人人设 + 跳过 OASIS 的配置 stub。"""
     run_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id)
     os.makedirs(run_dir, exist_ok=True)
 
-    profiles = [
-        {
-            "user_id": 1,
-            "user_name": "gtv_broker_a",
-            "name": "演示经纪人A",
-            "bio": "GTV 商业模板占位人设（非社媒推演）",
-            "persona": "工业地产经纪人",
-        },
-        {
-            "user_id": 2,
-            "user_name": "gtv_listing_b",
-            "name": "演示房源观察员B",
-            "bio": "GTV 商业模板占位人设（非社媒推演）",
-            "persona": "房源运营",
-        },
-    ]
+    if not profiles:
+        profiles = [
+            {
+                "user_id": 1,
+                "user_name": "gtv_broker_a",
+                "name": "演示经纪人A",
+                "bio": "GTV 商业模板占位人设（无种子时兜底）",
+                "persona": "冲刺型·演示经纪人A",
+                "profession": "工业地产经纪人",
+                "archetype": "冲刺型",
+                "persona_label": "冲刺型",
+            },
+            {
+                "user_id": 2,
+                "user_name": "gtv_broker_b",
+                "name": "演示经纪人B",
+                "bio": "GTV 商业模板占位人设（无种子时兜底）",
+                "persona": "深耕型·演示经纪人B",
+                "profession": "工业地产经纪人",
+                "archetype": "深耕型",
+                "persona_label": "深耕型",
+            },
+        ]
+
     with open(os.path.join(run_dir, "reddit_profiles.json"), "w", encoding="utf-8") as f:
         json.dump(profiles, f, ensure_ascii=False, indent=2)
     with open(os.path.join(run_dir, "twitter_profiles.json"), "w", encoding="utf-8") as f:
@@ -462,31 +510,40 @@ def _write_gtv_stub_sim(sim_id: str, title: str) -> None:
     event_config = {
         "initial_posts": [
             {
-                "content": "GTV 成交推演：统计引擎将输出经纪人/房源/时间三榜（非社媒发帖）。",
+                "content": "GTV 成交推演：经纪人人格已在环境准备生成；统计轨输出三榜，Agent 轨线索抢签。",
                 "agent_id": 1,
             },
             {
-                "content": "回测优先复用已有 demo_report；能力边界见种子摘要。",
-                "agent_id": 2,
+                "content": "跳过社媒 OASIS；双平台配置不适用商业模板。",
+                "agent_id": min(2, len(profiles)),
             },
         ],
-        "hot_topics": ["工业地产成交", "经纪人开单", "房源排序"],
+        "hot_topics": ["工业地产成交", "经纪人开单", "房源排序", "线索抢签"],
         "narrative_direction": title or "GTV 成交统计推演",
+        "skip_oasis": True,
+        "gtv_platform_skipped": True,
     }
+    agent_configs = [
+        {
+            "agent_id": int(p.get("user_id") or i + 1),
+            "user_name": p.get("user_name") or f"gtv_{i+1}",
+        }
+        for i, p in enumerate(profiles)
+    ]
     cfg = {
         "time_config": {
-            "total_rounds": 4,
+            "total_rounds": int(os.environ.get("GTV_AGENT_ROUNDS", "12")),
             "minutes_per_round": 30,
             "start_time": _utc_now(),
         },
-        "agent_configs": [
-            {"agent_id": 1, "user_name": "gtv_broker_a"},
-            {"agent_id": 2, "user_name": "gtv_listing_b"},
-        ],
+        "agent_configs": agent_configs,
         "event_config": event_config,
+        "twitter_config": {"enabled": False, "skipped": True, "reason": "gtv_deal"},
+        "reddit_config": {"enabled": False, "skipped": True, "reason": "gtv_deal"},
         "simulation_requirement": title or "GTV 成交推演",
         "template": TEMPLATE_GTV,
         "engine": "gtv_forecast",
+        "gtv_skip_oasis": True,
     }
     with open(os.path.join(run_dir, "simulation_config.json"), "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -496,23 +553,38 @@ def _write_gtv_stub_sim(sim_id: str, title: str) -> None:
         "template": TEMPLATE_GTV,
         "prepared_at": _utc_now(),
         "skip_oasis": True,
+        "persona_count": len(profiles),
     }
     with open(os.path.join(run_dir, "gtv_engine.json"), "w", encoding="utf-8") as f:
         json.dump(marker, f, ensure_ascii=False, indent=2)
 
 
+def _write_gtv_stub_sim(sim_id: str, title: str) -> None:
+    """无种子时的最后兜底。"""
+    _write_gtv_sim_with_personas(sim_id, title, [])
+
+
 def prepare_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict[str, Any]:
-    """轻量准备：跳过 Cast/人设/双平台，直接 prepared。"""
+    """Step2：生成经纪人人设并落盘；跳过社媒 OASIS 双平台。"""
+    from app.engine.gtv_agent.persona import (
+        broker_personas_path,
+        build_personas_for_brokers,
+        load_broker_personas,
+        personas_to_sim_profiles,
+        save_broker_personas,
+    )
     from app.engine.scenario_runner import _write_prepare_progress
 
     dec = registry.get_decision(decision_id)
     if not dec:
         raise ValueError(f"决策不存在: {decision_id}")
 
+    personas_file = broker_personas_path(decision_id)
     runs_existing = registry.list_runs_for_decision(decision_id) or []
-    if (
+    cache_ok = (
         not force
         and str(dec.get("status") or "").lower() == "prepared"
+        and os.path.isfile(personas_file)
         and runs_existing
         and all(
             r.get("sim_id")
@@ -525,52 +597,72 @@ def prepare_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict
             )
             for r in runs_existing
         )
-    ):
+    )
+    if cache_ok:
         prefer = runs_existing[0].get("sim_id")
         world = {}
         try:
             world = runner.get_world_assets(decision_id, prefer_sim_id=prefer)
         except Exception:
             pass
+        n = len(load_broker_personas(decision_id)) or len(world.get("profiles") or [])
         return {
             "decision_id": decision_id,
             "status": "completed",
             "progress": 100,
             "stage": "ready",
-            "message": "商业模板环境已就绪（缓存）",
+            "message": "商业模板环境已就绪（复用经纪人人设）",
             "sim_id": prefer,
-            "profile_count": len(world.get("profiles") or []) or 2,
+            "profile_count": n or 2,
             "config": world.get("config"),
             "already_prepared": True,
             "mode": "gtv_light",
             "template": TEMPLATE_GTV,
         }
 
-    logger.info("商业模板：已跳过社媒环境准备 decision=%s", decision_id)
+    logger.info("商业模板：生成经纪人人设 decision=%s force=%s", decision_id, force)
     _write_prepare_progress(
         decision_id,
         status="running",
-        stage="ready",
-        progress=40,
-        message="商业模板：已跳过社媒环境准备",
-        profile_count=2,
+        stage="profiles",
+        progress=15,
+        message="商业模板：正在拉取经纪池并生成人格骨架…",
+        profile_count=0,
     )
 
-    # 确保有 sim 空壳
     runner.ensure_sims(decision_id)
     runs = registry.list_runs_for_decision(decision_id) or []
     if not runs:
         raise ValueError("决策下无 Run，无法准备 GTV 环境")
 
+    pool = _load_broker_pool_for_personas(int(os.environ.get("GTV_PERSONA_POOL_SIZE", "30")))
+    _write_prepare_progress(
+        decision_id,
+        status="running",
+        stage="profiles",
+        progress=35,
+        message=f"商业模板：已取 {len(pool)} 名经纪，正在生成人设…",
+        profile_count=0,
+    )
+
+    cards = build_personas_for_brokers(pool, use_llm=True)
+    _write_prepare_progress(
+        decision_id,
+        status="running",
+        stage="profiles",
+        progress=70,
+        message=f"商业模板：已生成 {len(cards)} 份经纪人人设，正在落盘…",
+        profile_count=len(cards),
+    )
+
+    save_broker_personas(decision_id, cards)
+    profiles = personas_to_sim_profiles(cards)
     title = dec.get("title") or decision_id
     for run in runs:
         sim_id = run.get("sim_id")
         if not sim_id:
             continue
-        if force or not os.path.isfile(
-            os.path.join(Config.OASIS_SIMULATION_DATA_DIR, sim_id, "gtv_engine.json")
-        ):
-            _write_gtv_stub_sim(sim_id, title)
+        _write_gtv_sim_with_personas(sim_id, title, profiles)
         registry.update_run(
             run["id"],
             status="ready",
@@ -584,8 +676,8 @@ def prepare_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict
         status="completed",
         stage="ready",
         progress=100,
-        message="商业模板环境已就绪（跳过社媒人设/OASIS）",
-        profile_count=2,
+        message=f"商业模板环境已就绪（{len(cards)} 经纪人人设；已跳过 OASIS 双平台）",
+        profile_count=len(cards),
         config_ready=True,
     )
 
@@ -600,13 +692,24 @@ def prepare_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict
         "status": "completed",
         "progress": 100,
         "stage": "ready",
-        "message": "商业模板：已跳过社媒环境准备",
+        "message": f"商业模板：已生成 {len(cards)} 经纪人人设",
         "sim_id": prefer,
-        "profile_count": len(world.get("profiles") or []) or 2,
+        "profile_count": len(cards),
         "config": world.get("config"),
         "already_prepared": False,
         "mode": "gtv_light",
         "template": TEMPLATE_GTV,
+        "profiles_digest": [
+            {
+                "name": c.get("broker_name"),
+                "username": f"gtv_{c.get('broker_id')}",
+                "bio": c.get("bio"),
+                "persona": c.get("persona"),
+                "profession": c.get("profession"),
+                "archetype": c.get("archetype"),
+            }
+            for c in cards[:40]
+        ],
     }
 
 
@@ -753,7 +856,9 @@ def _merge_dual_report(
         "",
         "> **Agent 轨** = 成交过程涌现 · **统计轨** = 历史模型敏感性（非因果）· 谈价≠公司单方改挂牌价",
         "",
-        "## 一、成交 Agent 轨（过程与涌现结果）",
+        "> Agent 配局默认对齐统计三榜：线索数 ≈ 预期成交×1.5（夹在 8–16），种子优先 Top 房源/经纪人。",
+        "",
+        "## 〇、双轨对照（统计预期 vs Agent 涌现）",
         "",
     ]
     if agent_out.get("status") == "failed":
@@ -762,39 +867,101 @@ def _merge_dual_report(
             "",
             "统计轨结果见下文，不受影响。",
             "",
+            "---",
+            "",
+            "## 一、成交 Agent 轨（过程与涌现结果）",
+            "",
         ]
     else:
+        lines.append("| 方案 | 统计预期成交 | Agent 线索成交 | 差额 | 合同额(统计→Agent) | Top10 重合(房/经) | 配局 |")
+        lines.append("|---|---:|---:|---:|---|---:|---|")
+        for sc in agent_out.get("scenarios") or []:
+            al = sc.get("stat_align") or {}
+            s = sc.get("summary") or {}
+            ed = al.get("stat_expected_deals")
+            ad = al.get("agent_clue_deals", s.get("n_clue_deals", s.get("n_signed")))
+            gap = al.get("deal_gap")
+            ecm = al.get("stat_expected_contract_money")
+            acm = al.get("agent_contract_money", s.get("expected_contract_money"))
+            ov_l = al.get("listing_overlap_top10")
+            ov_b = al.get("broker_overlap_top10")
+            cfg = f"{al.get('n_clues') or '—'}线索×{al.get('brokers_per_clue') or '—'}经纪"
+            ed_s = f"{float(ed):.2f}" if ed is not None else "—"
+            gap_s = f"{float(gap):+.2f}" if gap is not None else "—"
+            money_s = (
+                f"{float(ecm or 0):,.0f} → {float(acm or 0):,.0f}"
+                if ecm is not None or acm is not None
+                else "—"
+            )
+            lines.append(
+                f"| {sc.get('scenario_name') or '—'} | {ed_s} | {ad if ad is not None else '—'} | "
+                f"{gap_s} | {money_s} | {ov_l if ov_l is not None else '—'}/"
+                f"{ov_b if ov_b is not None else '—'} | {cfg} |"
+            )
+        lines += [
+            "",
+            "> 说明：统计为期望值（概率和），Agent 为离散线索抢签结果；差额用于对照，非误差考核。",
+            "",
+            "---",
+            "",
+            "## 一、成交 Agent 轨（过程与涌现结果）",
+            "",
+        ]
         for sc in agent_out.get("scenarios") or []:
             s = sc.get("summary") or {}
+            al = sc.get("stat_align") or {}
             lines.append(f"### {sc.get('scenario_name')}")
+            if al.get("seed_note"):
+                lines.append(f"- _{al.get('seed_note')}_")
             lines.append(
-                f"- 签约落地 {s.get('n_signed', 0)} / 流失 {s.get('n_lost', 0)} / "
-                f"线程 {s.get('n_threads', 0)}"
+                f"- 线索成交 {s.get('n_clue_deals', s.get('n_signed', 0))} · "
+                f"落败/流失 {s.get('n_lost', 0)} · 协作 {s.get('n_contributor', 0)} · "
+                f"线程 {s.get('n_threads', 0)}（先签先赢）"
             )
             lines.append(
-                f"- 报备 {s.get('n_reported', 0)} · 锁客 {s.get('n_locked', 0)} · "
-                f"审批通过 {s.get('n_approved', 0)} · 回款 {s.get('n_payment', 0)}"
-            )
-            lines.append(
-                f"- 谈价成交 {s.get('n_nego_signed', 0)} · 直签成交 {s.get('n_direct_signed', 0)}"
+                f"- 谈判成交 {s.get('n_nego_signed', 0)} · 直签成交 {s.get('n_direct_signed', 0)}"
             )
             lines.append(
                 f"- 涌现合同额 {float(s.get('expected_contract_money') or 0):,.0f} · "
                 f"佣金 {float(s.get('expected_commission') or 0):,.0f}"
             )
+            deals = s.get("deals") or []
+            if deals:
+                lines.append("- **线索胜出**")
+                for d in deals[:12]:
+                    coop = d.get("coop_brokers") or []
+                    coop_txt = (
+                        "、".join(
+                            f"{c.get('broker_name')}（{c.get('broker_id')}）" for c in coop
+                        )
+                        or "无"
+                    )
+                    lines.append(
+                        f"  - 线索 `{d.get('clue_id')}` · 赢家 "
+                        f"**{d.get('winner_broker')}**（{d.get('winner_broker_id')}）· "
+                        f"房源 {d.get('listing_name') or d.get('listing_id')} · "
+                        f"协作：{coop_txt}"
+                    )
             dlt = sc.get("delta_vs_baseline") or {}
             if dlt:
                 cm = (dlt.get("expected_contract_money") or {}).get("abs")
                 if cm is not None:
                     lines.append(f"- 较 Baseline 合同额 {float(cm):+,.0f}")
             lines.append("")
-        # 动作摘录
         evs = (agent_out.get("timeline") or {}).get("events") or []
         if evs:
             lines.append("### 动作摘录（节选）")
             for e in evs[-12:]:
+                reason = str(e.get("reason") or "").strip()
+                bit = f" · 理由：{reason}" if reason else ""
+                role = e.get("role_outcome_label") or e.get("role_outcome") or ""
+                role_bit = f" · [{role}]" if role else ""
+                persona = e.get("persona_label") or e.get("persona_archetype") or ""
+                persona_bit = f" · {persona}" if persona else ""
                 lines.append(
-                    f"- R{e.get('round') or e.get('day')} · {e.get('stage_label')} · {e.get('text')}"
+                    f"- R{e.get('round') or e.get('day')} · {e.get('stage_label')} · "
+                    f"线索 {e.get('clue_id') or '—'} · {e.get('broker_name') or e.get('broker')}"
+                    f"{persona_bit} · {e.get('text')}{role_bit}{bit}"
                 )
             lines.append("")
 
@@ -857,7 +1024,7 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
         # 磁盘 gen 优先：热重载后旧 daemon 线程仍可能存活，不能只看内存
         return _read_dual_gen(decision_id) != gen
 
-    total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "16"))
+    total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "12"))
     now = _utc_now()
     try:
         # 清空上一轮 Agent 时间线，避免统计剧本残留冒充过程
@@ -897,9 +1064,10 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
         )
         stat_md = render_compare_markdown(multi)
 
-        # 用统计榜作 Agent 世界抽样
+        # 用各方案统计三榜作 Agent 世界种子（按分排序在 build_world 内完成）
         listings = list(primary.get("listings") or [])
         brokers = list(primary.get("brokers") or [])
+        scored_for_agent = scenarios
 
         def on_progress(payload: Dict[str, Any]) -> None:
             if _stale():
@@ -967,6 +1135,7 @@ def _dual_track_worker(runner: Any, decision_id: str, gen: int) -> None:
                 total_rounds=total_rounds,
                 listings=listings,
                 brokers=brokers,
+                scored_scenarios=scored_for_agent,
                 on_progress=on_progress,
                 should_abort=_stale,
             )
@@ -1162,7 +1331,7 @@ def start_gtv_deal(runner: Any, decision_id: str, force: bool = False) -> Dict[s
     # 启动前同步清空上一局时间线/Agent 产物（必须在返回前完成，否则前端会立刻读到旧数据）
     cleared = clear_gtv_run_artifacts(decision_id)
 
-    total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "16"))
+    total_rounds = int(os.environ.get("GTV_AGENT_ROUNDS", "12"))
     registry.update_decision(decision_id, status="running")
     now = _utc_now()
     for run in registry.list_runs_for_decision(decision_id) or []:
