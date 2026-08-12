@@ -1,132 +1,116 @@
-"""
-配置管理
-统一从项目根目录（ai-decision-center）的 .env 文件加载配置
-"""
+"""Explicit runtime configuration loading and validation."""
 
-import os
-from dotenv import load_dotenv
+from collections.abc import Mapping
+from enum import StrEnum
+from typing import Annotated
 
-# backend/app/config.py -> ai-decision-center/
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-
-project_root_env = os.path.join(PROJECT_ROOT, '.env')
-
-if os.path.exists(project_root_env):
-    load_dotenv(project_root_env, override=True)
-else:
-    # 如果根目录没有 .env，尝试加载环境变量（用于生产环境）
-    load_dotenv(override=True)
+from pydantic import AnyUrl, BaseModel, ConfigDict, TypeAdapter, UrlConstraints, ValidationError
 
 
-class Config:
-    """Flask配置类"""
+class ConfigurationError(ValueError):
+    """Raised when a configured environment value is invalid."""
 
-    # Flask配置
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'ai-decision-center-secret-key')
-    DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
 
-    # JSON配置 - 禁用ASCII转义，让中文直接显示（而不是 \uXXXX 格式）
-    JSON_AS_ASCII = False
+class ApplicationEnvironment(StrEnum):
+    """Supported deployment environments."""
 
-    # LLM配置（统一使用OpenAI格式）
-    LLM_API_KEY = os.environ.get('LLM_API_KEY')
-    LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
-    LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
-    # 前置/后置规划与终审（百炼 qwen3.7-plus + json_object）
-    LLM_CAST_PLANNER_MODEL = os.environ.get('LLM_CAST_PLANNER_MODEL', 'qwen3.7-plus')
-    # 人设 LLM 终审：默认关闭（0）；本地查重后可选追加；打回人数上限
-    LLM_PROFILE_REVIEW_ROUNDS = int(os.environ.get('LLM_PROFILE_REVIEW_ROUNDS', '0'))
-    LLM_PROFILE_REVIEW_MAX_REGEN = int(os.environ.get('LLM_PROFILE_REVIEW_MAX_REGEN', '3'))
-    # 本地 persona 相似度查重阈值（SequenceMatcher ratio，默认 0.60）
-    PROFILE_DEDUP_THRESHOLD = float(os.environ.get('PROFILE_DEDUP_THRESHOLD', '0.60'))
-    # LLM 并行 worker 数（人设生成 + 配置分批共用；防限流，勿过高）
-    # 兼容旧名 LLM_CONFIG_BATCH_WORKERS
-    LLM_PARALLEL_WORKERS = max(
-        1,
-        int(
-            os.environ.get('LLM_PARALLEL_WORKERS')
-            or os.environ.get('LLM_CONFIG_BATCH_WORKERS')
-            or '3'
-        ),
-    )
-    LLM_RATE_LIMIT_RETRIES = int(os.environ.get('LLM_RATE_LIMIT_RETRIES', '3'))
+    DEVELOPMENT = "development"
+    TEST = "test"
+    STAGING = "staging"
+    PRODUCTION = "production"
 
-    @classmethod
-    def llm_parallel_workers(cls) -> int:
-        """人设并发与配置分批并行的统一入口。"""
-        return max(1, int(cls.LLM_PARALLEL_WORKERS or 3))
-    # 初始激活编排：帖子数量与热点话题下限（生成端硬约束；prepared 强弱门槛仍为 ≥2）
-    EVENT_INITIAL_POSTS_MIN = int(os.environ.get('EVENT_INITIAL_POSTS_MIN', '4'))
-    EVENT_INITIAL_POSTS_MAX = int(os.environ.get('EVENT_INITIAL_POSTS_MAX', '6'))
-    EVENT_HOT_TOPICS_MIN = int(os.environ.get('EVENT_HOT_TOPICS_MIN', '3'))
 
-    # Zep配置
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+type DatabaseUrl = Annotated[
+    AnyUrl,
+    UrlConstraints(
+        allowed_schemes=["postgresql", "postgresql+asyncpg", "postgresql+psycopg"],
+        host_required=True,
+    ),
+]
+type RedisUrl = Annotated[
+    AnyUrl,
+    UrlConstraints(
+        allowed_schemes=["redis", "rediss"],
+        host_required=True,
+    ),
+]
 
-    # 文件上传与持久化目录（均在 backend/uploads 下）
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
-    UPLOAD_FOLDER = os.path.join(BACKEND_DIR, 'uploads')
-    ONTOLOGY_DIR = os.path.join(UPLOAD_FOLDER, 'ontology')
-    SNAPSHOT_DIR = os.path.join(UPLOAD_FOLDER, 'snapshots')
-    DECISION_DIR = os.path.join(UPLOAD_FOLDER, 'decisions')
-    RUN_DIR = os.path.join(UPLOAD_FOLDER, 'runs')
-    REPORTS_DIR = os.path.join(UPLOAD_FOLDER, 'reports')
-    ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
 
-    # 文本处理配置
-    DEFAULT_CHUNK_SIZE = 500
-    DEFAULT_CHUNK_OVERLAP = 50
+class RuntimeSettings(BaseModel):
+    """Validated configuration that distinguishes absence from invalid values."""
 
-    # OASIS模拟配置
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(UPLOAD_FOLDER, 'runs')
-
-    # OASIS平台可用动作配置
-    OASIS_TWITTER_ACTIONS = [
-        'CREATE_POST', 'LIKE_POST', 'REPOST', 'FOLLOW', 'DO_NOTHING', 'QUOTE_POST'
-    ]
-    OASIS_REDDIT_ACTIONS = [
-        'LIKE_POST', 'DISLIKE_POST', 'CREATE_POST', 'CREATE_COMMENT',
-        'LIKE_COMMENT', 'DISLIKE_COMMENT', 'SEARCH_POSTS', 'SEARCH_USER',
-        'TREND', 'REFRESH', 'DO_NOTHING', 'FOLLOW', 'MUTE'
-    ]
-
-    # Report Agent配置
-    REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
-    REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
-    REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
-
-    # 进度总线：memory（默认单进程）| redis（gunicorn 多 worker 时可选）
-    PROGRESS_BUS = os.environ.get('PROGRESS_BUS', 'memory').lower()
-    # 僵尸 TTL（秒）
-    PROGRESS_TTL_BUILDING_SEC = int(os.environ.get('PROGRESS_TTL_BUILDING_SEC', str(2 * 3600)))
-    PROGRESS_TTL_PREPARING_SEC = int(os.environ.get('PROGRESS_TTL_PREPARING_SEC', str(1 * 3600)))
-    PROGRESS_JANITOR_INTERVAL_SEC = int(os.environ.get('PROGRESS_JANITOR_INTERVAL_SEC', str(5 * 60)))
-    # Phase C：优雅退出时是否保留模拟子进程（kill -9 本就不跑 atexit，与此无关）
-    SIM_DETACH_ON_EXIT = os.environ.get('SIM_DETACH_ON_EXIT', 'false').lower() in (
-        '1', 'true', 'yes', 'on',
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        strict=True,
+        revalidate_instances="always",
     )
 
-    @classmethod
-    def validate(cls) -> list[str]:
-        """验证必要配置"""
-        errors: list[str] = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
-        return errors
+    app_env: ApplicationEnvironment | None
+    database_url: DatabaseUrl | None
+    redis_url: RedisUrl | None
 
-    @classmethod
-    def ensure_directories(cls) -> None:
-        """确保上传与持久化目录存在"""
-        for path in (
-            cls.UPLOAD_FOLDER,
-            cls.ONTOLOGY_DIR,
-            cls.SNAPSHOT_DIR,
-            cls.DECISION_DIR,
-            cls.RUN_DIR,
-            cls.REPORTS_DIR,
-        ):
-            os.makedirs(path, exist_ok=True)
+
+def read_optional_environment_value(
+    environment: Mapping[str, str],
+    variable_name: str,
+) -> str | None:
+    """Read one optional variable while rejecting explicitly empty values."""
+    value = environment.get(variable_name)
+    if value is None:
+        return None
+    if not value:
+        raise ConfigurationError(
+            f"{variable_name} is present but empty; remove it or provide a valid value"
+        )
+    return value
+
+
+def parse_application_environment(value: str | None) -> ApplicationEnvironment | None:
+    """Parse APP_ENV without coercion or an implicit default."""
+    if value is None:
+        return None
+    try:
+        return ApplicationEnvironment(value)
+    except ValueError as error:
+        supported_values = ", ".join(environment.value for environment in ApplicationEnvironment)
+        raise ConfigurationError(
+            f"APP_ENV must be one of [{supported_values}]; received {value!r}"
+        ) from error
+
+
+def parse_database_url(value: str | None) -> DatabaseUrl | None:
+    """Validate DATABASE_URL without opening a database connection."""
+    if value is None:
+        return None
+    try:
+        database_url = TypeAdapter(DatabaseUrl).validate_python(value)
+    except ValidationError as error:
+        raise ConfigurationError(
+            "DATABASE_URL must be a PostgreSQL URL with an explicit host"
+        ) from error
+    if database_url.path in (None, "", "/"):
+        raise ConfigurationError("DATABASE_URL must include a database name")
+    return database_url
+
+
+def parse_redis_url(value: str | None) -> RedisUrl | None:
+    """Validate REDIS_URL without opening a Redis connection."""
+    if value is None:
+        return None
+    try:
+        return TypeAdapter(RedisUrl).validate_python(value)
+    except ValidationError as error:
+        raise ConfigurationError("REDIS_URL must be a Redis URL with an explicit host") from error
+
+
+def load_runtime_settings(environment: Mapping[str, str]) -> RuntimeSettings:
+    """Load the complete supported configuration surface from an explicit mapping."""
+    app_env = parse_application_environment(read_optional_environment_value(environment, "APP_ENV"))
+    database_url = parse_database_url(read_optional_environment_value(environment, "DATABASE_URL"))
+    redis_url = parse_redis_url(read_optional_environment_value(environment, "REDIS_URL"))
+    return RuntimeSettings(
+        app_env=app_env,
+        database_url=database_url,
+        redis_url=redis_url,
+    )

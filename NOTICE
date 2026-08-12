@@ -1,33 +1,54 @@
-# Third-Party Notices
+# Third-Party Notices and Provenance
 
-This repository (AI Decision Center) incorporates code and dependencies from the
-following projects. Please review their respective licenses and terms.
+SandOwl AI Decision Center V2 is a new unified implementation informed by the
+projects below. Retain this file with distributions and record the exact source
+commit whenever code is migrated.
+
+## AgendaScope
+
+- Source: https://github.com/yangyh-2025/agendascope
+- Audited baseline: `396a7ed852a781d0698d3e8eea36a63d4a8faa56`
+- Public license: CC BY-NC 4.0
+- Project status: commercial authorization has been obtained separately for
+  AI Decision Center use. The authorization record is not stored in this
+  repository and must be verified before a commercial distribution.
+- V2 migration scope: media collection, article evidence, topic analysis, and
+  agenda detection. The AgendaScope product frontend and account system are not
+  embedded.
+
+## MatrAIx
+
+- Source: https://github.com/MatrAIx-ai/MatrAIx-Persona-8B
+- Audited baseline: `ea16f1839cde597f54b6ff06ecd47abd9779ebd5`
+- Code license: MIT
+- Copyright notice: Copyright (c) 2026 MatrAIx
+- Bundled license text: `third_party/licenses/MatrAIx-LICENSE`
+- V2 migration scope: product design language, Persona/Cohort contracts,
+  population trials, run inspection, and aggregation semantics.
+- Persona datasets and upstream data sources have terms separate from the code
+  license. No dataset is approved for V2 merely because MatrAIx code is MIT.
 
 ## MiroFish
 
 - Source: https://github.com/666ghj/MiroFish
-- Original license: AGPL-3.0
-- Status in this repository: **commercial dual-license obtained**
-- Vendored modules under `backend/app/{ontology,world,engine,decision,utils}`
-  and `backend/scripts/` are derived from MiroFish backend services and
-  simulation scripts.
-- The AGPL-3.0 network-copyleft terms do **not** apply to this derivative work
-  under the commercial dual-license granted to the AI Decision Center project.
+- Frozen provenance baseline: `b5b53acc57189a4a42e44a23e149dc655c98fe82`
+- Public license: AGPL-3.0
+- Project status: commercial dual-license obtained for the AI Decision Center
+  derivative work. The separate grant must be verified before distribution.
+- MiroFish is a reference upstream, not a runtime repository or bidirectional
+  synchronization target for V2.
 
 ## OASIS / CAMEL-AI
 
-- Packages: `camel-oasis`, `camel-ai`
+- Source: https://github.com/camel-ai/oasis
 - License: Apache License 2.0
-- Used as runtime dependencies for multi-agent social simulation.
+- Integrated runtime: `camel-oasis==0.2.5`, `camel-ai==0.2.78`
+- Current role: public OASIS API used by the isolated Python 3.11 worker for
+  Reddit platform, SQLite persistence, and ordered manual-action verification.
+  No MiroFish source code is copied into this worker.
+- Future role: social-network evolution and multi-agent simulation only after
+  authorized Persona data and an explicitly configured LLM runtime are added.
 
-## Zep Cloud SDK
-
-- Package: `zep-cloud`
-- License / terms: governed by Zep Cloud SDK and Zep Cloud service agreements
-  (separate from this repository's license).
-- Used as a runtime dependency for graph memory / ontology storage.
-
-## Attribution
-
-Retain this NOTICE file in distributions and deployments that include the
-vendored MiroFish-derived code or the listed third-party components.
+Third-party dependencies retain their own licenses and service terms. This
+notice does not replace legal review of source-code grants, datasets, model
+weights, media content, or external services.

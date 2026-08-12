@@ -1,16 +1,29 @@
 {
   "name": "ai-decision-center",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "AI Decision Center — ontology × multi-agent simulation × decision loop",
+  "description": "SandOwl AI Decision Center — evidence, world models, population trials, and social simulation",
   "scripts": {
-    "setup:backend": "cd backend && uv sync",
-    "backend": "cd backend && uv run python run.py",
-    "frontend": "cd frontend && pnpm dev",
+    "setup:backend": "uv sync --project backend --python 3.12",
+    "setup:frontend": "pnpm --dir frontend install --frozen-lockfile",
+    "setup:oasis-worker": "uv sync --project backend/oasis_worker --python 3.11",
+    "setup": "pnpm run setup:backend && pnpm run setup:oasis-worker && pnpm run setup:frontend",
+    "backend": "uv run --project backend uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload",
+    "frontend": "pnpm --dir frontend dev",
     "dev": "concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"pnpm run backend\" \"pnpm run frontend\"",
-    "smoke": "cd backend && uv run python scripts/smoke_offline_mvp.py",
-    "e2e": "cd backend && uv run python scripts/e2e_mvp_demo.py",
-    "build:frontend": "cd frontend && pnpm run build"
+    "test:backend": "cd backend && uv run pytest",
+    "lint:backend": "cd backend && uv run ruff check . && uv run ruff format --check .",
+    "test:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 pytest",
+    "lint:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 ruff check . && uv run --python 3.11 ruff format --check .",
+    "migrate": "cd backend && uv run alembic upgrade head",
+    "migrate:check": "cd backend && uv run alembic heads",
+    "test:frontend": "pnpm --dir frontend test",
+    "typecheck:frontend": "pnpm --dir frontend typecheck",
+    "build:frontend": "pnpm --dir frontend build",
+    "verify": "pnpm run migrate:check && pnpm run test:backend && pnpm run lint:backend && pnpm run test:oasis-worker && pnpm run lint:oasis-worker && pnpm run test:frontend && pnpm run typecheck:frontend && pnpm run build:frontend && docker compose --env-file .env.example config --quiet",
+    "stack": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} up --build",
+    "stack:down": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} down",
+    "import:agendascope": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e AGENDASCOPE_DATABASE_URL backend python -m app.media.import_agendascope"
   },
   "devDependencies": {
     "concurrently": "^9.2.3"

@@ -1,0 +1,487 @@
+"""Read-only SQLAlchemy queries for imported AgendaScope media data."""
+
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Annotated
+from uuid import UUID
+
+from pydantic import Field
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Subquery
+
+from app.media.contracts import (
+    MediaArticleFacets,
+    MediaArticlesResponse,
+    MediaArticleSummary,
+    MediaCountryFacet,
+    MediaCountryNode,
+    MediaHotTopic,
+    MediaOverviewResponse,
+    MediaSourcesResponse,
+    MediaSourceSummary,
+    MediaTopicFacet,
+    MediaTopicsResponse,
+    MediaTopicSummary,
+)
+from app.media.countries import country_centroid
+from app.media.models import (
+    MediaArticleRecord,
+    MediaSourceRecord,
+    MediaTopicArticleRecord,
+    MediaTopicRecord,
+)
+
+UNCLASSIFIED_TOPIC = "未归类"
+LATEST_ARTICLE_LIMIT = 12
+HOT_TOPIC_LIMIT = 10
+TOPIC_FACET_LIMIT = 50
+EXCERPT_LENGTH = 280
+
+
+@dataclass(frozen=True, slots=True)
+class MediaArticleFilters:
+    """Validated repository filter set for an article search."""
+
+    q: str | None
+    country: str | None
+    topic_id: UUID | None
+
+
+def escaped_ilike_contains_pattern(value: str) -> str:
+    """Build a literal PostgreSQL ILIKE contains pattern with wildcard escaping."""
+    if not isinstance(value, str):
+        raise TypeError(f"value must be str, got {type(value).__name__}")
+    escaped_value = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped_value}%"
+
+
+def representative_topic_subquery():
+    """Select one deterministic topic for every article without dropping unclassified rows."""
+    ranked_topics = (
+        select(
+            MediaTopicArticleRecord.article_id.label("article_id"),
+            MediaTopicRecord.id.label("topic_id"),
+            func.coalesce(MediaTopicRecord.name_zh, MediaTopicRecord.name).label("topic"),
+            func.row_number()
+            .over(
+                partition_by=MediaTopicArticleRecord.article_id,
+                order_by=(
+                    MediaTopicArticleRecord.weight.desc(),
+                    MediaTopicArticleRecord.assigned_at.desc(),
+                    MediaTopicArticleRecord.topic_id.asc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .join(MediaTopicRecord, MediaTopicRecord.id == MediaTopicArticleRecord.topic_id)
+        .subquery()
+    )
+    return (
+        select(ranked_topics.c.article_id, ranked_topics.c.topic_id, ranked_topics.c.topic)
+        .where(ranked_topics.c.rank == 1)
+        .subquery()
+    )
+
+
+def _article_filter_conditions(
+    filters: MediaArticleFilters,
+    representative_topic,
+) -> tuple[object, ...]:
+    """Build reusable SQL conditions for result and facet queries."""
+    conditions: list[object] = [MediaArticleRecord.is_duplicate.is_(False)]
+    if filters.q is not None:
+        pattern = escaped_ilike_contains_pattern(filters.q)
+        conditions.append(
+            or_(
+                MediaArticleRecord.title.ilike(pattern, escape="\\"),
+                MediaArticleRecord.content.ilike(pattern, escape="\\"),
+                MediaArticleRecord.summary.ilike(pattern, escape="\\"),
+            )
+        )
+    if filters.country is not None:
+        conditions.append(MediaArticleRecord.country_code == filters.country)
+    if filters.topic_id is not None:
+        conditions.append(representative_topic.c.topic_id == filters.topic_id)
+    return tuple(conditions)
+
+
+def article_projection(representative_topic) -> Select[tuple[object, ...]]:
+    """Build the strict public article projection."""
+    return (
+        select(
+            MediaArticleRecord.id,
+            MediaArticleRecord.title,
+            MediaSourceRecord.name.label("source_name"),
+            MediaArticleRecord.published_at,
+            func.coalesce(
+                func.nullif(
+                    func.btrim(func.substr(MediaArticleRecord.summary, 1, EXCERPT_LENGTH)),
+                    "",
+                ),
+                func.nullif(
+                    func.btrim(func.substr(MediaArticleRecord.content, 1, EXCERPT_LENGTH)),
+                    "",
+                ),
+                func.btrim(func.substr(MediaArticleRecord.title, 1, EXCERPT_LENGTH)),
+            ).label("excerpt"),
+            MediaArticleRecord.url.label("original_url"),
+            MediaArticleRecord.country_code,
+            representative_topic.c.topic_id,
+            func.coalesce(representative_topic.c.topic, UNCLASSIFIED_TOPIC).label("topic"),
+        )
+        .join(MediaSourceRecord, MediaSourceRecord.id == MediaArticleRecord.source_id)
+        .outerjoin(
+            representative_topic,
+            representative_topic.c.article_id == MediaArticleRecord.id,
+        )
+        .where(MediaArticleRecord.is_duplicate.is_(False))
+    )
+
+
+def article_summary(row: object) -> MediaArticleSummary:
+    """Validate one database projection at the domain boundary."""
+    mapping = row._mapping
+    return MediaArticleSummary.model_validate(dict(mapping), strict=True)
+
+
+def _classified_country_topic_counts(
+    representative_topic: Subquery,
+    cutoff: datetime,
+) -> Subquery:
+    """Count unique recent articles by country and classified representative topic."""
+    return (
+        select(
+            MediaArticleRecord.country_code.label("country_code"),
+            representative_topic.c.topic_id.label("topic_id"),
+            representative_topic.c.topic.label("topic"),
+            func.count(MediaArticleRecord.id).label("article_count"),
+        )
+        .join(representative_topic, representative_topic.c.article_id == MediaArticleRecord.id)
+        .where(
+            MediaArticleRecord.published_at >= cutoff,
+            MediaArticleRecord.country_code.is_not(None),
+            MediaArticleRecord.is_duplicate.is_(False),
+        )
+        .group_by(
+            MediaArticleRecord.country_code,
+            representative_topic.c.topic_id,
+            representative_topic.c.topic,
+        )
+        .subquery()
+    )
+
+
+def _classified_hot_topics(
+    representative_topic: Subquery,
+    cutoff: datetime,
+) -> Select[tuple[UUID, str, int]]:
+    """Rank only classified representative topics by unique recent article activity."""
+    return (
+        select(
+            representative_topic.c.topic_id,
+            representative_topic.c.topic.label("topic"),
+            func.count(MediaArticleRecord.id).label("article_count"),
+        )
+        .join(representative_topic, representative_topic.c.article_id == MediaArticleRecord.id)
+        .where(
+            MediaArticleRecord.published_at >= cutoff,
+            MediaArticleRecord.is_duplicate.is_(False),
+        )
+        .group_by(representative_topic.c.topic_id, representative_topic.c.topic)
+        .order_by(
+            func.count(MediaArticleRecord.id).desc(),
+            representative_topic.c.topic,
+            representative_topic.c.topic_id,
+        )
+        .limit(HOT_TOPIC_LIMIT)
+    )
+
+
+async def get_overview(session: AsyncSession, generated_at: datetime) -> MediaOverviewResponse:
+    """Load the complete media overview using explicit aggregate queries."""
+    representative_topic = representative_topic_subquery()
+    cutoff = generated_at - timedelta(hours=24)
+    counts = (
+        await session.execute(
+            select(
+                select(func.count()).select_from(MediaSourceRecord).scalar_subquery(),
+                select(func.count())
+                .select_from(MediaArticleRecord)
+                .where(
+                    MediaArticleRecord.published_at >= cutoff,
+                    MediaArticleRecord.is_duplicate.is_(False),
+                )
+                .scalar_subquery(),
+                select(func.count(func.distinct(MediaTopicArticleRecord.topic_id)))
+                .select_from(MediaTopicArticleRecord)
+                .join(
+                    MediaArticleRecord,
+                    MediaArticleRecord.id == MediaTopicArticleRecord.article_id,
+                )
+                .where(MediaArticleRecord.is_duplicate.is_(False))
+                .scalar_subquery(),
+            )
+        )
+    ).one()
+
+    country_rows = (
+        await session.execute(
+            select(
+                MediaArticleRecord.country_code,
+                func.count(MediaArticleRecord.id).label("article_count"),
+            )
+            .where(
+                MediaArticleRecord.published_at >= cutoff,
+                MediaArticleRecord.country_code.is_not(None),
+                MediaArticleRecord.is_duplicate.is_(False),
+            )
+            .group_by(MediaArticleRecord.country_code)
+            .order_by(func.count(MediaArticleRecord.id).desc(), MediaArticleRecord.country_code)
+        )
+    ).all()
+    country_topic_counts = _classified_country_topic_counts(representative_topic, cutoff)
+    ranked_country_topics = select(
+        country_topic_counts.c.country_code,
+        country_topic_counts.c.topic_id,
+        country_topic_counts.c.topic,
+        func.row_number()
+        .over(
+            partition_by=country_topic_counts.c.country_code,
+            order_by=(
+                country_topic_counts.c.article_count.desc(),
+                country_topic_counts.c.topic,
+                country_topic_counts.c.topic_id,
+            ),
+        )
+        .label("rank"),
+    ).subquery()
+    top_topic_rows = (
+        await session.execute(
+            select(
+                ranked_country_topics.c.country_code,
+                ranked_country_topics.c.topic_id,
+                ranked_country_topics.c.topic,
+            ).where(ranked_country_topics.c.rank == 1)
+        )
+    ).all()
+    top_topic_by_country = {
+        str(row.country_code): (row.topic_id, str(row.topic) if row.topic is not None else None)
+        for row in top_topic_rows
+    }
+    country_nodes: list[MediaCountryNode] = []
+    for row in country_rows:
+        country_code = str(row.country_code)
+        centroid = country_centroid(country_code)
+        topic_id, topic = top_topic_by_country.get(country_code, (None, None))
+        country_nodes.append(
+            MediaCountryNode(
+                country_code=country_code,
+                lat=centroid[0],
+                lon=centroid[1],
+                article_count=int(row.article_count),
+                topic_id=topic_id,
+                topic=topic or UNCLASSIFIED_TOPIC,
+            )
+        )
+
+    hot_rows = (await session.execute(_classified_hot_topics(representative_topic, cutoff))).all()
+    latest_rows = (
+        await session.execute(
+            article_projection(representative_topic)
+            .order_by(MediaArticleRecord.published_at.desc(), MediaArticleRecord.id.desc())
+            .limit(LATEST_ARTICLE_LIMIT)
+        )
+    ).all()
+
+    return MediaOverviewResponse(
+        generated_at=generated_at,
+        source_count=int(counts[0]),
+        article_count=int(counts[1]),
+        topic_count=int(counts[2]),
+        country_nodes=tuple(country_nodes),
+        hot_topics=tuple(
+            MediaHotTopic(
+                topic_id=row.topic_id,
+                topic=str(row.topic),
+                article_count=int(row.article_count),
+            )
+            for row in hot_rows
+        ),
+        latest_articles=tuple(article_summary(row) for row in latest_rows),
+    )
+
+
+async def list_articles(
+    session: AsyncSession,
+    filters: MediaArticleFilters,
+    page: Annotated[int, Field(ge=1)],
+    page_size: Annotated[int, Field(ge=1, le=100)],
+) -> MediaArticlesResponse:
+    """Search articles and return facets computed from the same filtered set."""
+    representative_topic = representative_topic_subquery()
+    conditions = _article_filter_conditions(filters, representative_topic)
+    base = article_projection(representative_topic).where(*conditions)
+    total = int(
+        (await session.scalar(select(func.count()).select_from(base.order_by(None).subquery())))
+        or 0
+    )
+    rows = (
+        await session.execute(
+            base.order_by(MediaArticleRecord.published_at.desc(), MediaArticleRecord.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+
+    country_rows = (
+        await session.execute(
+            select(
+                MediaArticleRecord.country_code,
+                func.count(MediaArticleRecord.id).label("article_count"),
+            )
+            .outerjoin(
+                representative_topic,
+                representative_topic.c.article_id == MediaArticleRecord.id,
+            )
+            .where(*conditions, MediaArticleRecord.country_code.is_not(None))
+            .group_by(MediaArticleRecord.country_code)
+            .order_by(func.count(MediaArticleRecord.id).desc(), MediaArticleRecord.country_code)
+        )
+    ).all()
+    topic_facet = func.coalesce(representative_topic.c.topic, UNCLASSIFIED_TOPIC)
+    topic_rows = (
+        await session.execute(
+            select(
+                representative_topic.c.topic_id,
+                topic_facet.label("topic"),
+                func.count(MediaArticleRecord.id).label("article_count"),
+            )
+            .outerjoin(
+                representative_topic,
+                representative_topic.c.article_id == MediaArticleRecord.id,
+            )
+            .where(*conditions)
+            .group_by(representative_topic.c.topic_id, topic_facet)
+            .order_by(func.count(MediaArticleRecord.id).desc(), "topic")
+            .limit(TOPIC_FACET_LIMIT)
+        )
+    ).all()
+    return MediaArticlesResponse(
+        items=tuple(article_summary(row) for row in rows),
+        page=page,
+        page_size=page_size,
+        total=total,
+        facets=MediaArticleFacets(
+            countries=tuple(
+                MediaCountryFacet(
+                    country_code=str(row.country_code),
+                    article_count=int(row.article_count),
+                )
+                for row in country_rows
+            ),
+            topics=tuple(
+                MediaTopicFacet(
+                    topic_id=row.topic_id,
+                    topic=str(row.topic),
+                    article_count=int(row.article_count),
+                )
+                for row in topic_rows
+            ),
+        ),
+    )
+
+
+async def list_topics(
+    session: AsyncSession,
+    page: Annotated[int, Field(ge=1)],
+    page_size: Annotated[int, Field(ge=1, le=100)],
+) -> MediaTopicsResponse:
+    """List active topics with counts derived only from unique articles."""
+    counts = (
+        select(
+            MediaTopicArticleRecord.topic_id,
+            func.count(MediaTopicArticleRecord.article_id).label("article_count"),
+        )
+        .join(MediaArticleRecord, MediaArticleRecord.id == MediaTopicArticleRecord.article_id)
+        .where(MediaArticleRecord.is_duplicate.is_(False))
+        .group_by(MediaTopicArticleRecord.topic_id)
+        .subquery()
+    )
+    total = int(
+        (
+            await session.scalar(
+                select(func.count())
+                .select_from(MediaTopicRecord)
+                .where(MediaTopicRecord.status != "archived")
+            )
+        )
+        or 0
+    )
+    rows = (
+        await session.execute(
+            select(
+                MediaTopicRecord.id,
+                func.coalesce(MediaTopicRecord.name_zh, MediaTopicRecord.name).label("topic"),
+                MediaTopicRecord.summary_zh.label("summary"),
+                MediaTopicRecord.topic_category.label("category"),
+                MediaTopicRecord.status,
+                func.coalesce(counts.c.article_count, 0).label("article_count"),
+                MediaTopicRecord.last_seen_at,
+            )
+            .outerjoin(counts, counts.c.topic_id == MediaTopicRecord.id)
+            .where(MediaTopicRecord.status != "archived")
+            .order_by(
+                counts.c.article_count.desc().nullslast(),
+                MediaTopicRecord.last_seen_at.desc(),
+                MediaTopicRecord.id.asc(),
+            )
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return MediaTopicsResponse(
+        items=tuple(
+            MediaTopicSummary.model_validate(dict(row._mapping), strict=True) for row in rows
+        ),
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+async def list_sources(session: AsyncSession) -> MediaSourcesResponse:
+    """List sources and an explicit status distribution."""
+    rows = (
+        await session.execute(
+            select(
+                MediaSourceRecord.id,
+                MediaSourceRecord.name,
+                MediaSourceRecord.country_code,
+                MediaSourceRecord.homepage_url,
+                MediaSourceRecord.media_type,
+                MediaSourceRecord.language,
+                MediaSourceRecord.status,
+                MediaSourceRecord.last_success_at,
+            ).order_by(MediaSourceRecord.country_code, MediaSourceRecord.name)
+        )
+    ).all()
+    status_rows = (
+        await session.execute(
+            select(MediaSourceRecord.status, func.count(MediaSourceRecord.id).label("count"))
+            .group_by(MediaSourceRecord.status)
+            .order_by(MediaSourceRecord.status)
+        )
+    ).all()
+    return MediaSourcesResponse(
+        items=tuple(
+            MediaSourceSummary.model_validate(dict(row._mapping), strict=True) for row in rows
+        ),
+        total=len(rows),
+        status_counts={str(row.status): int(row.count) for row in status_rows},
+    )
+
+
+def utc_now() -> datetime:
+    """Return a timezone-aware timestamp for a repository request boundary."""
+    return datetime.now(UTC)

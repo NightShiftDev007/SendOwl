@@ -1,0 +1,148 @@
+"""Builders and explicit dependency probes for V2 system discovery."""
+
+import asyncio
+
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.config import RuntimeSettings
+from app.database import DatabaseConnector
+from app.system.contracts import (
+    CapabilityDescriptor,
+    CapabilityStatus,
+    ConfigurationState,
+    ConnectivityState,
+    DependencyName,
+    DependencyReadiness,
+    HealthResponse,
+    HealthStatus,
+    ReadinessPhase,
+    ReadinessResponse,
+    ReadinessStatus,
+    RuntimeConfigurationReadiness,
+    SystemCapabilities,
+)
+
+
+def build_health_response() -> HealthResponse:
+    """Build the deterministic API liveness response."""
+    return HealthResponse(
+        status=HealthStatus.OK,
+        service="ai-decision-center-v2",
+        version="0.1.0",
+    )
+
+
+def configuration_state(is_configured: bool) -> ConfigurationState:
+    """Map explicit configuration presence to the public readiness contract."""
+    if is_configured:
+        return ConfigurationState.CONFIGURED
+    return ConfigurationState.NOT_CONFIGURED
+
+
+async def probe_database_connectivity(
+    database: DatabaseConnector,
+) -> ConnectivityState:
+    """Run the minimum query required to prove database connectivity."""
+    try:
+        async with asyncio.timeout(3):
+            async with database.engine.connect() as connection:
+                result = await connection.execute(text("SELECT 1"))
+                if result.scalar_one() != 1:
+                    return ConnectivityState.FAILED
+    except (OSError, SQLAlchemyError, TimeoutError):
+        return ConnectivityState.FAILED
+    return ConnectivityState.CONNECTED
+
+
+async def build_readiness_response(
+    settings: RuntimeSettings,
+    database: DatabaseConnector | None,
+) -> ReadinessResponse:
+    """Describe media/evidence readiness using a real database probe."""
+    database_configuration = configuration_state(settings.database_url is not None)
+    if settings.database_url is None:
+        database_connectivity = ConnectivityState.NOT_CHECKED
+    elif database is None:
+        database_connectivity = ConnectivityState.FAILED
+    else:
+        database_connectivity = await probe_database_connectivity(database)
+
+    readiness_status = (
+        ReadinessStatus.READY
+        if database_connectivity is ConnectivityState.CONNECTED
+        else ReadinessStatus.NOT_READY
+    )
+    return ReadinessResponse(
+        status=readiness_status,
+        phase=ReadinessPhase.MEDIA_EVIDENCE,
+        runtime=RuntimeConfigurationReadiness(
+            app_env=configuration_state(settings.app_env is not None),
+        ),
+        dependencies=(
+            DependencyReadiness(
+                name=DependencyName.DATABASE,
+                configuration=database_configuration,
+                connectivity=database_connectivity,
+                required_for_phase=True,
+            ),
+            DependencyReadiness(
+                name=DependencyName.REDIS,
+                configuration=configuration_state(settings.redis_url is not None),
+                connectivity=ConnectivityState.NOT_CHECKED,
+                required_for_phase=False,
+            ),
+        ),
+    )
+
+
+def build_system_capabilities() -> SystemCapabilities:
+    """Build the explicit first-stage domain capability inventory."""
+    return SystemCapabilities(
+        api_version="v2",
+        product="AI Decision Center",
+        capabilities=(
+            CapabilityDescriptor(
+                name="media",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AgendaScope",
+                contracts=("MediaSource", "MediaArticle"),
+            ),
+            CapabilityDescriptor(
+                name="evidence",
+                state=CapabilityStatus.CONTRACT_READY,
+                source="AI Decision Center V2",
+                contracts=("EvidenceItem", "EvidenceBundle"),
+            ),
+            CapabilityDescriptor(
+                name="companies",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AI Decision Center V2",
+                contracts=("CompanyProfile", "CompanyMention"),
+            ),
+            CapabilityDescriptor(
+                name="world_models",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AI Decision Center V2",
+                contracts=("WorldModel", "WorldSnapshot"),
+            ),
+            CapabilityDescriptor(
+                name="scenarios",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AI Decision Center V2",
+                contracts=("Scenario", "ScenarioVariant", "Intervention"),
+            ),
+            CapabilityDescriptor(
+                name="simulations.matraix",
+                state=CapabilityStatus.CONTRACT_READY,
+                source="MatrAIx",
+                contracts=("MatrAIxEvaluationSpec", "EngineResult"),
+            ),
+            CapabilityDescriptor(
+                name="simulations.oasis",
+                state=CapabilityStatus.CONTRACT_READY,
+                source="AI Decision Center V1 / OASIS",
+                contracts=("OasisSimulationSpec", "EngineResult"),
+            ),
+        ),
+    )
