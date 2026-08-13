@@ -53,7 +53,6 @@ def _scenario_ref_from_record(run: SimulationRunRecord) -> PlatformSmokeScenario
         variant_name=run.variant_name,
         world_snapshot_id=run.world_snapshot_id,
         snapshot_sha256=run.snapshot_sha256,
-        company_name=run.company_name,
     )
 
 
@@ -179,7 +178,6 @@ def _new_records(
         variant_name=scenario.variant_name,
         world_snapshot_id=scenario.world_snapshot_id,
         snapshot_sha256=scenario.snapshot_sha256,
-        company_name=scenario.company_name,
         seed=compiled.seed,
         actor_user_name=compiled.actor_user_name,
         actor_name=compiled.actor_name,

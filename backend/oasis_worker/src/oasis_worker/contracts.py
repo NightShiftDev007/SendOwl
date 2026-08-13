@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-SchemaVersion = Literal["oasis-manual-smoke/v1"]
+SchemaVersion = Literal["oasis-manual-smoke/v2"]
 RunId = Annotated[
     str,
     StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", strict=True),

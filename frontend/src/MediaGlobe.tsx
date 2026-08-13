@@ -22,6 +22,8 @@ interface MarkerHandle {
 const globeRadius = 1;
 const markerRadius = 1.026;
 const idleRotationSpeed = 0.045;
+const earthTextureUrl = "/earth/day.webp";
+const idlePitch = THREE.MathUtils.degToRad(-10);
 
 const globeVertexShader = `
   varying vec3 vObjectPosition;
@@ -41,6 +43,8 @@ const globeFragmentShader = `
   varying vec3 vViewNormal;
   varying vec2 vUv;
   uniform float uTime;
+  uniform sampler2D uEarthMap;
+  uniform float uEarthReady;
 
   void main() {
     float light = 0.30 + 0.70 * max(
@@ -50,6 +54,27 @@ const globeFragmentShader = `
     vec3 deep = vec3(0.010, 0.027, 0.044);
     vec3 lit = vec3(0.035, 0.105, 0.135);
     vec3 color = mix(deep, lit, light);
+
+    if (uEarthReady > 0.5) {
+      // SphereGeometry places lon=0 on +X, while media markers place lon=0 on +Z.
+      // Advancing U by a quarter turn keeps the geographic surface and API nodes aligned.
+      vec2 earthUv = vec2(fract(vUv.x + 0.25), vUv.y);
+      vec3 earthTexel = texture2D(uEarthMap, earthUv).rgb;
+      float oceanByRed = smoothstep(0.045, 0.078, earthTexel.b - earthTexel.r);
+      float oceanByGreen = smoothstep(0.020, 0.052, earthTexel.b - earthTexel.g);
+      float landMask = 1.0 - oceanByRed * oceanByGreen;
+      float surfaceDetail = dot(earthTexel, vec3(0.299, 0.587, 0.114));
+      vec3 landDeep = vec3(0.052, 0.150, 0.165);
+      vec3 landLit = vec3(0.180, 0.405, 0.420);
+      vec3 landColor = mix(
+        landDeep,
+        landLit,
+        smoothstep(0.08, 0.88, surfaceDetail)
+      );
+      float coast = 1.0 - smoothstep(0.08, 0.24, abs(landMask - 0.5));
+      color = mix(color, landColor * (0.72 + light * 0.46), landMask * 0.92);
+      color += vec3(0.22, 0.58, 0.60) * coast * 0.18;
+    }
 
     float minorLat = abs(fract(vUv.y * 18.0) - 0.5);
     float minorLon = abs(fract(vUv.x * 36.0) - 0.5);
@@ -68,9 +93,9 @@ const globeFragmentShader = `
       0.0,
       abs(fract(vUv.y * 0.5 + uTime * 0.018) - 0.5)
     );
-    color += vec3(0.16, 0.48, 0.58) * minorGrid * 0.16;
-    color += vec3(0.22, 0.66, 0.72) * majorGrid * 0.22;
-    color += vec3(0.18, 0.58, 0.64) * scan * 0.10;
+    color += vec3(0.16, 0.48, 0.58) * minorGrid * 0.10;
+    color += vec3(0.22, 0.66, 0.72) * majorGrid * 0.16;
+    color += vec3(0.18, 0.58, 0.64) * scan * 0.06;
 
     float edge = pow(1.0 - max(dot(normalize(vViewNormal), vec3(0.0, 0.0, 1.0)), 0.0), 2.6);
     color += vec3(0.16, 0.48, 0.58) * edge * 0.22;
@@ -162,8 +187,9 @@ function usePrefersReducedMotion(): boolean {
 
 /**
  * The sphere shader, atmosphere shell, marker projection, and teardown pattern are
- * adapted from MatrAIx DigitalGlobe. Texture assets, random particles, cities, and
- * decorative links are intentionally excluded; all visible hotspots come from props.
+ * adapted from MatrAIx DigitalGlobe. A NASA Blue Marble derivative supplies geographic
+ * context only; random particles, cities, and decorative links are intentionally
+ * excluded, and all visible media hotspots come from props.
  */
 export function MediaGlobe({
   nodes,
@@ -175,6 +201,7 @@ export function MediaGlobe({
   const onSelectRef = useRef<(countryCode: string | null) => void>(onSelect);
   const selectedCountryRef = useRef<string | null>(selectedCountry);
   const targetRotationRef = useRef<number | null>(null);
+  const targetPitchRef = useRef<number>(idlePitch);
   const focusCountryRef = useRef<(countryCode: string | null) => void>(() => undefined);
   const [renderError, setRenderError] = useState<Error | null>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -196,7 +223,7 @@ export function MediaGlobe({
     setRenderError(null);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
-    camera.position.set(0, 0.04, 3.18);
+    camera.position.set(0, 0.04, 3.42);
     camera.lookAt(0, 0, 0);
 
     let renderer: THREE.WebGLRenderer;
@@ -220,14 +247,27 @@ export function MediaGlobe({
     renderer.domElement.className = "media-globe-canvas";
     renderer.domElement.setAttribute("aria-hidden", "true");
     container.appendChild(renderer.domElement);
+    let disposed = false;
 
+    const tiltGroup = new THREE.Group();
+    tiltGroup.rotation.z = THREE.MathUtils.degToRad(-6);
+    const pitchGroup = new THREE.Group();
+    pitchGroup.rotation.x = idlePitch;
     const globeGroup = new THREE.Group();
-    globeGroup.rotation.x = THREE.MathUtils.degToRad(-10);
-    globeGroup.rotation.z = THREE.MathUtils.degToRad(-6);
     globeGroup.rotation.y = THREE.MathUtils.degToRad(-18);
-    scene.add(globeGroup);
+    scene.add(tiltGroup);
+    tiltGroup.add(pitchGroup);
+    pitchGroup.add(globeGroup);
 
-    const globeUniforms = { uTime: { value: 0 } };
+    const globeUniforms: {
+      readonly uTime: { value: number };
+      readonly uEarthMap: { value: THREE.Texture | null };
+      readonly uEarthReady: { value: number };
+    } = {
+      uTime: { value: 0 },
+      uEarthMap: { value: null },
+      uEarthReady: { value: 0 },
+    };
     const globe = new THREE.Mesh(
       new THREE.SphereGeometry(globeRadius, 96, 64),
       new THREE.ShaderMaterial({
@@ -238,12 +278,41 @@ export function MediaGlobe({
     );
     globeGroup.add(globe);
 
+    const earthTexture = new THREE.TextureLoader().load(
+      earthTextureUrl,
+      (loadedTexture) => {
+        if (disposed) {
+          loadedTexture.dispose();
+          return;
+        }
+
+        globeUniforms.uEarthMap.value = loadedTexture;
+        globeUniforms.uEarthReady.value = 1;
+        renderer.render(scene, camera);
+      },
+      undefined,
+      () => {
+        if (disposed) {
+          return;
+        }
+
+        setRenderError(
+          new Error(
+            `无法加载地球大陆底图 ${earthTextureUrl}。请确认前端静态资源已完整部署后重试。`,
+          ),
+        );
+      },
+    );
+    earthTexture.wrapS = THREE.RepeatWrapping;
+    earthTexture.colorSpace = THREE.NoColorSpace;
+    earthTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+
     const sensorLattice = new THREE.Points(
       createSensorLattice(4_800),
       new THREE.PointsMaterial({
         color: 0x4ca6b5,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.13,
         size: 0.0052,
         sizeAttenuation: true,
         depthWrite: false,
@@ -310,12 +379,13 @@ export function MediaGlobe({
 
       point.scale.setScalar(baseScale);
       point.userData.countryCode = node.country_code;
+      ring.userData.countryCode = node.country_code;
       ring.scale.setScalar(baseScale);
       marker.position.copy(direction.multiplyScalar(markerRadius));
       marker.quaternion.copy(orientation);
       marker.add(ring, point);
       globeGroup.add(marker);
-      markerMeshes.push(point);
+      markerMeshes.push(point, ring);
       markerHandles.set(node.country_code, {
         node,
         point,
@@ -386,7 +456,6 @@ export function MediaGlobe({
 
     let animationFrame = 0;
     let previousFrameTime = performance.now();
-    let disposed = false;
     let documentIsVisible = !document.hidden;
     const initialBounds = renderer.domElement.getBoundingClientRect();
     let canvasIsVisible =
@@ -404,10 +473,16 @@ export function MediaGlobe({
       const node = countryCode === null ? undefined : markerHandles.get(countryCode)?.node;
       const targetRotation =
         node === undefined ? null : -THREE.MathUtils.degToRad(node.lon);
+      const targetPitch = node === undefined ? idlePitch : THREE.MathUtils.degToRad(node.lat);
       targetRotationRef.current = targetRotation;
+      targetPitchRef.current = targetPitch;
 
       if (prefersReducedMotion && targetRotation !== null) {
         globeGroup.rotation.y = targetRotation;
+      }
+
+      if (prefersReducedMotion) {
+        pitchGroup.rotation.x = targetPitch;
       }
 
       renderScene();
@@ -436,6 +511,10 @@ export function MediaGlobe({
         );
         globeGroup.rotation.y += rotationDelta * Math.min(1, elapsedSeconds * 4.5);
       }
+
+      pitchGroup.rotation.x +=
+        (targetPitchRef.current - pitchGroup.rotation.x) *
+        Math.min(1, elapsedSeconds * 4.5);
 
       renderScene();
       animationFrame = window.requestAnimationFrame(animate);
@@ -499,6 +578,7 @@ export function MediaGlobe({
       focusCountryRef.current = () => undefined;
       markerHandlesRef.current = new Map();
       disposeObjectTree(scene);
+      earthTexture.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();
@@ -527,7 +607,7 @@ export function MediaGlobe({
         ref={containerRef}
         className="media-globe-stage"
         role="img"
-        aria-label={`全球媒体热点，共 ${nodes.length} 个国家节点。节点大小表示报道数量。`}
+        aria-label={`全球媒体热点，共 ${nodes.length} 个国家节点。大陆底图用于地理定位，节点大小表示报道数量。`}
       >
         {renderError === null ? null : (
           <div className="media-globe-error" role="alert">

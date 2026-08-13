@@ -14,15 +14,15 @@ def test_cli_runs_real_oasis_and_persists_verified_sqlite(tmp_path: Path) -> Non
     output_directory = tmp_path / "artifacts"
     spec_path = tmp_path / "job.json"
     spec = JobSpec(
-        schema_version="oasis-manual-smoke/v1",
+        schema_version="oasis-manual-smoke/v2",
         run_id="real-oasis-smoke",
         seed=20260812,
         output_directory=str(output_directory),
         actor=ActorSpec(
             agent_id=0,
-            user_name="snapshot_company",
-            name="Snapshot Company",
-            bio="Frozen company actor for a manual platform smoke test.",
+            user_name="scenario_actor",
+            name="Scenario Actor",
+            bio="Synthetic scenario actor for a manual platform smoke test.",
         ),
         posts=(
             PostSpec(content="First ordered intervention."),
@@ -44,7 +44,7 @@ def test_cli_runs_real_oasis_and_persists_verified_sqlite(tmp_path: Path) -> Non
     assert database_path == output_directory / "real-oasis-smoke.sqlite3"
     assert database_path.is_file()
     assert result.artifact.sha256 == hashlib.sha256(database_path.read_bytes()).hexdigest()
-    assert result.observed.user.user_name == "snapshot_company"
+    assert result.observed.user.user_name == "scenario_actor"
     assert [post.content for post in result.observed.posts] == [
         "First ordered intervention.",
         "Second ordered intervention.",
@@ -64,9 +64,9 @@ def test_cli_runs_real_oasis_and_persists_verified_sqlite(tmp_path: Path) -> Non
             (
                 0,
                 0,
-                "snapshot_company",
-                "Snapshot Company",
-                "Frozen company actor for a manual platform smoke test.",
+                "scenario_actor",
+                "Scenario Actor",
+                "Synthetic scenario actor for a manual platform smoke test.",
             )
         ]
         assert connection.execute(

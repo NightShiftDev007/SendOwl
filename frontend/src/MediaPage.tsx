@@ -159,7 +159,7 @@ function EvidenceQueryRail({
               name="q"
               type="search"
               value={draftQuery}
-              placeholder="企业、人物或议题"
+              placeholder="事件、人物或议题"
               minLength={2}
               maxLength={100}
               aria-invalid={hasInvalidQueryLength}
@@ -447,11 +447,11 @@ export function MediaPage(): JSX.Element {
         </div>
         <div className="evidence-lens-title">
           <h2 id="media-page-title">Evidence Lens</h2>
-          <p>从已采集的媒体报道中定位企业与政策线索。先读来源，再把可核验事实带入企业档案和世界模型。</p>
+          <p>从已采集的媒体报道中定位事件与政策线索。先读来源，再把可核验事实带入世界快照。</p>
         </div>
         <div className="evidence-lens-boundary">
           <strong>边界</strong>
-          <p>这里是报道索引与原文入口，不是对事件真伪、企业影响或未来走势的自动结论。</p>
+          <p>这里是报道索引与原文入口，不是对事件真伪、现实影响或未来走势的自动结论。</p>
         </div>
       </header>
 

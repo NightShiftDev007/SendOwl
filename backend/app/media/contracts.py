@@ -6,7 +6,13 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, Field, HttpUrl, StringConstraints
 
-from app.shared.contracts import ContractModel, Identifier, LanguageCode, NonEmptyText
+from app.shared.contracts import (
+    ContractModel,
+    Identifier,
+    LanguageCode,
+    NonEmptyText,
+    Sha256Digest,
+)
 
 
 class MediaSourceKind(StrEnum):
@@ -65,6 +71,7 @@ class MediaArticleSummary(ContractModel):
     country_code: CountryCode | None
     topic_id: UUID | None
     topic: NonEmptyText
+    evidence_revision_sha256: Sha256Digest
 
 
 class MediaCountryNode(ContractModel):

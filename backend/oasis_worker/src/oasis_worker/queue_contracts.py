@@ -27,7 +27,6 @@ class ClaimedRun(StrictModel):
     variant_name: Annotated[RequiredText, Field(max_length=200)]
     world_snapshot_id: UUID
     snapshot_sha256: Sha256
-    company_name: Annotated[RequiredText, Field(max_length=300)]
     seed: Annotated[int, Field(ge=0, le=4_294_967_295)]
     actor_user_name: UserName
     actor_name: Annotated[RequiredText, Field(max_length=200)]

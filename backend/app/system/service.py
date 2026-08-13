@@ -110,15 +110,13 @@ def build_system_capabilities() -> SystemCapabilities:
             ),
             CapabilityDescriptor(
                 name="evidence",
-                state=CapabilityStatus.CONTRACT_READY,
-                source="AI Decision Center V2",
-                contracts=("EvidenceItem", "EvidenceBundle"),
-            ),
-            CapabilityDescriptor(
-                name="companies",
                 state=CapabilityStatus.RUNTIME_READY,
                 source="AI Decision Center V2",
-                contracts=("CompanyProfile", "CompanyMention"),
+                contracts=(
+                    "EvidenceBundleSummary",
+                    "EvidenceBundleDetail",
+                    "EvidenceBundleContent",
+                ),
             ),
             CapabilityDescriptor(
                 name="world_models",
@@ -127,10 +125,40 @@ def build_system_capabilities() -> SystemCapabilities:
                 contracts=("WorldModel", "WorldSnapshot"),
             ),
             CapabilityDescriptor(
+                name="world_graphs",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="Qwen + PostgreSQL",
+                contracts=("SemanticWorldGraph", "GraphNode", "GraphEdge"),
+            ),
+            CapabilityDescriptor(
+                name="decision_threads",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AI Decision Center integration layer",
+                contracts=("DecisionThread", "DecisionThreadRevision"),
+            ),
+            CapabilityDescriptor(
+                name="decision_reports",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="AI Decision Center + MiroFish report structure",
+                contracts=("DecisionReport", "DecisionReportSection"),
+            ),
+            CapabilityDescriptor(
+                name="report_questions",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="Qwen + PostgreSQL evidence graph",
+                contracts=("ReportQuestion", "ReportAnswerCitation"),
+            ),
+            CapabilityDescriptor(
                 name="scenarios",
                 state=CapabilityStatus.RUNTIME_READY,
                 source="AI Decision Center V2",
                 contracts=("Scenario", "ScenarioVariant", "Intervention"),
+            ),
+            CapabilityDescriptor(
+                name="populations.matraix",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="MatrAIx",
+                contracts=("PersonaDataset", "Persona", "Cohort"),
             ),
             CapabilityDescriptor(
                 name="simulations.matraix",
@@ -139,10 +167,25 @@ def build_system_capabilities() -> SystemCapabilities:
                 contracts=("MatrAIxEvaluationSpec", "EngineResult"),
             ),
             CapabilityDescriptor(
+                name="tasks.matraix.survey",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="MatrAIx + Qwen",
+                contracts=(
+                    "MatraixSurveyExperiment",
+                    "MatraixSurveyTrial",
+                    "SurveyInstrument",
+                ),
+            ),
+            CapabilityDescriptor(
                 name="simulations.oasis",
-                state=CapabilityStatus.CONTRACT_READY,
+                state=CapabilityStatus.RUNTIME_READY,
                 source="AI Decision Center V1 / OASIS",
-                contracts=("OasisSimulationSpec", "EngineResult"),
+                contracts=(
+                    "OasisSimulationSpec",
+                    "SemanticExperiment",
+                    "SemanticTrial",
+                    "SemanticTrialEvent",
+                ),
             ),
         ),
     )

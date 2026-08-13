@@ -1,0 +1,500 @@
+.semantic-world-graph {
+  margin-top: 18px;
+  border: 1px solid rgba(115, 218, 190, 0.22);
+  background: #06110f;
+  color: #daf5ec;
+}
+
+.semantic-world-graph > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 20px 22px;
+  border-bottom: 1px solid rgba(115, 218, 190, 0.16);
+}
+
+.semantic-world-graph h4,
+.semantic-world-graph h5 {
+  margin: 0;
+  color: #f0fff9;
+}
+
+.semantic-world-graph header p {
+  max-width: 72ch;
+  margin: 7px 0 0;
+  color: #9abbb0;
+  line-height: 1.55;
+}
+
+.semantic-graph-workspace {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr) 280px;
+  min-height: 540px;
+}
+
+.semantic-graph-runs,
+.semantic-graph-inspector {
+  min-width: 0;
+  padding: 18px;
+  background: rgba(3, 13, 11, 0.74);
+}
+
+.semantic-graph-runs {
+  border-right: 1px solid rgba(115, 218, 190, 0.14);
+}
+
+.semantic-graph-runs > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.semantic-graph-runs > div:first-child span,
+.semantic-graph-runs > p,
+.semantic-graph-inspector > div > p {
+  color: #88a89d;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.semantic-graph-runs > button {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid rgba(115, 218, 190, 0.12);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.semantic-graph-runs > button[data-selected="true"] {
+  color: #89edcc;
+}
+
+.semantic-graph-runs > button:focus-visible {
+  outline: 2px solid #7be0bd;
+  outline-offset: 3px;
+}
+
+.semantic-graph-runs button span {
+  font-weight: 700;
+}
+
+.semantic-graph-runs button span[data-status="failed"] {
+  color: #ff9e9e;
+}
+
+.semantic-graph-runs button span[data-status="succeeded"] {
+  color: #7be0bd;
+}
+
+.semantic-graph-runs button code,
+.semantic-graph-runs button small {
+  overflow-wrap: anywhere;
+  color: #79968d;
+  font-size: 0.68rem;
+}
+
+.semantic-graph-center {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  place-items: stretch;
+  overflow: auto;
+  background:
+    radial-gradient(circle at center, rgba(41, 130, 103, 0.18), transparent 54%),
+    linear-gradient(rgba(115, 218, 190, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(115, 218, 190, 0.035) 1px, transparent 1px);
+  background-size: auto, 34px 34px, 34px 34px;
+}
+
+.semantic-graph-center > * {
+  grid-area: 1 / 1;
+}
+
+.semantic-slice-toolbar {
+  z-index: 2;
+  display: flex;
+  align-self: start;
+  justify-self: stretch;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px;
+  padding: 9px 11px;
+  border: 1px solid rgba(115, 218, 190, 0.2);
+  background: rgba(3, 13, 11, 0.94);
+  color: #8eada3;
+  font-size: 0.72rem;
+}
+
+.semantic-slice-mode,
+.semantic-slice-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.semantic-slice-mode button,
+.semantic-slice-options button,
+.semantic-slice-options select {
+  min-height: 34px;
+  border: 1px solid rgba(115, 218, 190, 0.22);
+  border-radius: 6px;
+  background: #091b17;
+  color: #b7d7cd;
+  font: inherit;
+}
+
+.semantic-slice-mode button,
+.semantic-slice-options button {
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.semantic-slice-mode button[data-active="true"] {
+  border-color: #73dabe;
+  background: rgba(115, 218, 190, 0.13);
+  color: #e8fff7;
+}
+
+.semantic-slice-mode button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.semantic-slice-mode button:focus-visible,
+.semantic-slice-options button:focus-visible,
+.semantic-slice-options select:focus-visible {
+  outline: 2px solid #7be0bd;
+  outline-offset: 2px;
+}
+
+.semantic-slice-options label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.semantic-slice-options select {
+  padding: 0 26px 0 8px;
+}
+
+.semantic-slice-options > span {
+  min-width: 18ch;
+  color: #9fc5b8;
+  text-align: right;
+}
+
+.semantic-timeline-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #9fc5b8;
+}
+
+.semantic-timeline-status button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(115, 218, 190, 0.22);
+  border-radius: 6px;
+  background: #091b17;
+  color: #b7d7cd;
+  font: inherit;
+  cursor: pointer;
+}
+
+.semantic-evidence-timeline {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  min-width: 640px;
+  min-height: 540px;
+  padding: 88px 24px 30px;
+  overflow: auto;
+}
+
+.semantic-evidence-timeline > article {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 22px;
+  padding: 20px 0;
+  border-top: 1px solid rgba(115, 218, 190, 0.14);
+}
+
+.semantic-evidence-timeline time {
+  color: #79a697;
+  font: 700 0.7rem/1.5 "JetBrains Mono", monospace;
+}
+
+.semantic-evidence-timeline header span,
+.semantic-evidence-timeline header small {
+  display: block;
+  color: #88a89d;
+  font-size: 0.7rem;
+}
+
+.semantic-evidence-timeline header h5 {
+  margin: 5px 0 7px;
+  color: #e8fff7;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.semantic-timeline-objects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.semantic-timeline-objects button,
+.semantic-timeline-objects span {
+  padding: 7px 9px;
+  border: 1px solid rgba(115, 218, 190, 0.16);
+  border-radius: 6px;
+  background: rgba(115, 218, 190, 0.045);
+  color: #a8c9be;
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.semantic-timeline-objects button {
+  cursor: pointer;
+}
+
+.semantic-timeline-objects button:hover,
+.semantic-timeline-objects button[data-selected="true"] {
+  border-color: #73dabe;
+  color: #effff9;
+}
+
+.semantic-timeline-objects button:focus-visible,
+.semantic-timeline-status button:focus-visible {
+  outline: 2px solid #7be0bd;
+  outline-offset: 2px;
+}
+
+.semantic-graph-canvas {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  min-height: 540px;
+}
+
+.semantic-graph-edges line {
+  stroke: rgba(116, 218, 190, 0.48);
+  stroke-width: 1.2;
+}
+
+.semantic-graph-edges line[data-related="false"] {
+  stroke: rgba(116, 218, 190, 0.11);
+}
+
+.semantic-graph-nodes g {
+  cursor: pointer;
+  outline: none;
+}
+
+.semantic-graph-nodes circle {
+  fill: #6fd8b5;
+  stroke: #c4ffec;
+  stroke-width: 1.5;
+  transition: filter 180ms ease-out, transform 180ms ease-out;
+}
+
+.semantic-graph-nodes g[data-type="policy"] circle { fill: #f0b85b; stroke: #ffe1a8; }
+.semantic-graph-nodes g[data-type="person"] circle { fill: #8ab7ff; stroke: #d4e5ff; }
+.semantic-graph-nodes g[data-type="location"] circle { fill: #bb98f4; stroke: #e6d9ff; }
+.semantic-graph-nodes g[data-type="event"] circle { fill: #ef8585; stroke: #ffd0d0; }
+
+.semantic-graph-nodes g:hover circle,
+.semantic-graph-nodes g:focus-visible circle,
+.semantic-graph-nodes g[data-selected="true"] circle {
+  filter: drop-shadow(0 0 8px rgba(132, 239, 203, 0.8));
+  transform: scale(1.4);
+}
+
+.semantic-graph-empty,
+.semantic-graph-failure {
+  display: grid;
+  max-width: 48ch;
+  place-self: center;
+  gap: 8px;
+  padding: 28px;
+  text-align: center;
+}
+
+.semantic-graph-empty p,
+.semantic-graph-failure p {
+  margin: 0;
+  color: #8aa99f;
+  line-height: 1.6;
+}
+
+.semantic-graph-failure strong {
+  color: #ffaaa8;
+}
+
+.semantic-graph-inspector {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-left: 1px solid rgba(115, 218, 190, 0.14);
+}
+
+.semantic-graph-inspector h5 {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.semantic-graph-inspector > div > span,
+.semantic-graph-inspector footer span {
+  color: #73dabe;
+  font: 700 0.68rem/1.4 "JetBrains Mono", monospace;
+}
+
+.semantic-evidence-list {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.semantic-evidence-list li,
+.semantic-related-relations article {
+  padding: 11px;
+  border: 1px solid rgba(115, 218, 190, 0.14);
+  background: rgba(115, 218, 190, 0.035);
+}
+
+.semantic-evidence-list q,
+.semantic-related-relations q {
+  display: block;
+  color: #c7e4da;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.semantic-evidence-list code,
+.semantic-related-relations code,
+.semantic-graph-inspector footer code {
+  display: block;
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+  color: #729288;
+  font-size: 0.65rem;
+}
+
+.semantic-related-relations {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.semantic-related-relations article p {
+  margin: 6px 0;
+  color: #a8c7bc;
+  font-size: 0.78rem;
+}
+
+.semantic-graph-inspector footer {
+  display: grid;
+  gap: 3px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(115, 218, 190, 0.14);
+}
+
+@media (max-width: 1180px) {
+  .semantic-graph-workspace {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .semantic-graph-inspector {
+    grid-column: 1 / -1;
+    min-height: 220px;
+    border-top: 1px solid rgba(115, 218, 190, 0.14);
+    border-left: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .semantic-world-graph > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .semantic-graph-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .semantic-graph-center {
+    order: 1;
+    min-height: 430px;
+  }
+
+  .semantic-graph-runs {
+    order: 2;
+    border-top: 1px solid rgba(115, 218, 190, 0.14);
+    border-right: 0;
+  }
+
+  .semantic-graph-inspector {
+    order: 3;
+  }
+
+  .semantic-graph-canvas {
+    min-height: 430px;
+  }
+
+  .semantic-slice-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .semantic-slice-options {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .semantic-slice-options > span {
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .semantic-slice-mode {
+    flex-wrap: wrap;
+  }
+
+  .semantic-timeline-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .semantic-evidence-timeline {
+    min-width: 0;
+    padding: 132px 16px 24px;
+  }
+
+  .semantic-evidence-timeline > article {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .semantic-graph-nodes circle {
+    transition: none;
+  }
+}

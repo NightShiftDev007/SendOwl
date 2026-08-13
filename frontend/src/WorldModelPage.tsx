@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -9,16 +10,15 @@ import { ZodError } from "zod";
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import { ApiRequestError } from "./apiClient";
 import {
-  type Company,
-  type CompanyCoverageItem,
-  type CompanyCoverageResponse,
-} from "./companyContracts";
+  type MediaArticle,
+  type MediaArticlesQuery,
+  type MediaArticlesResponse,
+} from "./mediaContracts";
 import { formatMediaCount, formatMediaTimestamp } from "./mediaPresentation";
-import { useCompanies, type CompaniesLoadState } from "./useCompanies";
 import {
-  useCompanyCoverage,
-  type CompanyCoverageLoadState,
-} from "./useCompanyCoverage";
+  useMediaArticles,
+  type MediaArticlesLoadState,
+} from "./useMediaArticles";
 import {
   useWorldModelDetail,
   useWorldModels,
@@ -33,9 +33,13 @@ import {
   type WorldModelDetail,
   type WorldModelSummary,
 } from "./worldModelContracts";
+import { EvidenceWorldGraph } from "./EvidenceWorldGraph";
+import { SemanticWorldGraph } from "./SemanticWorldGraph";
+import { EvidenceBundleLibrary } from "./EvidenceBundleLibrary";
 import "./decisionWorkspace.css";
 
-const coveragePageSize = 50;
+const articlesPerPage = 20;
+const maximumEvidenceCount = 50;
 
 type WorldModelCreationState =
   | { readonly status: "idle" }
@@ -44,25 +48,27 @@ type WorldModelCreationState =
   | { readonly status: "error"; readonly error: Error };
 
 interface WorldModelBuilderProps {
-  readonly companiesState: CompaniesLoadState;
-  readonly selectedCompany: Company | null;
-  readonly coverageState: CompanyCoverageLoadState;
-  readonly selectedArticleIds: readonly string[];
+  readonly appliedQuery: string | null;
+  readonly draftQuery: string;
+  readonly mediaState: MediaArticlesLoadState;
+  readonly page: number;
+  readonly selectedArticles: readonly MediaArticle[];
   readonly isHumanConfirmed: boolean;
-  readonly onSelectCompany: (company: Company) => void;
-  readonly onChangeSelectedArticleIds: (articleIds: readonly string[]) => void;
+  readonly onChangeDraftQuery: (query: string) => void;
+  readonly onChangePage: (page: number) => void;
+  readonly onChangeSelectedArticles: (articles: readonly MediaArticle[]) => void;
   readonly onChangeHumanConfirmed: (isConfirmed: boolean) => void;
-  readonly onReloadCompanies: () => void;
-  readonly onReloadCoverage: () => void;
+  readonly onClearSearch: () => void;
+  readonly onReloadMedia: () => void;
+  readonly onSearch: (event: FormEvent<HTMLFormElement>) => void;
   readonly onCreated: (worldModel: WorldModelDetail) => void;
 }
 
 interface CandidateEvidenceSelectorProps {
-  readonly response: CompanyCoverageResponse;
-  readonly selectedArticleIds: readonly string[];
+  readonly response: MediaArticlesResponse;
+  readonly selectedArticles: readonly MediaArticle[];
   readonly disabled: boolean;
-  readonly isRequestActive: () => boolean;
-  readonly onChange: (articleIds: readonly string[]) => void;
+  readonly onChange: (articles: readonly MediaArticle[]) => void;
   readonly onInvalidateConfirmation: () => void;
 }
 
@@ -90,73 +96,71 @@ function abbreviatedDigest(digest: string): string {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`;
 }
 
+function currentMediaData(state: MediaArticlesLoadState): MediaArticlesResponse | null {
+  return state.data;
+}
+
 function BuilderSkeleton(): JSX.Element {
   return (
     <div className="world-builder-skeleton" role="status" aria-live="polite">
-      <span className="sr-only">正在读取企业名称命中候选</span>
-      {Array.from({ length: 3 }, (_, index) => (
+      <span className="sr-only">正在读取媒体报道</span>
+      {Array.from({ length: 4 }, (_, index) => (
         <span className="skeleton-block" aria-hidden="true" key={index} />
       ))}
     </div>
   );
 }
 
-function CandidateContext({ item }: { readonly item: CompanyCoverageItem }): JSX.Element {
-  return (
-    <div className="world-candidate-context">
-      <div className="world-candidate-aliases">
-        <span>命中</span>
-        {item.matched_aliases.map((alias) => (
-          <mark key={alias}>{alias}</mark>
-        ))}
-      </div>
-      <ul>
-        {item.evidence_contexts.map((context, index) => (
-          <li key={`${context.alias}-${context.start_offset}-${context.end_offset}-${index}`}>
-            <q>{context.context}</q>
-            <small>
-              “{context.alias}” · 原文字符 {context.start_offset}–{context.end_offset}
-            </small>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function CandidateEvidenceSelector({
   response,
-  selectedArticleIds,
+  selectedArticles,
   disabled,
-  isRequestActive,
   onChange,
   onInvalidateConfirmation,
 }: CandidateEvidenceSelectorProps): JSX.Element {
-  const selectedIds = new Set(selectedArticleIds);
-  const allArticleIds = response.items.map((item) => item.article.id);
-  const allSelected = allArticleIds.length > 0
-    && allArticleIds.every((articleId) => selectedIds.has(articleId));
+  const selectedIds = new Set(selectedArticles.map((article) => article.id));
+  const pageArticleIds = response.items.map((article) => article.id);
+  const allPageArticlesSelected = pageArticleIds.length > 0
+    && pageArticleIds.every((articleId) => selectedIds.has(articleId));
 
-  const toggleArticle = (articleId: string, isSelected: boolean): void => {
-    if (disabled || isRequestActive()) {
-      return;
-    }
-
-    const nextArticleIds = isSelected
-      ? [...selectedArticleIds, articleId]
-      : selectedArticleIds.filter((selectedId) => selectedId !== articleId);
-
-    onChange(nextArticleIds);
+  const applySelection = (articles: readonly MediaArticle[]): void => {
+    onChange(articles);
     onInvalidateConfirmation();
   };
 
-  const selectAll = (): void => {
-    if (disabled || isRequestActive()) {
+  const toggleArticle = (article: MediaArticle, isSelected: boolean): void => {
+    if (disabled) {
       return;
     }
 
-    onChange(allSelected ? [] : allArticleIds);
-    onInvalidateConfirmation();
+    if (isSelected) {
+      if (selectedIds.has(article.id) || selectedArticles.length >= maximumEvidenceCount) {
+        return;
+      }
+
+      applySelection([...selectedArticles, article]);
+      return;
+    }
+
+    applySelection(selectedArticles.filter((selectedArticle) => selectedArticle.id !== article.id));
+  };
+
+  const toggleCurrentPage = (): void => {
+    if (disabled) {
+      return;
+    }
+
+    if (allPageArticlesSelected) {
+      const pageIds = new Set(pageArticleIds);
+      applySelection(selectedArticles.filter((article) => !pageIds.has(article.id)));
+      return;
+    }
+
+    const availableSlots = maximumEvidenceCount - selectedArticles.length;
+    const additions = response.items
+      .filter((article) => !selectedIds.has(article.id))
+      .slice(0, availableSlots);
+    applySelection([...selectedArticles, ...additions]);
   };
 
   return (
@@ -164,60 +168,69 @@ function CandidateEvidenceSelector({
       <legend>选择要冻结的报道证据</legend>
       <div className="world-evidence-toolbar">
         <p>
-          仅显示前 {coveragePageSize} 条真实名称候选；逐条阅读上下文后再勾选。
-          <strong>{selectedArticleIds.length} / {response.items.length} 已选</strong>
+          选择会跨搜索与分页保留；打开原文核验后再确认冻结。
+          <strong>{selectedArticles.length} / {maximumEvidenceCount} 已选</strong>
         </p>
         <button
           className="button button-secondary button-compact"
           type="button"
           disabled={response.items.length === 0}
-          onClick={selectAll}
+          onClick={toggleCurrentPage}
         >
-          {allSelected ? "清空选择" : "全选当前候选"}
+          {allPageArticlesSelected ? "取消本页" : "选择本页"}
         </button>
       </div>
+
       {response.items.length === 0 ? (
         <div className="world-builder-empty" role="status">
-          <strong>该企业没有名称命中候选</strong>
-          <p>先在“企业证据”工作区补充规范名称或别名，再回到这里进行人工语义确认。</p>
+          <strong>当前检索没有可选报道</strong>
+          <p>调整关键词或清除检索条件；已从其他页面选择的证据不会丢失。</p>
         </div>
       ) : (
         <ul className="world-candidate-list">
-          {response.items.map((item) => {
-            const inputId = `world-evidence-${item.article.id}`;
-            const descriptionId = `world-evidence-description-${item.article.id}`;
-            const isSelected = selectedIds.has(item.article.id);
+          {response.items.map((article) => {
+            const inputId = `world-evidence-${article.id}`;
+            const descriptionId = `world-evidence-description-${article.id}`;
+            const isSelected = selectedIds.has(article.id);
+            const selectionLimitReached = selectedArticles.length >= maximumEvidenceCount
+              && !isSelected;
 
             return (
-              <li key={item.article.id} data-selected={isSelected}>
+              <li key={article.id} data-selected={isSelected}>
                 <div className="world-candidate-heading">
                   <input
                     id={inputId}
                     type="checkbox"
                     checked={isSelected}
+                    disabled={selectionLimitReached}
                     aria-describedby={descriptionId}
-                    onChange={(event) => toggleArticle(item.article.id, event.target.checked)}
+                    onChange={(event) => toggleArticle(article, event.target.checked)}
                   />
                   <label htmlFor={inputId}>
-                    <strong>{item.article.title}</strong>
+                    <strong>{article.title}</strong>
                     <span>
-                      {item.article.source_name} · {formatMediaTimestamp(item.article.published_at)}
-                      {item.article.country_code === null ? "" : ` · ${item.article.country_code}`}
+                      {article.source_name} · {formatMediaTimestamp(article.published_at)}
+                      {article.country_code === null ? "" : ` · ${article.country_code}`}
                     </span>
                   </label>
                   <a
-                    href={item.article.original_url}
+                    href={article.original_url}
                     target="_blank"
-                    rel="noreferrer"
-                    aria-label={`打开原文：${item.article.title}`}
+                    rel="noopener noreferrer"
+                    aria-label={`打开原文：${article.title}`}
                   >
                     原文 ↗
                   </a>
                 </div>
                 <p id={descriptionId} className="world-candidate-excerpt">
-                  {item.article.excerpt}
+                  {article.excerpt}
                 </p>
-                <CandidateContext item={item} />
+                <div className="world-candidate-revision">
+                  <span>证据修订</span>
+                  <code title={article.evidence_revision_sha256}>
+                    {abbreviatedDigest(article.evidence_revision_sha256)}
+                  </code>
+                </div>
               </li>
             );
           })}
@@ -227,36 +240,80 @@ function CandidateEvidenceSelector({
   );
 }
 
+function SelectedEvidenceList({
+  selectedArticles,
+  disabled,
+  onRemove,
+}: {
+  readonly selectedArticles: readonly MediaArticle[];
+  readonly disabled: boolean;
+  readonly onRemove: (articleId: string) => void;
+}): JSX.Element {
+  if (selectedArticles.length === 0) {
+    return (
+      <div className="world-selected-empty" role="status">
+        <strong>尚未选择证据</strong>
+        <p>从中间的报道流选择一篇或多篇记录。</p>
+      </div>
+    );
+  }
+
+  return (
+    <ol className="world-selected-evidence-list" aria-label="待冻结证据">
+      {selectedArticles.map((article, index) => (
+        <li key={article.id}>
+          <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <strong>{article.title}</strong>
+            <small>{article.source_name}</small>
+            <code title={article.evidence_revision_sha256}>
+              {abbreviatedDigest(article.evidence_revision_sha256)}
+            </code>
+          </div>
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`移除证据：${article.title}`}
+            onClick={() => onRemove(article.id)}
+          >
+            移除
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function WorldModelBuilder({
-  companiesState,
-  selectedCompany,
-  coverageState,
-  selectedArticleIds,
+  appliedQuery,
+  draftQuery,
+  mediaState,
+  page,
+  selectedArticles,
   isHumanConfirmed,
-  onSelectCompany,
-  onChangeSelectedArticleIds,
+  onChangeDraftQuery,
+  onChangePage,
+  onChangeSelectedArticles,
   onChangeHumanConfirmed,
-  onReloadCompanies,
-  onReloadCoverage,
+  onClearSearch,
+  onReloadMedia,
+  onSearch,
   onCreated,
 }: WorldModelBuilderProps): JSX.Element {
   const [title, setTitle] = useState<string>("");
   const [creationState, setCreationState] = useState<WorldModelCreationState>({ status: "idle" });
   const activeController = useRef<AbortController | null>(null);
-  const companies = companiesState.data?.items ?? [];
-  const loadedCoverage = coverageState.status === "idle" ? null : coverageState.data;
-  const coverage = selectedCompany !== null && loadedCoverage?.company.id === selectedCompany.id
-    ? loadedCoverage
-    : null;
+  const response = currentMediaData(mediaState);
+  const totalPages = response === null
+    ? 1
+    : Math.max(1, Math.ceil(response.total / response.page_size));
   const isSubmitting = creationState.status === "submitting";
   const hasStaleEvidenceRevision = creationState.status === "error"
     && isStaleEvidenceRevisionError(creationState.error);
-  const isCoverageReady = coverage !== null && coverageState.status === "success";
-  const canSubmit = selectedCompany !== null
-    && title.trim() !== ""
-    && selectedArticleIds.length > 0
+  const canSubmit = title.trim() !== ""
+    && selectedArticles.length > 0
+    && selectedArticles.length <= maximumEvidenceCount
     && isHumanConfirmed
-    && isCoverageReady
     && !isSubmitting;
 
   useEffect(() => {
@@ -265,30 +322,15 @@ function WorldModelBuilder({
     };
   }, []);
 
-  const submitWorldModel = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault();
-
-    if (!canSubmit || activeController.current !== null || selectedCompany === null) {
-      return;
-    }
-
-    if (coverage === null) {
-      setCreationState({
-        status: "error",
-        error: new Error("无法冻结世界模型：当前企业证据尚未完整加载。请刷新候选并重新阅读确认。"),
-      });
+  const submitWorldModel = async (): Promise<void> => {
+    if (!canSubmit || activeController.current !== null) {
       return;
     }
 
     let request: WorldModelCreateRequest;
 
     try {
-      request = buildWorldModelCreateRequest(
-        title,
-        selectedCompany.id,
-        selectedArticleIds,
-        coverage.items,
-      );
+      request = buildWorldModelCreateRequest(title, selectedArticles);
     } catch (error: unknown) {
       setCreationState({ status: "error", error: normalizeWorldModelCreationError(error) });
       return;
@@ -306,7 +348,7 @@ function WorldModelBuilder({
       }
 
       setTitle("");
-      onChangeSelectedArticleIds([]);
+      onChangeSelectedArticles([]);
       onChangeHumanConfirmed(false);
       setCreationState({ status: "success", worldModel });
       onCreated(worldModel);
@@ -332,10 +374,16 @@ function WorldModelBuilder({
       return;
     }
 
-    onChangeSelectedArticleIds([]);
+    onChangeSelectedArticles([]);
     onChangeHumanConfirmed(false);
     setCreationState({ status: "idle" });
-    onReloadCoverage();
+    onReloadMedia();
+  };
+
+  const removeSelectedArticle = (articleId: string): void => {
+    onChangeSelectedArticles(selectedArticles.filter((article) => article.id !== articleId));
+    onChangeHumanConfirmed(false);
+    setCreationState({ status: "idle" });
   };
 
   return (
@@ -343,58 +391,25 @@ function WorldModelBuilder({
       <div className="world-section-heading">
         <div>
           <span>当前任务</span>
-          <h3 id="world-builder-title">核验候选并冻结现实版本</h3>
-          <p>在中间逐篇阅读原文上下文；右侧动作只会冻结明确勾选且经人确认的证据。</p>
+          <h3 id="world-builder-title">检索证据并冻结现实版本</h3>
+          <p>从通用媒体库跨页选取报道；右侧动作只冻结明确选择且经人工确认的修订。</p>
         </div>
         <details className="decision-diagnostics">
           <summary>接口诊断</summary>
+          <code>GET /api/v2/media/articles</code>
           <code>POST /api/v2/world-models</code>
         </details>
       </div>
 
-      <form onSubmit={(event) => void submitWorldModel(event)}>
+      <div>
         <div className="world-builder-cockpit">
-          <aside className="world-builder-controls decision-context-rail" aria-label="世界模型上下文">
+          <aside className="world-builder-controls decision-context-rail" aria-label="现实版本输入">
             <div className="decision-rail-heading">
-              <span>现实对象</span>
-              <strong>{selectedCompany?.canonical_name ?? "未选择企业"}</strong>
-              <small>企业选择必须由本次任务明确指定。</small>
+              <span>现实版本</span>
+              <strong>{title.trim() === "" ? "尚未命名" : title}</strong>
+              <small>标题描述本次证据冻结的观察边界。</small>
             </div>
-            <label>
-              <span>企业档案</span>
-              <select
-                id="world-model-company"
-                name="company_id"
-                value={selectedCompany?.id ?? ""}
-                required
-                disabled={companies.length === 0 || isSubmitting}
-                onChange={(event) => {
-                  if (isSubmitting || activeController.current !== null) {
-                    return;
-                  }
 
-                  const company = companies.find((candidate) => candidate.id === event.target.value);
-
-                  if (company === undefined) {
-                    throw new Error(
-                      `Company selection is missing from the loaded directory: ${event.target.value}`,
-                    );
-                  }
-
-                  setCreationState({ status: "idle" });
-                  onSelectCompany(company);
-                }}
-              >
-                <option value="" disabled>
-                  {companies.length === 0 ? "暂无企业档案" : "请选择企业档案"}
-                </option>
-                {companies.map((company) => (
-                  <option value={company.id} key={company.id}>
-                    {company.canonical_name}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label>
               <span>现实版本标题</span>
               <input
@@ -405,78 +420,107 @@ function WorldModelBuilder({
                 required
                 maxLength={300}
                 disabled={isSubmitting}
-                placeholder="例如：华为全球媒体环境 · 2026 Q3"
+                placeholder="例如：全球供应链媒体基线 · 2026 Q3"
                 onChange={(event) => {
-                  if (isSubmitting || activeController.current !== null) {
-                    return;
-                  }
-
                   setTitle(event.target.value);
                   setCreationState({ status: "idle" });
                 }}
               />
             </label>
 
-            {companiesState.status === "error" ? (
-              <ApiErrorPanel
-                title="无法读取企业档案"
-                error={companiesState.error}
-                isRetrying={companiesState.isRetrying}
-                onRetry={onReloadCompanies}
-              />
-            ) : null}
-
-            {companiesState.status === "loading" && companiesState.data === null ? (
-              <BuilderSkeleton />
-            ) : null}
-
-            {companiesState.data !== null && companies.length === 0 ? (
-              <div className="world-builder-empty" role="status">
-                <strong>还没有可建模的企业</strong>
-                <p>先在“企业证据”建立企业档案；世界模型不接受没有企业身份的孤立报道。</p>
+            <form className="world-evidence-search" role="search" onSubmit={onSearch}>
+              <label htmlFor="world-evidence-query">
+                <span>检索媒体证据</span>
+                <input
+                  id="world-evidence-query"
+                  type="search"
+                  value={draftQuery}
+                  minLength={2}
+                  maxLength={100}
+                  placeholder="事件、人物或议题"
+                  disabled={isSubmitting}
+                  onChange={(event) => onChangeDraftQuery(event.target.value)}
+                />
+              </label>
+              <div>
+                <button
+                  className="button button-primary button-compact"
+                  type="submit"
+                  disabled={draftQuery.trim().length === 1 || isSubmitting}
+                >
+                  检索
+                </button>
+                <button
+                  className="button button-secondary button-compact"
+                  type="button"
+                  disabled={appliedQuery === null && draftQuery === ""}
+                  onClick={onClearSearch}
+                >
+                  清除
+                </button>
               </div>
-            ) : null}
+            </form>
+
+            <dl className="decision-context-ledger">
+              <div><dt>当前关键词</dt><dd>{appliedQuery ?? "全部报道"}</dd></div>
+              <div><dt>结果规模</dt><dd>{response === null ? "读取中" : `${response.total} 篇`}</dd></div>
+              <div><dt>选择上限</dt><dd>{maximumEvidenceCount} 篇</dd></div>
+            </dl>
           </aside>
 
           <div className="world-evidence-stage decision-main-stage">
             <div className="decision-stage-heading">
-              <span>候选证据</span>
+              <span>媒体证据库</span>
               <strong>
-                {coverage === null
-                  ? "等待企业上下文"
-                  : `${coverage.items.length} 条可见名称候选`}
+                {response === null
+                  ? "等待报道索引"
+                  : `${formatMediaCount(response.total)} 篇 · 第 ${response.page} / ${totalPages} 页`}
               </strong>
             </div>
 
-            {selectedCompany === null ? (
-              <div className="decision-stage-empty" role="status">
-                <strong>先明确本次冻结的企业</strong>
-                <p>选择后才会载入报道候选；不会自动打开目录中的第一家企业。</p>
-              </div>
-            ) : null}
-
-            {selectedCompany !== null && coverageState.status === "error" ? (
+            {mediaState.status === "error" ? (
               <ApiErrorPanel
-                title={`无法读取“${selectedCompany.canonical_name}”的报道候选`}
-                error={coverageState.error}
-                isRetrying={coverageState.isRetrying}
-                onRetry={onReloadCoverage}
+                title="无法读取媒体证据"
+                error={mediaState.error}
+                isRetrying={mediaState.isRetrying}
+                onRetry={onReloadMedia}
               />
             ) : null}
 
-            {selectedCompany !== null && coverageState.status === "loading" && coverage === null ? (
-              <BuilderSkeleton />
-            ) : null}
+            {mediaState.status === "loading" && response === null ? <BuilderSkeleton /> : null}
 
-            {coverage !== null ? (
-              <CandidateEvidenceSelector
-                response={coverage}
-                selectedArticleIds={selectedArticleIds}
-                disabled={isSubmitting || coverageState.status === "loading"}
-                isRequestActive={() => activeController.current !== null}
-                onChange={onChangeSelectedArticleIds}
-                onInvalidateConfirmation={() => onChangeHumanConfirmed(false)}
-              />
+            {response !== null ? (
+              <div aria-busy={mediaState.status === "loading"}>
+                <CandidateEvidenceSelector
+                  response={response}
+                  selectedArticles={selectedArticles}
+                  disabled={isSubmitting || mediaState.status === "loading"}
+                  onChange={onChangeSelectedArticles}
+                  onInvalidateConfirmation={() => {
+                    onChangeHumanConfirmed(false);
+                    setCreationState({ status: "idle" });
+                  }}
+                />
+                <nav className="pagination world-evidence-pagination" aria-label="待冻结媒体报道分页">
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={page <= 1 || mediaState.status === "loading"}
+                    onClick={() => onChangePage(Math.max(1, page - 1))}
+                  >
+                    上一页
+                  </button>
+                  <span aria-live="polite">第 {response.page} / {totalPages} 页</span>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={page >= totalPages || mediaState.status === "loading"}
+                    onClick={() => onChangePage(page + 1)}
+                  >
+                    下一页
+                  </button>
+                </nav>
+              </div>
             ) : null}
           </div>
 
@@ -487,32 +531,29 @@ function WorldModelBuilder({
             </div>
             <div className="world-freeze-note">
               <strong>不可变边界</strong>
-              <p>保存企业身份、来源、正文哈希与命中字符位置；之后导入的新报道不会改写它。</p>
+              <p>保存所选报道的来源、正文哈希和修订地址；后续采集不会改写这一版本。</p>
             </div>
-            <dl className="decision-context-ledger">
-              <div><dt>当前企业</dt><dd>{selectedCompany?.canonical_name ?? "未选择"}</dd></div>
-              <div><dt>冻结证据</dt><dd>{selectedArticleIds.length} 篇</dd></div>
-              <div><dt>人工声明</dt><dd>{isHumanConfirmed ? "已确认" : "未确认"}</dd></div>
-            </dl>
 
-            {coverage !== null && coverage.items.length > 0 ? (
+            <SelectedEvidenceList
+              selectedArticles={selectedArticles}
+              disabled={isSubmitting}
+              onRemove={removeSelectedArticle}
+            />
+
+            {selectedArticles.length > 0 ? (
               <label className="world-human-confirmation">
                 <input
                   type="checkbox"
                   checked={isHumanConfirmed}
-                  disabled={!isCoverageReady || selectedArticleIds.length === 0 || isSubmitting}
+                  disabled={isSubmitting}
                   onChange={(event) => {
-                    if (isSubmitting || activeController.current !== null) {
-                      return;
-                    }
-
                     onChangeHumanConfirmed(event.target.checked);
                     setCreationState({ status: "idle" });
                   }}
                 />
                 <span>
-                  <strong>我已阅读上下文，确认所选报道指向该企业</strong>
-                  <small>这是人工语义声明，不是名称匹配自动得出的结论。</small>
+                  <strong>我已核验所选来源，并确认以这些修订冻结当前现实</strong>
+                  <small>这是人工冻结声明，不代表系统已判断报道真伪或未来走势。</small>
                 </span>
               </label>
             ) : null}
@@ -520,9 +561,7 @@ function WorldModelBuilder({
             {creationState.status === "error" ? (
               <div className="world-create-message world-create-error" role="alert">
                 <strong>
-                  {hasStaleEvidenceRevision
-                    ? "报道已更新，请重新阅读确认"
-                    : "世界模型未创建"}
+                  {hasStaleEvidenceRevision ? "报道修订已变化，请重新核验" : "世界模型未创建"}
                 </strong>
                 <p>{creationState.error.message}</p>
                 {hasStaleEvidenceRevision ? (
@@ -531,7 +570,7 @@ function WorldModelBuilder({
                     type="button"
                     onClick={reloadStaleEvidence}
                   >
-                    刷新候选并重新核验
+                    清空选择并刷新
                   </button>
                 ) : null}
               </div>
@@ -546,15 +585,16 @@ function WorldModelBuilder({
 
             <button
               className="button button-primary world-freeze-action"
-              type="submit"
+              type="button"
               disabled={!canSubmit}
               aria-busy={isSubmitting}
+              onClick={() => void submitWorldModel()}
             >
-              {isSubmitting ? "正在冻结证据…" : `确认并创建 v1 · ${selectedArticleIds.length} 篇`}
+              {isSubmitting ? "正在冻结证据…" : `确认并创建 v1 · ${selectedArticles.length} 篇`}
             </button>
           </aside>
         </div>
-      </form>
+      </div>
     </section>
   );
 }
@@ -615,7 +655,7 @@ function WorldModelList({
       {response !== null && response.items.length === 0 ? (
         <div className="world-directory-empty" role="status">
           <strong>还没有不可变快照</strong>
-          <p>完成上方人工语义确认后，第一个世界模型和版本 1 会出现在这里。</p>
+          <p>在上方选择媒体证据并完成人工确认，第一个现实版本就会出现在这里。</p>
         </div>
       ) : null}
 
@@ -637,9 +677,7 @@ function WorldModelList({
                   </span>
                   <span className="world-model-list-copy">
                     <strong>{worldModel.title}</strong>
-                    <small>
-                      {worldModel.company_name} · {worldModel.latest_snapshot.evidence_count} 篇证据
-                    </small>
+                    <small>{worldModel.latest_snapshot.evidence_count} 篇冻结证据</small>
                     <code title={worldModel.latest_snapshot.snapshot_sha256}>
                       {abbreviatedDigest(worldModel.latest_snapshot.snapshot_sha256)}
                     </code>
@@ -663,30 +701,12 @@ function SnapshotEvidenceArticle({ evidence }: { readonly evidence: SnapshotEvid
           <time dateTime={evidence.published_at}>{formatMediaTimestamp(evidence.published_at)}</time>
           {evidence.country_code === null ? null : <small>{evidence.country_code}</small>}
         </span>
-        <a href={evidence.original_url} target="_blank" rel="noreferrer">
+        <a href={evidence.original_url} target="_blank" rel="noopener noreferrer">
           回查原文 ↗
         </a>
       </div>
       <h5>{evidence.title}</h5>
       <p>{evidence.excerpt}</p>
-      <div className="world-snapshot-aliases" aria-label="人工确认时的命中别名">
-        <strong>冻结命中</strong>
-        <span>
-          {evidence.matched_aliases.map((alias) => (
-            <mark key={alias}>{alias}</mark>
-          ))}
-        </span>
-      </div>
-      <ul className="world-snapshot-contexts">
-        {evidence.evidence_contexts.map((context, index) => (
-          <li key={`${context.alias}-${context.start_offset}-${context.end_offset}-${index}`}>
-            <q>{context.context}</q>
-            <small>
-              “{context.alias}” · 冻结字符 {context.start_offset}–{context.end_offset}
-            </small>
-          </li>
-        ))}
-      </ul>
       <footer>
         <span>正文捕获于 {formatMediaTimestamp(evidence.captured_at)}</span>
         <code title={evidence.captured_text_sha256}>
@@ -704,7 +724,7 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
     <div className="world-model-detail-content">
       <div className="world-detail-heading">
         <div>
-          <span className="world-human-verified">人工确认声明</span>
+          <span className="world-human-verified">人工冻结声明</span>
           <h3>{worldModel.title}</h3>
           <p>创建于 {formatMediaTimestamp(worldModel.created_at)}</p>
         </div>
@@ -715,28 +735,20 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
       </div>
 
       <dl className="world-snapshot-ledger" aria-label="最新不可变快照摘要">
-        <div>
-          <dt>当前版本</dt>
-          <dd>v{snapshot.version}</dd>
-        </div>
-        <div>
-          <dt>冻结证据</dt>
-          <dd>{formatMediaCount(snapshot.evidence.length)}</dd>
-        </div>
-        <div>
-          <dt>确认方式</dt>
-          <dd>人工声明</dd>
-        </div>
-        <div>
-          <dt>冻结时间</dt>
-          <dd>{formatMediaTimestamp(snapshot.created_at)}</dd>
-        </div>
+        <div><dt>当前版本</dt><dd>v{snapshot.version}</dd></div>
+        <div><dt>冻结证据</dt><dd>{formatMediaCount(snapshot.evidence.length)}</dd></div>
+        <div><dt>确认方式</dt><dd>人工确认</dd></div>
+        <div><dt>冻结时间</dt><dd>{formatMediaTimestamp(snapshot.created_at)}</dd></div>
       </dl>
 
       <div className="world-snapshot-hash">
         <span>snapshot_sha256 · 冻结内容地址</span>
         <code>{snapshot.snapshot_sha256}</code>
       </div>
+
+      <EvidenceWorldGraph worldModelId={worldModel.id} snapshotId={snapshot.id} />
+
+      <SemanticWorldGraph worldModelId={worldModel.id} snapshotId={snapshot.id} />
 
       <section className="world-version-history" aria-labelledby="world-version-history-title">
         <div>
@@ -755,29 +767,11 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
         </ol>
       </section>
 
-      <section className="world-frozen-company" aria-labelledby="world-frozen-company-title">
-        <div>
-          <h4 id="world-frozen-company-title">冻结企业身份</h4>
-          <p>这里展示的是建模时的企业名称与别名，不随档案后续修改。</p>
-        </div>
-        <div className="world-frozen-company-identity">
-          <span aria-hidden="true">{snapshot.company.canonical_name.slice(0, 1)}</span>
-          <div>
-            <strong>{snapshot.company.canonical_name}</strong>
-            <small>
-              {snapshot.company.aliases.length === 0
-                ? "快照中没有额外别名"
-                : snapshot.company.aliases.join(" · ")}
-            </small>
-          </div>
-        </div>
-      </section>
-
       <section className="world-frozen-evidence" aria-labelledby="world-frozen-evidence-title">
         <div className="world-frozen-evidence-heading">
           <div>
             <h4 id="world-frozen-evidence-title">冻结证据</h4>
-            <p>上下文、字符位置和正文哈希均来自创建时刻，可通过原文链接再次核验。</p>
+            <p>来源、采集时间和正文哈希来自创建时刻，可通过原文链接再次核验。</p>
           </div>
           <span>{snapshot.evidence.length} 篇</span>
         </div>
@@ -810,7 +804,7 @@ function WorldModelDetailPanel({
       <section className="world-model-detail world-detail-empty" aria-labelledby="world-detail-title">
         <div>
           <h3 id="world-detail-title">选择模型核验不可变快照</h3>
-          <p>模型创建后，这里会显示完整版本哈希、冻结企业身份和逐篇证据上下文。</p>
+          <p>模型创建后，这里会显示完整版本哈希和逐篇证据来源。</p>
         </div>
       </section>
     );
@@ -846,49 +840,77 @@ function WorldModelDetailPanel({
 }
 
 export function WorldModelPage(): JSX.Element {
-  const { state: companiesState, reload: reloadCompanies } = useCompanies();
-  const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
-  const [selectedArticleIds, setSelectedArticleIds] = useState<readonly string[]>([]);
+  const [draftQuery, setDraftQuery] = useState<string>("");
+  const [appliedQuery, setAppliedQuery] = useState<string | null>(null);
+  const [page, setPage] = useState<number>(1);
+  const [selectedArticles, setSelectedArticles] = useState<readonly MediaArticle[]>([]);
   const [isHumanConfirmed, setIsHumanConfirmed] = useState<boolean>(false);
-  const companyId = selectedCompany?.id ?? null;
-  const { state: coverageState, reload: reloadCoverage } = useCompanyCoverage(
-    companyId,
-    1,
-    coveragePageSize,
+  const query = useMemo<MediaArticlesQuery>(
+    () => ({
+      q: appliedQuery,
+      country: null,
+      topicId: null,
+      page,
+      pageSize: articlesPerPage,
+    }),
+    [appliedQuery, page],
   );
+  const { state: mediaState, reload: reloadMedia } = useMediaArticles(query);
   const { state: worldModelsState, reload: reloadWorldModels } = useWorldModels();
   const [selectedWorldModelId, setSelectedWorldModelId] = useState<string | null>(null);
   const {
     state: worldModelDetailState,
     reload: reloadWorldModelDetail,
   } = useWorldModelDetail(selectedWorldModelId);
-  const loadedCoverage = coverageState.status === "idle" ? null : coverageState.data;
-  const selectedCoverage = selectedCompany !== null && loadedCoverage?.company.id === selectedCompany.id
-    ? loadedCoverage
-    : null;
   const selectedWorldModel = selectedWorldModelId === null
     ? null
     : worldModelsState.data?.items.find((worldModel) => worldModel.id === selectedWorldModelId) ?? null;
 
   useEffect(() => {
-    if (selectedCoverage === null) {
+    if (mediaState.data === null || selectedArticles.length === 0) {
       return;
     }
 
-    const availableArticleIds = new Set(
-      selectedCoverage.items.map((item) => item.article.id),
+    const visibleArticles = new Map(
+      mediaState.data.items.map((article) => [article.id, article]),
     );
+    let revisionChanged = false;
+    const nextSelectedArticles = selectedArticles.map((article) => {
+      const currentArticle = visibleArticles.get(article.id);
 
-    setSelectedArticleIds((currentIds) =>
-      currentIds.filter((articleId) => availableArticleIds.has(articleId)),
-    );
-    setIsHumanConfirmed(false);
-  }, [selectedCoverage]);
+      if (
+        currentArticle === undefined
+        || currentArticle.evidence_revision_sha256 === article.evidence_revision_sha256
+      ) {
+        return article;
+      }
 
-  const selectCompany = (company: Company): void => {
-    setSelectedCompany(company);
-    setSelectedArticleIds([]);
-    setIsHumanConfirmed(false);
+      revisionChanged = true;
+      return currentArticle;
+    });
+
+    if (revisionChanged) {
+      setSelectedArticles(nextSelectedArticles);
+      setIsHumanConfirmed(false);
+    }
+  }, [mediaState.data, selectedArticles]);
+
+  const submitSearch = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    const normalizedQuery = draftQuery.trim();
+
+    if (normalizedQuery.length === 1) {
+      return;
+    }
+
+    setAppliedQuery(normalizedQuery === "" ? null : normalizedQuery);
+    setPage(1);
+  };
+
+  const clearSearch = (): void => {
+    setDraftQuery("");
+    setAppliedQuery(null);
+    setPage(1);
   };
 
   const selectWorldModel = (worldModel: WorldModelSummary): void => {
@@ -907,18 +929,14 @@ export function WorldModelPage(): JSX.Element {
           <span className="decision-stage-index">02 · 现实版本室</span>
           <div>
             <h2 id="world-model-page-title">把核验过的证据冻结成共同现实</h2>
-            <p>研究员明确选择企业与报道，保留内容地址，让后续实验始终回到同一个可复核版本。</p>
+            <p>研究员从媒体证据库明确选择报道与修订，让后续实验始终回到同一个可复核版本。</p>
           </div>
         </div>
         <div className="decision-context-bar">
-          <div className="decision-context-current" data-active={selectedCompany !== null}>
-            <span>待冻结对象</span>
-            <strong>{selectedCompany?.canonical_name ?? "尚未选择企业"}</strong>
-            <small>
-              {selectedCompany === null
-                ? "选择企业后才载入候选，不会沿用上次查看。"
-                : `${selectedArticleIds.length} 篇已选 · ${isHumanConfirmed ? "人工声明已勾选" : "等待人工声明"}`}
-            </small>
+          <div className="decision-context-current" data-active={selectedArticles.length > 0}>
+            <span>待冻结证据</span>
+            <strong>{selectedArticles.length === 0 ? "尚未选择报道" : `${selectedArticles.length} 篇已选`}</strong>
+            <small>{isHumanConfirmed ? "人工冻结声明已确认" : "选择变化后需要重新确认"}</small>
           </div>
           <div className="decision-context-current" data-active={selectedWorldModel !== null}>
             <span>档案核验对象</span>
@@ -926,37 +944,42 @@ export function WorldModelPage(): JSX.Element {
             <small>
               {selectedWorldModel === null
                 ? "从下方档案明确打开一个版本。"
-                : `v${selectedWorldModel.latest_snapshot.version} · ${selectedWorldModel.company_name}`}
+                : `v${selectedWorldModel.latest_snapshot.version} · ${selectedWorldModel.latest_snapshot.evidence_count} 篇证据`}
             </small>
           </div>
           <ul className="decision-boundary-legend" aria-label="世界模型边界">
-            <li data-boundary="candidate"><span />名称候选</li>
-            <li data-boundary="human"><span />人工声明</li>
+            <li data-boundary="candidate"><span />媒体修订</li>
+            <li data-boundary="human"><span />人工确认</li>
             <li data-boundary="immutable"><span />不可变快照</li>
           </ul>
         </div>
       </header>
 
       <WorldModelBuilder
-        companiesState={companiesState}
-        selectedCompany={selectedCompany}
-        coverageState={coverageState}
-        selectedArticleIds={selectedArticleIds}
+        appliedQuery={appliedQuery}
+        draftQuery={draftQuery}
+        mediaState={mediaState}
+        page={page}
+        selectedArticles={selectedArticles}
         isHumanConfirmed={isHumanConfirmed}
-        onSelectCompany={selectCompany}
-        onChangeSelectedArticleIds={setSelectedArticleIds}
+        onChangeDraftQuery={setDraftQuery}
+        onChangePage={setPage}
+        onChangeSelectedArticles={setSelectedArticles}
         onChangeHumanConfirmed={setIsHumanConfirmed}
-        onReloadCompanies={reloadCompanies}
-        onReloadCoverage={reloadCoverage}
+        onClearSearch={clearSearch}
+        onReloadMedia={reloadMedia}
+        onSearch={submitSearch}
         onCreated={worldModelCreated}
       />
+
+      <EvidenceBundleLibrary />
 
       <section className="world-model-registry decision-archive-stage" aria-labelledby="world-registry-title">
         <div className="world-registry-heading">
           <div>
             <span>版本档案</span>
             <h2 id="world-registry-title">回查冻结时刻的完整证据链</h2>
-            <p>这里只在你明确选择后打开模型；版本、企业身份和文章内容地址均保持只读。</p>
+            <p>这里只在你明确选择后打开模型；版本、证据来源和内容地址均保持只读。</p>
           </div>
         </div>
         <div className="world-registry-workbench">

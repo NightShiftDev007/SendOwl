@@ -1,18 +1,34 @@
-# AI Decision Center V2 架构
+# AI Decision Center V2 Core Integration 架构
 
-## 目标产品数据流
+## 范围
+
+本分支的目标是把四个项目重构为一个产品，而不是增加新的企业业务：
+
+| 来源 | 进入统一产品的能力 |
+|---|---|
+| AgendaScope | 媒体来源、文章、议题及导入适配 |
+| 原 AI Decision Center | World、Scenario、Run 与报告方向的领域语义 |
+| MatrAIx | 人群实验契约、工作台交互语言和地球渲染原语 |
+| MiroFish / OASIS | 社会平台执行适配、运行约束和产物 |
+
+为了让这些能力在同一个系统内可靠连接，V2 新增了严格 API 契约、内容摘要、数据库迁移、任务状态、不可变封存、运行队列、统一前端和 Compose。这些属于项目整合工程。
+
+`Company` 主体、企业别名、企业报道 coverage、企业关系链和 GTV 不属于这条必需链路，本分支不包含它们。
+
+## 目标数据流
 
 ```text
 Media / Policy Reality
   → Article Evidence
-  → Company & Entity Resolution
   → Versioned World Snapshot
-  → Decision / Scenario
+  → Decision Scenario
   → MatrAIx Population Trial + OASIS Social Evolution
   → Comparable Metrics / Explanation / Report
 ```
 
-真实观测、模型假设、模拟结果和人工判断是四类不同的数据。V2 的契约必须保留来源、时间、版本和内容摘要，任何下游结果都能回溯到不可变的 Evidence Bundle 与 World Snapshot。
+当前已接通三条模型执行路径：不读取 Cohort 的 OASIS platform smoke、将封存 Cohort 与 Scenario baseline/alternatives 组成矩阵的有界语义实验，以及将封存 Scenario/Cohort 交给千问逐 Persona 完成固定三题的 MatrAIx Survey。Persona World、Playground、Survey 与持久章节式 Findings 共享这些真实资源；Survey 只返回精确 choice count、Likert 统计和逐 Persona 原始理由，不等于真人研究或决策推荐。完整 MatrAIx 通用 Trial/Harbor 与 MiroFish ReportAgent/角色访谈仍未迁移，政策数据领域也仍未实现。
+
+现实观测、人工确认、实验假设和模拟输出是四种不同的事实类型。任何下游资源都必须保留来源、时间、版本和内容摘要，不能把实验输入或模拟产物回写成现实证据。
 
 ## 运行拓扑
 
@@ -20,128 +36,189 @@ Media / Policy Reality
 React frontend
       │ /api/v2
       ▼
-FastAPI backend ───── PostgreSQL + pgvector
-      │
-      ├────────────── Redis queue / coordination
-      │
-      └── PostgreSQL durable run queue ── OASIS worker (Python 3.11)
-                                             │
-                                             └── SQLite artifact volume
+FastAPI backend ───── PostgreSQL
+      │                    │
+      ├──── Redis          └── durable simulation queue
+      │                                  │
+      └──────────────────── OASIS worker (Python 3.11)
+                                           │
+                                           └── SQLite artifact volume
 ```
 
-- PostgreSQL 是业务实体、证据、任务和运行状态的事实源。
-- Redis 只负责队列、短期协调和进度分发，不保存唯一业务事实。
-- 大型正文快照、运行轨迹和报告附件进入可替换的 artifact storage，数据库保存内容摘要和引用。
-- API、采集 worker、分析 worker 和模拟 worker 属于同一 `backend` 领域代码区，不形成新的代码仓库。OASIS 0.2.5 的 Python `<3.12` 约束要求模拟 worker 使用独立 Python 3.11 镜像，API 继续使用 Python 3.12；二者仍由同一个 Compose 命令管理。
-- Compose 以一次性 Alembic migration 作为后端启动前置条件；`/health` 只表示进程存活，`/readyz` 检查必需的 PostgreSQL 依赖。
+- PostgreSQL 是媒体副本、领域资源、任务状态和运行引用的事实源。
+- Redis 只用于短期协调，不保存唯一业务事实。
+- API 使用 Python 3.12；受 OASIS 0.2.5 约束的 worker 使用 Python 3.11。
+- worker 是同仓库的执行角色，不是额外项目或代码仓库。
+- Compose 先执行 Alembic migration，再启动 API、worker 和前端。
+- `/health` 表示进程存活；`/readyz` 检查必要数据库连接；platform readiness 还核验 worker 心跳及固定版本。
+- semantic readiness 另外要求近期 worker 同时标记 platform/semantic runtime ready，且所有可用 worker 只暴露一个一致的 model/config/prompt 身份；配置冲突时禁止新实验入队。
 
 ## 后端领域边界
 
-| 领域 | 职责 | 主要来源 |
+| 领域 | 当前职责 | 来源 |
 |---|---|---|
-| `media` | 来源、采集任务、规范化文章快照 | AgendaScope |
-| `evidence` | 内容寻址、证据包、来源与处理溯源 | AgendaScope + V2 |
-| `companies` | 企业主体、别名、提及、关系与消歧 | V2 新模型 |
-| `world` | 本体版本、不可变世界快照、切片与人口 | 原 AI Decision Center |
-| `scenarios` | Decision、基线、干预和实验规格 | 原 AI Decision Center |
-| `simulations` | MatrAIx / OASIS adapter 与统一结果契约 | MatrAIx + OASIS |
-| `reports` | 方案比较、限制、证据引用和导出 | 原 AI Decision Center + MatrAIx |
+| `media` | AgendaScope 数据导入、来源、文章、议题与地域聚合 | AgendaScope |
+| `evidence` | 通用证据修订摘要、正文内容地址和证据契约 | V2 整合层 |
+| `world_models` | 通用、版本化、不可变的文章证据快照 | 原 ADC + V2 整合层 |
+| `scenarios` | 基线、备选方案和有序干预规格 | 原 ADC |
+| `populations` | MatrAIx 数据集、Persona 档案与有序不可变 Cohort | MatrAIx + V2 整合层 |
+| `simulations` | MatrAIx/OASIS 契约、平台运行及统一结果边界 | MatrAIx + OASIS |
+| `semantic_experiments` | Cohort/Scenario 矩阵、语义 trial、观测事件与配对计数 | MatrAIx + OASIS + V2 整合层 |
+| `reports` | 真实 comparison、配对计数、限制和运行来源已接通；章节解释与导出待迁移 | 原 ADC + MatrAIx + V2 整合层 |
 
-adapter 只负责把稳定领域契约转换为外部引擎协议。业务 API 不暴露 AgendaScope、MatrAIx、MiroFish 的内部路由或存储模型。
+adapter 只负责将稳定领域契约转换为外部引擎协议。业务 API 不暴露四个来源项目各自的路由、进程状态或文件存储模型。
 
-## 统一产品工作区
-
-V2 不复制四个项目各自的菜单，也不以任一项目的前端作为母版。用户围绕同一个决策对象工作，页面和稳定资源 ID 贯穿完整链路：
+## 统一工作区
 
 ```text
-态势总览 / 媒体证据
-  → 企业与关系证据
-  → 世界模型与不可变快照
-  → 场景设计
-  → 人群实验 / 社会模拟
-  → 指标、解释与报告
+态势
+  ├── 真实地域媒体活动
+  ├── 热点议题
+  └── 最新证据
+
+Decision Workspace
+  ├── 媒体证据
+  ├── 冻结现实
+  └── 决策实验
+
+Run Studio
+  ├── Platform Smoke
+  │   └── 单方案平台接线、产物与限制
+  └── Semantic Experiment
+      ├── Scenario / Alternatives / Cohort / Seeds
+      ├── Readiness 与实验矩阵
+      └── 事件时间线、溯源、结果与计数比较
 ```
 
-| 工作区 | 稳定资源 | 融合能力 |
-|---|---|---|
-| 态势总览 | `MediaArticle`、`MediaTopic`、`MediaSource` | AgendaScope 真实媒体数据；MatrAIx 地球渲染原语改造成真实地域态势入口 |
-| 企业证据 | `Company`、`CompanyAlias`、`MediaArticle` | 企业名单、别名、字面名称命中候选及上下文；人工核验入口已与世界快照连接，自动语义消歧和 Evidence Bundle 待迁移 |
-| 世界模型 | `WorldModel`、`WorldSnapshot` | V2 不可变证据快照及追加版本已接通；原 Decision Center 本体、完整图谱、切片与人口语义以及 MiroFish Zep 实现待迁移 |
-| 场景实验 | `Scenario`、`PopulationSpec`、`SimulationRun` | 原 Decision Center 场景矩阵；MatrAIx Persona/Survey/Trial；OASIS 传播演化 |
-| 判断报告 | `MetricSet`、`Report` | 可复现指标、限制、证据引用、方案比较与访谈 |
-
-界面只把已经接通真实数据和运行时的能力标为可用。尚未迁移的工作区保留明确的迁移状态，不使用静态演示数据伪装成已完成能力。
+界面围绕同一条决策任务组织，不复制四套前端菜单。Run Studio 保留 Persona World、capability 驱动的 Task Gallery、Playground 与决策报告四个连续任务面；Playground 在同一个主入口内切换 platform/semantic 模式。语义模式只显示真实任务状态、真实事件、由事件确定性生成的互动图和经过契约核验的计数，不使用演示数据伪装报告。
 
 ## 当前纵向切片
 
-当前实现以 AgendaScope PostgreSQL 的导入快照为媒体输入，在同一前端、后端和 PostgreSQL 中提供四条相连链路：
-
 ```text
 AgendaScope PostgreSQL
-  → 只读、可重复读的幂等 upsert 导入
-  → V2 PostgreSQL media_* 表
-  ├→ /api/v2/media/* → 媒体总览、议题、来源、文章检索与地域地球
-  └→ Company + CompanyAlias
-       → 字面名称匹配
-       → /api/v2/companies/* → 待核验文章、上下文与字符位置
-       → 用户选择 1～50 篇并显式声明已人工确认
-       → 将已审阅完整证据修订 SHA-256 随选择提交，变化时 409 要求重新核验
-       → POST /api/v2/world-models
-       → 原子创建 WorldModel + WorldSnapshot v1
-       → /api/v2/world-models/* → 不可变详情与只追加的版本历史
-       → 选择一个已封存 WorldSnapshot 版本
-       → POST /api/v2/scenarios
-       → 无干预基线 + 1～5 个备选方案 + 有序 Reddit 初始帖子
-       → /api/v2/scenarios/* → 不可变实验档案与 scenario_sha256
-       → 选择一个备选方案和固定 seed
-       → POST /api/v2/simulation-runs/platform-smoke
-       → PostgreSQL durable queue → Python 3.11 OASIS worker
-       → OASIS 0.2.5 Reddit + SQLite + ordered manual CREATE_POST
-       → /api/v2/simulation-runs/* → 输入哈希、生命周期、产物哈希与限制
+  → REPEATABLE READ / READ ONLY 源事务
+  → 幂等导入 V2 media_* 表
+  → GET /api/v2/media/*
+  → 用户选择 1～50 篇任意文章并阅读确认
+  → POST /api/v2/world-models
+  → immutable WorldSnapshot + snapshot_sha256
+  → POST /api/v2/scenarios
+  → baseline + alternatives + ordered initial posts
+  → POST /api/v2/simulation-runs/platform-smoke
+  → PostgreSQL durable queue
+  → OASIS 0.2.5 Reddit + SQLite + manual CREATE_POST
+  → run lifecycle + input/artifact hashes + explicit limitations
+
+MatrAIx Persona dataset directory
+  → strict manifest / YAML validation
+  → immutable PersonaDataset + ordered Persona profiles
+  → explicit 1～100 member selection
+  → immutable content-addressed Cohort
+  → select a 1～8 Persona Cohort for semantic execution
+
+sealed Scenario + sealed Cohort
+  → POST /api/v2/semantic-experiments
+  → baseline + 1～2 alternatives × 1～2 seeds
+  → PostgreSQL durable trial matrix
+  → OASIS/CAMEL + configured OpenAI-compatible model
+  → typed round events + verified SQLite artifact
+  → paired observed-count comparison
 ```
 
-导入器保存源库在执行时可见记录的 upsert snapshot，不是双向同步、CDC 或源库删除镜像；源库删除不会自动传播到 V2。导入结束后，查询链路不要求 AgendaScope 服务常驻。
+### MatrAIx 人群上下文
 
-企业链路输出的是名称字面命中候选，而不是完成语义消歧后的企业事件。它可能包含同名、词内包含或上下文不指向目标企业的结果。世界模型工作台因此要求用户逐篇阅读上下文，并显式提交 `human_confirmed` 声明；这是当前进入快照的信任边界，不代表系统已经完成自动实体消歧。当前是单用户运行方式，确认声明尚未绑定登录操作者身份，不能作为多用户审计记录使用。
+导入器只接受显式配置并只读挂载的数据集目录。manifest、文件清单、档案字段、来源元数据和有序 Persona 摘要共同决定 `dataset_sha256`；同一内容地址幂等返回同一个数据集。API 只读取已封存的数据集。
 
-创建世界模型时，后端在一个数据库事务内创建持久模型和版本 1。快照把当时的企业规范名称与别名，以及所选报道的 `article_id`、来源、原始链接、标题、完整 `captured_text`、发布时间、捕获时间、国家、摘要复制到 PostgreSQL；每次名称命中的别名、表面文本、字符起止位置和上下文也按顺序冻结。读取模型或快照只查询 `world_*` 冻结表，不关联后来可能变化的 `companies` 或 `media_*` 记录。
+Cohort 由一个明确的数据集版本和 1～100 个有序 Persona 构成，`cohort_sha256` 覆盖数据集摘要、标题和每个成员的 Persona ID / profile 摘要。Dataset、Persona、Cohort 与成员均使用 draft→sealed 触发器保护，封存后拒绝修改、删除、追加和 `TRUNCATE`。
 
-每篇捕获文本具有 `captured_text_sha256`，整个冻结版本具有 `snapshot_sha256`。coverage 还返回 `evidence_revision_sha256`，覆盖标题、正文、摘要、URL、发布时间、抓取时间、地域及来源身份；前端提交的是用户实际审阅的这一完整修订摘要。后端先与 AgendaScope 导入器取得同一事务级协调锁，再按稳定顺序锁定文章和来源行并复算；任一字段变化时返回 `409`，不会把未审阅的新证据版本标成 `human_confirmed`。正文超过 2 MiB、单篇超过 200 次精确别名命中或单快照超过 2,000 次命中时明确返回 `422`。冻结正文另有只读 endpoint，可独立复算其摘要。`snapshot_sha256` 是冻结内容地址；`created_at` 作为独立审计元数据保存，不宣称属于该内容地址。
+封存 Cohort 可以含 1～100 个 Persona，但当前语义实验只接受其中人数不超过 8 的完整 Cohort，不在入队时隐式抽样或改写成员。platform-smoke 请求仍不包含 `cohort_id`；它与语义实验是 Run Studio 中相互独立的运行模式。
 
-向已有模型添加证据会创建下一个版本，不覆盖旧版本。Alembic `20260812_0002` 创建 `world_models`、`world_snapshots`、`world_snapshot_evidence` 和 `world_snapshot_mentions`；`20260812_0003` 建立基础不可变触发器；`20260812_0004` 增加 nullable draft 与原子 sealed 转换；`20260812_0005` 在升级前复算既有正文和快照摘要并拒绝损坏数据，同时要求父行只能以 draft 插入，且只有 1～50 篇连续证据、每篇至少一次连续命中时才能封存。后端只在同一事务写完父快照、证据和命中后封存；读取拒绝未封存 draft。封存后数据库拒绝父行修改或删除、子证据 `INSERT`/`UPDATE`/`DELETE`，以及三张冻结表的 `TRUNCATE`。
+### 通用证据修订
 
-Scenario 只引用一个明确的已封存快照，不跟随模型的最新版本漂移。Alembic `20260812_0006` 创建规范化的 `scenarios`、`scenario_variants` 和 `scenario_interventions`，并在数据库中核验快照归属、内容摘要、版本、冻结企业名称及证据数量；父记录只能由完整 draft 封存，封存后父子表和 `TRUNCATE` 都受保护。读取 list/detail 时均从三表重建有序语义并复算 `scenario_sha256`。`20260812_0007` 在升级前拒绝重复内容地址，再建立唯一约束；API 使用同一内容摘要的事务级 advisory lock，使相同规格的重复 POST 返回同一资源。
+媒体 article response 提供 `evidence_revision_sha256`。摘要覆盖将被快照冻结、且可能在后续导入中变化的字段：标题、正文、摘要、URL、发布时间、抓取时间、地域、来源 ID 和来源名称。
 
-本地真实验收状态为 1 个华为模型、4 个封存版本和 1 个绑定版本 4 的封存 Scenario；版本 4 通过完整证据修订摘要契约创建并完成正文摘要独立复算，Scenario 内容地址为 `d11f119baddc9e3541ee277cdfb01456f60ddee64f09b312d3a70f28729e431b`。0005 已在真实既有库上通过 preflight；0006 已实测拒绝父行修改、封存后子行追加及 `TRUNCATE`；0007 已应用，并实测 5 个并发相同 POST 全部返回同一个 Scenario ID 和内容摘要。OASIS 平台烟雾模式只验证真实引擎平台、SQLite 和手工动作执行，不产生受众代理行为、社会传播结果或方案判断。地域地球目前只迁入 MatrAIx 渲染原语并连接真实媒体聚合；MatrAIx Persona/Survey/Trial 与需要真实 LLM 和受权 Persona 的 OASIS 语义运行仍待接通。当前数据也不构成全国企业主体库、全国政策库或全量实时媒体库。
+创建快照时，前端提交用户实际阅读版本的摘要。后端先与 AgendaScope importer 获取同一事务级 advisory lock，再锁定文章和来源、重新计算摘要；不一致时返回 `409`。这防止用户确认后、提交前文章发生变化而被静默冻结。
 
-## 能力迁移边界
+### 不可变世界快照
 
-### AgendaScope
+快照复制来源名称、原始链接、标题、完整捕获文本、发布时间、捕获时间、国家、摘要和正文 SHA-256。读取世界模型只访问冻结表，不关联后来变化的 `media_*` 记录。
 
-迁移采集流水线、来源治理、文章正文、去重、聚类、实体提取、议程检测和证据关系。其独立前端、用户系统、安装向导、许可管理与 Open API 不进入 V2。现有人物/机构枚举不能承载企业主体，企业、品牌、母子公司与别名消歧使用 V2 的新模型。现有 JSONB 与归一化 Topic 双轨也不会原样拼接迁移历史。
+创建与追加版本均在一个事务中完成 draft→sealed。数据库要求证据数量为 1～50、位置连续、文章不重复，并在封存后拒绝父子记录修改、删除、追加和 `TRUNCATE`。冻结正文有独立只读 endpoint，可由客户端复算 `captured_text_sha256`。
 
-### 原 AI Decision Center
+### 决策实验
 
-已落地 `WorldModel`、不可变 `WorldSnapshot` 证据基线，以及绑定精确快照版本的 baseline/alternative/initial-post Scenario；继续迁移 Ontology、完整关系图谱、World Slice、Population、Run、多样本比较、指标与报告的领域语义。Flask、SQLite registry、文件任务状态、进程内任务字典、daemon thread 和旧 Vue 界面不进入 V2。
+Scenario 引用一个明确的封存快照，不跟随 WorldModel 最新版本漂移。一个规格包含无动作 baseline、1～5 个 alternatives，以及每个方案 1～20 条 `initial_post`。actor 是中性的 `scenario_actor`，表示平台烟测使用的 synthetic actor，不代表企业或现实人物。
 
-### MatrAIx
+`scenario_sha256` 只覆盖有序实验语义及快照引用；相同内容地址通过唯一约束和事务级 advisory lock 去重。网络超时后重复提交不会创建另一份相同规格。
 
-迁移 Persona 数据协议、确定性抽样、Cohort、Survey/Trial、聚合结果，以及工作台、Persona 选择、运行与报告的交互语义。Harbor 和现有线程/文件执行设施不作为 V2 事实源；Persona 数据集必须逐项确认授权，不能因为代码使用 MIT 许可就默认数据可商用。
+### OASIS platform smoke
 
-### MiroFish 与 OASIS
+控制面将选定方案复制成封存运行输入，worker 以 synthetic scenario actor 执行真实 OASIS Reddit 环境和 SQLite 持久化。输入哈希、运行生命周期、产物哈希、文件大小以及 user/post/trace 数量都会被核验。
 
-OASIS 保留为社会关系与传播演化引擎。当前已经先用其公开 API 接通 Reddit 平台、SQLite 和手工动作 smoke，并用隔离 worker 解决 Python 版本冲突；这不等于语义传播已经完成。MiroFish 是冻结的实现来源与参考基线，不作为运行中的第四个项目，也不进行双向整仓同步。后续上游修复只以经过许可、行为和测试审查的补丁进入 V2。
+该模式固定使用 CAMEL `StubModel`，`semantic_run_ready=false`。它不能输出受众演化、传播预测、方案优劣或商业结论。
 
-## 实现边界与后续顺序
+### OASIS 有界语义实验
 
-| 范围 | 当前状态 |
+`SemanticExperiment` 始终包含 Scenario baseline，并要求显式选择 1～2 个 alternatives、1～2 个不重复的 uint32 seeds、1～3 轮和每轮 15～240 分钟。总预算按 `(1 + alternatives) × seeds × rounds × persona_count` 计算，不得超过 96 persona-rounds；干预的 `offset_minutes` 不得超过实验总时长。控制面将每个 variant/seed 展开为独立持久 trial，一次提交后不会随 Scenario、Cohort 或 worker 配置漂移。
+
+worker 仅加载被选 Cohort 的封存 Persona，按 `matraix-semantic-profile/v1` 从档案中确定性投影最多 40 个有信息属性。场景干预由 synthetic scenario actor 在对应轮次发布；每个 Persona 每轮执行一次真实 LLMAction。公开事件只有 `create_post`、`create_comment`、`like_post`、`dislike_post` 和 `do_nothing`；每轮事件先追加到 PostgreSQL，再推进 `current_round`。成功结果另外绑定 OASIS/CAMEL/model/config/prompt 身份、SQLite 产物摘要和经核验的计数。
+
+对比固定输出 `observed_action_count`、`authored_content_count`、`reaction_count` 和 `do_nothing_count`。alternative 只与同一 seed 下成功的 baseline 配对，并报告观测值与差值的 mean、标准差和样本数。该结果是 synthetic bounded observations，不推断 stance、reach、persuasion、forecast、商业影响或 decision verdict；外部 provider 的非确定性也意味着 seed 不能保证 provider-level reproducibility。
+
+Run Studio 使用以下 API：
+
+- `POST/GET /api/v2/semantic-experiments`：入队或列出实验；
+- `GET /api/v2/semantic-experiments/{experiment_id}`：读取矩阵与 trial 状态；
+- `GET /api/v2/semantic-experiments/{experiment_id}/comparison`：读取观测计数和按 seed 配对的差值；
+- `GET /api/v2/semantic-trials/{trial_id}/events`：按 sequence 增量读取类型化事件；
+- `GET /api/v2/simulations/oasis/semantic-readiness`：读取 worker、版本和不含密钥的配置身份。
+
+语义 worker 的 OpenAI-compatible 连接只由 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME` 三项显式配置。三项全空会禁用语义执行但保留 platform smoke；部分配置会让 worker 明确启动失败。完整配置不会立即被视为 ready：worker 先对真实 provider 发起一次有界的 `do_nothing` tool-call 启动探测，严格核验响应只有一个预期工具调用；探测成功后才更新为 semantic-ready heartbeat，探测失败则在有界 provider 重试后使 worker 启动失败。API key 不进入 heartbeat、内容摘要或业务表。
+
+## 数据库谱系
+
+Core 分支使用 `20260812_core_0001` 至 `20260813_core_0016` 的独立 Alembic revision 链，并使用独立 Compose project/volume。`20260812_core_0010` 增加 semantic experiment/variant/trial/event 表和 worker 语义配置心跳字段；`20260812_core_0011` 增加 evidence-backed semantic world graph 队列、节点、关系与引用表；`20260812_core_0012` 增加只追加的 Decision Thread 与资源修订绑定；`20260812_core_0013` 增加内容寻址、固定四章节且封存后不可修改的 Decision Report；`20260813_core_0014` 增加证据约束的报告问答队列，`20260813_core_0015` 无损加固问题内容寻址、快照/图配置绑定和回答长度边界，`20260813_core_0016` 增加 Survey 实验、逐 Persona trial、typed answers 与独立 worker readiness。这样已运行企业版 `20260812_0008` 的数据库不会被误认为符合 Core schema。
+
+此分支不提供企业版数据到 Core schema 的无损迁移；两者是并行产品边界。需要导入媒体数据时，应建立 Core 数据库并重新运行 AgendaScope importer。
+
+## 明确不包含的企业扩展
+
+- `companies` / `company_aliases` 表与 API；
+- 企业规范名称、别名冲突和名称命中算法；
+- `/api/v2/companies/{id}/coverage`；
+- 企业身份、命中别名或命中字符位置在 WorldSnapshot 中的冻结；
+- Scenario/Run 中的 `company_name` 或 `snapshot_company` actor；
+- 股权、母子公司、供应链、产业链、人物任职、风险事件和 GTV。
+
+文章中出现企业名称只是原始媒体内容。通用全文搜索不会将其提升为已消歧企业实体。
+
+## 世界图谱 Provider 决策
+
+Zep Cloud 不再是目标架构的必选依赖。默认实现使用现有 PostgreSQL 保存版本化的图空间、节点、关系和证据引用；每个事实必须回指 WorldSnapshot 与冻结文章，图版本封存后保持不可变。邻居查询和证据过滤先使用 SQL，确有语义召回需求时再增加向量索引。
+
+当前最小切片已经提供 `GET /api/v2/world-models/{model_id}/snapshots/{snapshot_id}/evidence-graph`：它直接从已封存快照确定性生成 `evidence-world-graph/v1`，只包含 Snapshot、Article、Source、Country 与 `contains_evidence`、`published_by`、`located_in` 直接关系，并返回 `graph_sha256`。这是零额外服务的 PostgreSQL projection，不进行实体推断；MiroFish 本体与语义关系进入后续持久 GraphStore 版本。
+
+存储与展示保持解耦：`GraphStore` 业务接口面向节点、关系、版本和 evidence reference，默认由 PostgreSQL 实现；阿里云部署可以继续使用托管 PostgreSQL，图规模或在线多跳查询达到明确瓶颈后，可增加兼容 Apache TinkerPop Gremlin 的阿里云 GDB 实现。ECharts Graph 或现有 SVG Canvas 只消费统一 API 的 nodes/edges，不承担实体抽取、持久化、检索或版本管理。Lindorm 只作为海量全文/向量融合检索的后续可选 Provider，不进入第一阶段必需拓扑。
+
+当前实现由通过真实 tool-call 启动探测的千问 Worker 消费 `semantic_world_graphs` 队列，从冻结正文提取实体与有向关系；模型输出必须引用快照内文章的逐字文本，Worker 与数据库触发器共同校验 article identity、字符偏移、结构完整性和 canonical graph hash。`GET /api/v2/world-graphs/{graph_id}/slice` 在已封存图上提供确定性的有向 1～3 跳邻域，支持双向、向外、向内和 2～100 节点上限；响应保留原节点/关系位置、证据和 graph hash，截断必须显式返回。`GET /api/v2/world-graphs/{graph_id}/evidence-timeline` 按 WorldSnapshot 中冻结的 `published_at` 组织被引用节点与关系，契约固定声明 `evidence_publication_time_not_fact_validity`，不能当作事实有效期。原 Zep adapter 仅保留为可选兼容层，不允许其 Cloud ID 成为 WorldModel、Scenario、Run 或 Report 的业务主键。事实有效期与混合检索仍需后续在统一 GraphStore 契约上实现。
+
+## 后续整合顺序
+
+| 范围 | 状态 |
 |---|---|
-| Foundation | React/FastAPI、严格领域契约、PostgreSQL/Redis 单栈、Alembic migration、存活与就绪检查已接通 |
-| 媒体证据 | AgendaScope 导入快照、来源/文章/议题查询、媒体工作台和 MatrAIx 地球渲染原语已接通 |
-| 企业解释 | 企业与别名、字面名称命中候选、人工核验入口已接通；自动实体消歧、事件、关系证据和 Evidence Bundle 待实现 |
-| 世界快照 | 世界模型界面、模型与 v1 原子创建、冻结证据读取与摘要复算、修订冲突保护、追加版本、SHA-256 内容地址和数据库事务封存已接通；确认声明尚未绑定登录主体 |
-| 决策实验 | 选择任意封存快照、无干预基线、1～5 个备选方案、初始帖子、Scenario 内容地址、重复 POST 去重和数据库封存已接通 |
-| 世界与运行 | OASIS 0.2.5 平台/SQLite/手工动作 smoke、持久队列、worker 心跳与运行档案已接通；完整本体/图谱/Zep、Persona/Cohort、MatrAIx Trial 和 OASIS 语义 Run 待实现 |
-| 判断闭环 | 可复现指标、证据化解释、方案比较、报告与历史回测待实现 |
+| Foundation | React/FastAPI、严格契约、PostgreSQL/Redis、Alembic、健康检查与单栈已接通 |
+| AgendaScope | 媒体导入、来源/文章/议题查询和真实地域地球已接通 |
+| World | 通用证据选择、修订冲突保护、不可变快照、版本与正文读取已接通 |
+| Scenario | 基线/备选、内容寻址、去重和封存已接通 |
+| MatrAIx Population | Dataset / Persona 严格导入、内容寻址、Cohort 选择与封存已接通 |
+| OASIS Platform | Reddit 平台、SQLite、手工动作、队列、worker 心跳和运行档案已接通 |
+| Semantic Experiment | 有界 Cohort/Scenario 矩阵、真实 LLM 动作、类型化事件和观测计数配对比较已接通 |
+| MiroFish World Graph | PostgreSQL 直接证据图、千问 evidence-backed 语义实体关系、有向 World Slice 与证据发布时间线已接通；事实有效期、混合检索待实现，Zep 仅为可选 Provider |
+| MatrAIx Trial / Harbor | Survey 已接通；通用 Trial、Harbor、trajectory 与更多任务型聚合仍待迁移 |
+| Decision / Thread | 持久任务、只追加修订以及 World→Scenario→Cohort→Run→Report 跨资源深链已接通；协作权限与审计待实现 |
+| 判断闭环 | 持久章节式 Findings、Markdown 导出、来源哈希与第一条证据约束报告追问已接通；完整 ReportAgent、角色访谈、历史回测与人工判断待迁移 |
+| AgendaScope 持续摄取 | CDC、删除传播、连续调度和导入任务档案待实现 |
+| Policy | 政策来源、文件、效力/时间和与世界快照的证据契约待实现 |
+| 生产运行治理 | 认证/RBAC/审计、取消与重试、水平扩展、产物下载与保留策略待实现 |
 
-后续仍以真实纵向切片验收；未迁移能力在 API 与界面中必须明确标记，不使用占位成功状态掩盖缺失。
+后续仍以真实纵向切片验收；未接通能力必须在 API 和界面中明确标记，不能用静态成功状态掩盖缺失。

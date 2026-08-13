@@ -17,7 +17,7 @@ PLATFORM_SMOKE_LIMITATIONS = (
 
 OASIS_READINESS_LIMITATIONS = (
     "Readiness proves that a correctly pinned worker recently reached PostgreSQL.",
-    "reddit_manual_smoke exercises one controllable company actor and manual CREATE_POST only.",
+    "reddit_manual_smoke exercises one synthetic scenario actor and manual CREATE_POST only.",
     "Semantic simulation remains unavailable: no LLM inference, audience agents, social "
     "evolution, comparison, or decision conclusion is produced.",
 )

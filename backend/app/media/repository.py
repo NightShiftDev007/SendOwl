@@ -10,6 +10,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
+from app.evidence.revisions import calculate_evidence_revision_sha256
 from app.media.contracts import (
     MediaArticleFacets,
     MediaArticlesResponse,
@@ -112,8 +113,12 @@ def article_projection(representative_topic) -> Select[tuple[object, ...]]:
         select(
             MediaArticleRecord.id,
             MediaArticleRecord.title,
+            MediaArticleRecord.content,
+            MediaArticleRecord.summary,
+            MediaArticleRecord.source_id,
             MediaSourceRecord.name.label("source_name"),
             MediaArticleRecord.published_at,
+            MediaArticleRecord.crawled_at,
             func.coalesce(
                 func.nullif(
                     func.btrim(func.substr(MediaArticleRecord.summary, 1, EXCERPT_LENGTH)),
@@ -142,7 +147,28 @@ def article_projection(representative_topic) -> Select[tuple[object, ...]]:
 def article_summary(row: object) -> MediaArticleSummary:
     """Validate one database projection at the domain boundary."""
     mapping = row._mapping
-    return MediaArticleSummary.model_validate(dict(mapping), strict=True)
+    return MediaArticleSummary(
+        id=mapping["id"],
+        title=mapping["title"],
+        source_name=mapping["source_name"],
+        published_at=mapping["published_at"],
+        excerpt=mapping["excerpt"],
+        original_url=mapping["original_url"],
+        country_code=mapping["country_code"],
+        topic_id=mapping["topic_id"],
+        topic=mapping["topic"],
+        evidence_revision_sha256=calculate_evidence_revision_sha256(
+            mapping["title"],
+            mapping["content"],
+            mapping["summary"],
+            mapping["original_url"],
+            mapping["published_at"],
+            mapping["crawled_at"],
+            mapping["country_code"],
+            mapping["source_id"],
+            mapping["source_name"],
+        ),
+    )
 
 
 def _classified_country_topic_counts(

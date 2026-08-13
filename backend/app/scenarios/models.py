@@ -40,7 +40,6 @@ class ScenarioRecord(ApplicationBase):
     )
     snapshot_version: Mapped[int] = mapped_column(Integer, nullable=False)
     snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    snapshot_company_name: Mapped[str] = mapped_column(String(300), nullable=False)
     snapshot_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False)
     scenario_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -59,11 +58,6 @@ class ScenarioRecord(ApplicationBase):
         CheckConstraint(
             "snapshot_sha256 ~ '^[a-f0-9]{64}$'",
             name="ck_scenarios_snapshot_sha256",
-        ),
-        CheckConstraint(
-            "length(btrim(snapshot_company_name)) BETWEEN 1 AND 300 "
-            "AND snapshot_company_name !~ E'[\\r\\n]'",
-            name="ck_scenarios_snapshot_company_name",
         ),
         CheckConstraint(
             "snapshot_evidence_count BETWEEN 1 AND 50",
@@ -138,7 +132,7 @@ class ScenarioInterventionRecord(ApplicationBase):
         ),
         CheckConstraint("position BETWEEN 0 AND 19", name="ck_scenario_interventions_position"),
         CheckConstraint("kind = 'initial_post'", name="ck_scenario_interventions_kind"),
-        CheckConstraint("actor = 'snapshot_company'", name="ck_scenario_interventions_actor"),
+        CheckConstraint("actor = 'scenario_actor'", name="ck_scenario_interventions_actor"),
         CheckConstraint("channel = 'reddit'", name="ck_scenario_interventions_channel"),
         CheckConstraint(
             "length(btrim(content)) BETWEEN 1 AND 4000",

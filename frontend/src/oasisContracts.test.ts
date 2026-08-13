@@ -35,7 +35,6 @@ const validScenario = {
   variant_name: "主动公开供应链进展",
   world_snapshot_id: worldSnapshotId,
   snapshot_sha256: snapshotDigest,
-  company_name: "星河科技有限公司",
 };
 
 const validSummary = {
@@ -101,6 +100,12 @@ describe("OASIS platform-smoke contracts", () => {
       oasisReadinessSchema.safeParse({
         ...validReadiness,
         semantic_run_ready: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      platformSmokeRunSummarySchema.safeParse({
+        ...validSummary,
+        scenario: { ...validScenario, company_name: "removed" },
       }).success,
     ).toBe(false);
   });

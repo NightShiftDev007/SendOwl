@@ -50,6 +50,7 @@ def _valid_article_values() -> dict[str, object]:
         "country_code": "CN",
         "topic_id": uuid4(),
         "topic": "季度业绩",
+        "evidence_revision_sha256": "a" * 64,
     }
 
 

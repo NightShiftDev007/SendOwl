@@ -1,11 +1,9 @@
-"""Pure builders connecting collection output to media, evidence, and company contracts."""
+"""Pure builders connecting collection output to generic media evidence."""
 
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.companies.contracts import CompanyMention, CompanyProfile
 from app.evidence.contracts import EvidenceItem, EvidenceKind
-from app.media.collection.aliases import find_company_mentions
 from app.media.collection.extraction import ExtractedArticleContent
 from app.media.collection.urls import calculate_sha256, calculate_url_sha256, normalize_url
 from app.media.contracts import MediaArticle, MediaSource
@@ -21,14 +19,6 @@ class CollectedArticle:
     content_sha256: str
     summary: str
     extraction: ExtractedArticleContent
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceBuildResult:
-    """One evidence item and the exact company mentions that justify its company links."""
-
-    evidence_item: EvidenceItem
-    company_mentions: tuple[CompanyMention, ...]
 
 
 def build_collected_article(
@@ -71,44 +61,18 @@ def build_collected_article(
     )
 
 
-def _ordered_company_ids(mentions: tuple[CompanyMention, ...]) -> tuple[str, ...]:
-    ordered_ids: list[str] = []
-    seen_ids: set[str] = set()
-    for mention in mentions:
-        if mention.company_id in seen_ids:
-            continue
-        seen_ids.add(mention.company_id)
-        ordered_ids.append(mention.company_id)
-    return tuple(ordered_ids)
-
-
 def build_evidence_item(
     evidence_id: str,
     collected_article: CollectedArticle,
-    companies: tuple[CompanyProfile, ...],
-) -> EvidenceBuildResult:
-    """Build content-addressed evidence and deterministic company mention ranges."""
+) -> EvidenceItem:
+    """Build one content-addressed evidence item from a collected article."""
     if not isinstance(collected_article, CollectedArticle):
         raise TypeError(
             f"collected_article must be CollectedArticle, got {type(collected_article).__name__}"
         )
-    if not isinstance(companies, tuple) or any(
-        not isinstance(company, CompanyProfile) for company in companies
-    ):
-        raise TypeError("companies must be a tuple of CompanyProfile values")
-    mentions = find_company_mentions(
-        content=collected_article.article.content,
-        evidence_id=evidence_id,
-        companies=companies,
-    )
-    evidence_item = EvidenceItem(
+    return EvidenceItem(
         evidence_id=evidence_id,
         kind=EvidenceKind.MEDIA_ARTICLE,
         article=collected_article.article,
         content_sha256=collected_article.content_sha256,
-        company_ids=_ordered_company_ids(mentions),
-    )
-    return EvidenceBuildResult(
-        evidence_item=evidence_item,
-        company_mentions=mentions,
     )

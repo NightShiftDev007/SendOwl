@@ -17,6 +17,8 @@ from oasis_worker.queue_contracts import (
     NormalizedSuccess,
     QueuePost,
 )
+from oasis_worker.semantic_contracts import SemanticRuntimeConfig
+from oasis_worker.survey_contracts import SurveyRuntimeConfig
 
 ENGINE = "camel-oasis"
 ENGINE_VERSION = "0.2.5"
@@ -57,6 +59,8 @@ def update_heartbeat(
     worker_id: str,
     started_at: datetime,
     ready: bool,
+    semantic_config: SemanticRuntimeConfig | None,
+    survey_config: SurveyRuntimeConfig | None,
 ) -> None:
     now = datetime.now(UTC)
     with connection.cursor() as cursor:
@@ -64,14 +68,26 @@ def update_heartbeat(
             """
             INSERT INTO simulation_worker_heartbeats (
                 worker_id, engine, engine_version, camel_version, mode,
-                platform_runtime_ready, started_at, last_seen_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                platform_runtime_ready, semantic_runtime_ready, semantic_model_name,
+                semantic_config_sha256, semantic_prompt_schema_version,
+                survey_runtime_ready, survey_model_name, survey_config_sha256,
+                survey_prompt_schema_version,
+                started_at, last_seen_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (worker_id) DO UPDATE SET
                 engine = EXCLUDED.engine,
                 engine_version = EXCLUDED.engine_version,
                 camel_version = EXCLUDED.camel_version,
                 mode = EXCLUDED.mode,
                 platform_runtime_ready = EXCLUDED.platform_runtime_ready,
+                semantic_runtime_ready = EXCLUDED.semantic_runtime_ready,
+                semantic_model_name = EXCLUDED.semantic_model_name,
+                semantic_config_sha256 = EXCLUDED.semantic_config_sha256,
+                semantic_prompt_schema_version = EXCLUDED.semantic_prompt_schema_version,
+                survey_runtime_ready = EXCLUDED.survey_runtime_ready,
+                survey_model_name = EXCLUDED.survey_model_name,
+                survey_config_sha256 = EXCLUDED.survey_config_sha256,
+                survey_prompt_schema_version = EXCLUDED.survey_prompt_schema_version,
                 started_at = EXCLUDED.started_at,
                 last_seen_at = EXCLUDED.last_seen_at
             """,
@@ -82,6 +98,14 @@ def update_heartbeat(
                 CAMEL_VERSION,
                 MODE,
                 ready,
+                semantic_config is not None,
+                semantic_config.model_name if semantic_config is not None else None,
+                semantic_config.config_sha256 if semantic_config is not None else None,
+                (semantic_config.prompt_schema_version if semantic_config is not None else None),
+                survey_config is not None,
+                survey_config.model_name if survey_config is not None else None,
+                survey_config.config_sha256 if survey_config is not None else None,
+                survey_config.prompt_schema_version if survey_config is not None else None,
                 started_at,
                 now,
             ),
@@ -159,18 +183,54 @@ def claim_next_run(
     connection: Connection[dict[str, object]],
     worker_id: str,
 ) -> ClaimedRun | None:
+    head = platform_smoke_queue_head(connection)
+    if head is None:
+        connection.commit()
+        return None
+    return claim_platform_smoke_run(connection, worker_id, head[0])
+
+
+def platform_smoke_queue_head(
+    connection: Connection[dict[str, object]],
+) -> tuple[UUID, datetime] | None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, created_at
+            FROM simulation_runs
+            WHERE status = 'queued' AND input_sealed_at IS NOT NULL
+            ORDER BY created_at, id
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+    if row is None:
+        return None
+    run_id = row["id"]
+    if not isinstance(run_id, UUID):
+        raise RuntimeError("queued simulation run id is not a PostgreSQL UUID")
+    created_at = row["created_at"]
+    if not isinstance(created_at, datetime):
+        raise RuntimeError("queued simulation run created_at is not a PostgreSQL timestamp")
+    return run_id, created_at
+
+
+def claim_platform_smoke_run(
+    connection: Connection[dict[str, object]],
+    worker_id: str,
+    selected_run_id: UUID,
+) -> ClaimedRun | None:
     with connection.cursor() as cursor:
         cursor.execute(
             """
             SELECT id, mode, scenario_id, scenario_sha256, variant_id, variant_name,
-                   world_snapshot_id, snapshot_sha256, company_name, seed,
+                   world_snapshot_id, snapshot_sha256, seed,
                    actor_user_name, actor_name, actor_bio, input_sha256
             FROM simulation_runs
-            WHERE status = 'queued' AND input_sealed_at IS NOT NULL
-            ORDER BY created_at, id
+            WHERE id = %s AND status = 'queued' AND input_sealed_at IS NOT NULL
             FOR UPDATE SKIP LOCKED
-            LIMIT 1
-            """
+            """,
+            (selected_run_id,),
         )
         selected = cursor.fetchone()
         if selected is None:
@@ -293,14 +353,28 @@ def artifact_directory(artifact_root: Path, run_id: UUID) -> Path:
     return artifact_root / str(run_id)
 
 
-def _derive_actor_user_name(world_snapshot_id: UUID, company_name: str) -> str:
-    material = f"{world_snapshot_id}\0{company_name}".encode()
-    return f"company_{hashlib.sha256(material).hexdigest()[:16]}"
+def _actor_digest(scenario_id: UUID, variant_id: UUID) -> str:
+    return hashlib.sha256(f"{scenario_id}\0{variant_id}".encode()).hexdigest()[:16]
+
+
+def _derive_actor_user_name(scenario_id: UUID, variant_id: UUID) -> str:
+    return f"scenario_{_actor_digest(scenario_id, variant_id)}"
+
+
+def _derive_actor_name(scenario_id: UUID, variant_id: UUID) -> str:
+    return f"Scenario actor {_actor_digest(scenario_id, variant_id)}"
+
+
+def _derive_actor_bio(scenario_id: UUID, variant_id: UUID) -> str:
+    return (
+        f"Synthetic actor compiled from Scenario {scenario_id} variant {variant_id}. "
+        "Manual OASIS platform smoke only."
+    )
 
 
 def _canonical_input_json(run: ClaimedRun) -> str:
     payload = {
-        "schema_version": "oasis-platform-smoke/v1",
+        "schema_version": "oasis-platform-smoke/v2",
         "mode": run.mode,
         "scenario": {
             "id": str(run.scenario_id),
@@ -309,7 +383,6 @@ def _canonical_input_json(run: ClaimedRun) -> str:
             "variant_name": run.variant_name,
             "world_snapshot_id": str(run.world_snapshot_id),
             "snapshot_sha256": run.snapshot_sha256,
-            "company_name": run.company_name,
         },
         "seed": run.seed,
         "actor": {
@@ -337,12 +410,9 @@ def _canonical_input_json(run: ClaimedRun) -> str:
 
 
 def _validate_claim_integrity(run: ClaimedRun) -> None:
-    expected_user_name = _derive_actor_user_name(run.world_snapshot_id, run.company_name)
-    expected_actor_name = run.company_name[:200]
-    expected_actor_bio = (
-        f"Frozen company actor from WorldSnapshot {run.world_snapshot_id}. "
-        "Manual OASIS platform smoke only."
-    )
+    expected_user_name = _derive_actor_user_name(run.scenario_id, run.variant_id)
+    expected_actor_name = _derive_actor_name(run.scenario_id, run.variant_id)
+    expected_actor_bio = _derive_actor_bio(run.scenario_id, run.variant_id)
     if run.actor_user_name != expected_user_name:
         raise RuntimeError(f"simulation run {run.id} has an invalid derived actor user_name")
     if run.actor_name != expected_actor_name or run.actor_bio != expected_actor_bio:

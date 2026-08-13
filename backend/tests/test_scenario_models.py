@@ -22,7 +22,6 @@ def _scenario_record() -> ScenarioRecord:
         world_snapshot_id=uuid4(),
         snapshot_version=1,
         snapshot_sha256="a" * 64,
-        snapshot_company_name="Acme",
         snapshot_evidence_count=1,
         scenario_sha256="b" * 64,
         created_at=datetime(2026, 8, 12, tzinfo=UTC),

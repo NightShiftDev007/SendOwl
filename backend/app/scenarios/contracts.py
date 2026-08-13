@@ -32,15 +32,6 @@ type VariantName = Annotated[
         strip_whitespace=True,
     ),
 ]
-type SnapshotCompanyName = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=300,
-        pattern=r"^[^\r\n]+$",
-        strip_whitespace=True,
-    ),
-]
 type DecisionQuestion = Annotated[
     str,
     StringConstraints(min_length=1, max_length=2000, strip_whitespace=True),
@@ -57,7 +48,7 @@ type VariantPosition = Annotated[int, Field(ge=0, le=5)]
 type InterventionPosition = Annotated[int, Field(ge=0, le=19)]
 type OffsetMinutes = Annotated[int, Field(ge=0, le=1440)]
 type InterventionKind = Literal["initial_post"]
-type InterventionActor = Literal["snapshot_company"]
+type InterventionActor = Literal["scenario_actor"]
 type InterventionChannel = Literal["reddit"]
 
 
@@ -159,7 +150,6 @@ class ScenarioSnapshotRef(ContractModel):
     world_snapshot_id: UUID
     version: Annotated[int, Field(ge=1)]
     snapshot_sha256: Sha256Digest
-    company_name: SnapshotCompanyName
     evidence_count: Annotated[int, Field(ge=1, le=50)]
 
 

@@ -16,7 +16,11 @@ RUN groupadd --gid 10002 worker \
 WORKDIR /worker
 
 COPY oasis_worker/pyproject.toml oasis_worker/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends gcc libc6-dev \
+    && uv sync --frozen --no-dev --no-install-project \
+    && apt-get purge --yes --auto-remove gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY oasis_worker/src ./src
 RUN uv sync --frozen --no-dev

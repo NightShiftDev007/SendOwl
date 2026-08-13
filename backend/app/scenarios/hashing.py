@@ -24,6 +24,7 @@ def canonical_scenario_json(
     if any(not 1 <= len(item.interventions) <= 20 for item in alternatives):
         raise ValueError("each alternative must contain 1..20 interventions")
     payload = {
+        "schema_version": "scenario/v2",
         "title": title,
         "decision_question": decision_question,
         "snapshot": {
@@ -31,7 +32,6 @@ def canonical_scenario_json(
             "world_snapshot_id": str(snapshot.world_snapshot_id),
             "version": snapshot.version,
             "snapshot_sha256": snapshot.snapshot_sha256,
-            "company_name": snapshot.company_name,
             "evidence_count": snapshot.evidence_count,
         },
         "baseline": {

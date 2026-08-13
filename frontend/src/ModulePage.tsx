@@ -41,7 +41,7 @@ export function ModulePage({ definition, navigationItem }: ModulePageProps): JSX
       <aside className="implementation-note" aria-label="实现说明">
         <strong>迁移说明</strong>
         <p>
-          这里不会嵌入原项目页面。能力将围绕企业决策领域重新组织，并使用统一的证据、运行和结果契约。
+          这里不会嵌入原项目页面。能力沿统一的证据、世界快照、运行和结果契约组织。
         </p>
       </aside>
     </div>

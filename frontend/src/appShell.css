@@ -209,7 +209,7 @@
 
 .product-task-rail ol {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
   width: min(100% - 36px, 820px);
   min-height: var(--product-task-rail-height);
   margin: 0 auto;
@@ -415,7 +415,7 @@
   }
 
   .product-task-rail ol {
-    grid-template-columns: repeat(4, 118px);
+    grid-template-columns: repeat(3, 118px);
     width: max-content;
     min-width: 100%;
     padding: 0 12px;

@@ -1,0 +1,755 @@
+.product-main[data-section="personas"] {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: oklch(0.115 0.018 252);
+}
+
+.persona-world-page {
+  --pw-bg: oklch(0.115 0.018 252);
+  --pw-surface: oklch(0.145 0.019 252);
+  --pw-raised: oklch(0.175 0.021 252);
+  --pw-line: oklch(0.285 0.02 252);
+  --pw-soft-line: oklch(0.225 0.018 252);
+  --pw-ink: oklch(0.94 0.009 245);
+  --pw-muted: oklch(0.69 0.02 245);
+  --pw-faint: oklch(0.54 0.018 245);
+  --pw-cyan: oklch(0.76 0.12 205);
+  --pw-mint: oklch(0.78 0.12 158);
+  --pw-amber: oklch(0.79 0.12 78);
+
+  min-height: calc(100vh - 104px);
+  color: var(--pw-ink);
+  background: var(--pw-bg);
+}
+
+.persona-world-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  align-items: end;
+  gap: 32px;
+  padding: 30px clamp(22px, 3vw, 48px);
+  border-bottom: 1px solid var(--pw-line);
+}
+
+.persona-world-hero > div:first-child > span,
+.persona-world-left section > header > span,
+.persona-world-left section > header div > span,
+.persona-world-center > header span,
+.persona-world-inspector > header > span,
+.persona-world-inspector-empty > span,
+.persona-world-freeze > header > span,
+.persona-world-cohort-detail > header > span {
+  color: var(--pw-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.09em;
+}
+
+.persona-world-hero h2 {
+  max-width: 800px;
+  margin: 8px 0 0;
+  color: var(--pw-ink);
+  font-size: 1.65rem;
+  line-height: 1.18;
+  text-wrap: balance;
+}
+
+.persona-world-hero > div:first-child > p {
+  max-width: 72ch;
+  margin: 10px 0 0;
+  color: var(--pw-muted);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+.persona-world-boundary {
+  padding: 14px 16px;
+  background: oklch(0.15 0.025 75);
+  border: 1px solid oklch(0.34 0.055 75);
+}
+
+.persona-world-boundary strong {
+  color: var(--pw-amber);
+  font-size: 0.78rem;
+}
+
+.persona-world-boundary p {
+  margin: 5px 0 0;
+  color: var(--pw-muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.persona-world-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.82fr) minmax(520px, 2fr) minmax(290px, 1fr);
+  min-height: calc(100vh - 252px);
+}
+
+.persona-world-left,
+.persona-world-right {
+  min-width: 0;
+  background: var(--pw-surface);
+}
+
+.persona-world-left {
+  border-right: 1px solid var(--pw-line);
+}
+
+.persona-world-right {
+  border-left: 1px solid var(--pw-line);
+}
+
+.persona-world-left section,
+.persona-world-right section {
+  border-bottom: 1px solid var(--pw-line);
+}
+
+.persona-world-left section > header,
+.persona-world-right section > header,
+.persona-world-center > header {
+  padding: 16px;
+}
+
+.persona-world-left h3,
+.persona-world-right h3,
+.persona-world-center h3 {
+  margin: 5px 0 0;
+  color: var(--pw-ink);
+  font-size: 0.92rem;
+}
+
+.persona-world-left header p,
+.persona-world-right header p,
+.persona-world-center header p {
+  margin: 5px 0 0;
+  color: var(--pw-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.persona-world-datasets > label,
+.persona-world-inspector > label,
+.persona-world-freeze > label {
+  display: grid;
+  gap: 7px;
+  padding: 0 16px 16px;
+}
+
+.persona-world-datasets label > span,
+.persona-world-inspector label > span,
+.persona-world-freeze label > span,
+.persona-world-search label > span {
+  color: var(--pw-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.persona-world-page select,
+.persona-world-page input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  color: var(--pw-ink);
+  font: inherit;
+  font-size: 0.75rem;
+  background: var(--pw-bg);
+  border: 1px solid var(--pw-line);
+  border-radius: 3px;
+}
+
+.persona-world-page button,
+.persona-world-page a {
+  font: inherit;
+}
+
+.persona-world-page button:focus-visible,
+.persona-world-page a:focus-visible,
+.persona-world-page input:focus-visible,
+.persona-world-page select:focus-visible {
+  outline: 2px solid var(--pw-cyan);
+  outline-offset: 2px;
+}
+
+.persona-world-ledger dl,
+.persona-world-cohort-detail dl,
+.persona-world-attributes {
+  margin: 0;
+}
+
+.persona-world-ledger dl > div,
+.persona-world-cohort-detail dl > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-ledger dt,
+.persona-world-cohort-detail dt {
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.persona-world-ledger dd,
+.persona-world-cohort-detail dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--pw-muted);
+  font-size: 0.68rem;
+}
+
+.persona-world-ledger code,
+.persona-world-cohort-detail code {
+  color: var(--pw-ink);
+  font-size: 0.61rem;
+}
+
+.persona-world-cohorts > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.persona-world-cohorts > header button,
+.persona-world-clear {
+  min-height: 36px;
+  padding: 6px 9px;
+  color: var(--pw-cyan);
+  font-size: 0.7rem;
+  background: transparent;
+  border: 1px solid var(--pw-line);
+  cursor: pointer;
+}
+
+.persona-world-cohort-list {
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.persona-world-cohort-list li {
+  border-top: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-cohort-list button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 16px;
+  color: var(--pw-muted);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.persona-world-cohort-list button:hover,
+.persona-world-cohort-list button[data-selected="true"] {
+  color: var(--pw-ink);
+  background: var(--pw-raised);
+}
+
+.persona-world-cohort-list button[data-selected="true"] {
+  box-shadow: inset 2px 0 var(--pw-cyan);
+}
+
+.persona-world-cohort-list button > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.persona-world-cohort-list strong,
+.persona-world-cohort-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.persona-world-cohort-list strong {
+  font-size: 0.72rem;
+}
+
+.persona-world-cohort-list small,
+.persona-world-cohort-list code {
+  color: var(--pw-faint);
+  font-size: 0.61rem;
+}
+
+.persona-world-center {
+  min-width: 0;
+  background: var(--pw-bg);
+}
+
+.persona-world-center > header {
+  display: flex;
+  min-height: 82px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--pw-line);
+}
+
+.persona-world-selection-count {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--pw-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.persona-world-selection-count strong {
+  color: var(--pw-cyan);
+  font-size: 1.3rem;
+}
+
+.persona-world-search {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--pw-line);
+}
+
+.persona-world-search label {
+  display: grid;
+  gap: 6px;
+}
+
+.persona-world-search button,
+.persona-world-pagination button {
+  min-height: 42px;
+  padding: 8px 12px;
+  color: var(--pw-ink);
+  background: var(--pw-raised);
+  border: 1px solid var(--pw-line);
+  cursor: pointer;
+}
+
+.persona-world-search p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--pw-amber);
+  font-size: 0.7rem;
+}
+
+.persona-world-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 1px;
+  background: var(--pw-line);
+  list-style: none;
+}
+
+.persona-world-grid > li {
+  display: flex;
+  min-width: 0;
+  min-height: 220px;
+  flex-direction: column;
+  background: var(--pw-surface);
+}
+
+.persona-world-grid > li[data-selected="true"] {
+  box-shadow: inset 0 0 0 1px var(--pw-mint);
+}
+
+.persona-world-grid > li[data-inspected="true"] {
+  background: var(--pw-raised);
+}
+
+.persona-world-open {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  color: var(--pw-ink);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.persona-world-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: var(--pw-cyan);
+  font-family: var(--font-mono);
+  background: oklch(0.19 0.04 205);
+  border: 1px solid oklch(0.42 0.08 205);
+  border-radius: 50%;
+}
+
+.persona-world-open > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.persona-world-open strong,
+.persona-world-open small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.persona-world-open strong {
+  font-size: 0.79rem;
+}
+
+.persona-world-open small {
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  font-size: 0.61rem;
+}
+
+.persona-world-card-attributes {
+  display: grid;
+  gap: 7px;
+  padding: 0 14px 14px;
+}
+
+.persona-world-card-attributes > span {
+  display: grid;
+  grid-template-columns: minmax(78px, 0.7fr) minmax(0, 1fr);
+  gap: 8px;
+  color: var(--pw-muted);
+  font-size: 0.66rem;
+}
+
+.persona-world-card-attributes small {
+  overflow: hidden;
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.persona-world-grid footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px 14px;
+  border-top: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-grid footer code {
+  color: var(--pw-faint);
+  font-size: 0.58rem;
+}
+
+.persona-world-grid footer button {
+  min-height: 34px;
+  padding: 6px 9px;
+  color: var(--pw-cyan);
+  font-size: 0.65rem;
+  background: transparent;
+  border: 1px solid var(--pw-line);
+  cursor: pointer;
+}
+
+.persona-world-grid footer button[aria-pressed="true"] {
+  color: var(--pw-bg);
+  background: var(--pw-mint);
+  border-color: var(--pw-mint);
+}
+
+.persona-world-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  color: var(--pw-muted);
+  font-size: 0.7rem;
+  border-top: 1px solid var(--pw-line);
+}
+
+.persona-world-page button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.persona-world-inspector-empty,
+.persona-world-stage-empty,
+.persona-world-empty-compact {
+  padding: 20px 16px;
+}
+
+.persona-world-inspector-empty strong,
+.persona-world-stage-empty strong,
+.persona-world-empty-compact strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--pw-ink);
+  font-size: 0.78rem;
+}
+
+.persona-world-inspector-empty p,
+.persona-world-stage-empty p,
+.persona-world-empty-compact p {
+  margin: 6px 0 0;
+  color: var(--pw-muted);
+  font-size: 0.71rem;
+  line-height: 1.55;
+}
+
+.persona-world-stage-empty {
+  display: grid;
+  min-height: 360px;
+  place-content: center;
+  text-align: center;
+}
+
+.persona-world-inspector > header code {
+  display: block;
+  margin-top: 9px;
+  overflow-wrap: anywhere;
+  color: var(--pw-faint);
+  font-size: 0.59rem;
+}
+
+.persona-world-attribute-count {
+  padding: 8px 16px;
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  border-top: 1px solid var(--pw-soft-line);
+  border-bottom: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-attributes {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.persona-world-attributes > div {
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-attributes dt {
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+}
+
+.persona-world-attributes dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--pw-ink);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.persona-world-no-attributes,
+.persona-world-field-error {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--pw-amber);
+  font-size: 0.7rem;
+}
+
+.persona-world-clear {
+  margin: 0 16px 12px;
+}
+
+.persona-world-freeze-action {
+  width: calc(100% - 32px);
+  min-height: 44px;
+  margin: 0 16px 16px;
+  padding: 8px 12px;
+  color: var(--pw-bg);
+  font-weight: 700;
+  background: var(--pw-cyan);
+  border: 1px solid var(--pw-cyan);
+  cursor: pointer;
+}
+
+.persona-world-message {
+  display: grid;
+  gap: 5px;
+  margin: 0 16px 16px;
+  padding: 12px;
+  border: 1px solid var(--pw-line);
+}
+
+.persona-world-message[data-status="success"] {
+  border-color: oklch(0.42 0.07 158);
+}
+
+.persona-world-message[data-status="error"] {
+  border-color: oklch(0.42 0.07 42);
+}
+
+.persona-world-message strong,
+.persona-world-message p,
+.persona-world-message code,
+.persona-world-message a {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.68rem;
+}
+
+.persona-world-message p,
+.persona-world-message code {
+  color: var(--pw-muted);
+}
+
+.persona-world-message a,
+.persona-world-cohort-detail > a {
+  color: var(--pw-cyan);
+  text-decoration: none;
+}
+
+.persona-world-cohort-detail ol {
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.persona-world-cohort-detail li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 3px 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--pw-soft-line);
+}
+
+.persona-world-cohort-detail li > span {
+  grid-row: span 2;
+  color: var(--pw-faint);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.persona-world-cohort-detail li strong {
+  font-size: 0.69rem;
+}
+
+.persona-world-cohort-detail li small {
+  color: var(--pw-faint);
+  font-size: 0.61rem;
+}
+
+.persona-world-cohort-detail > a {
+  display: block;
+  padding: 13px 16px;
+  font-size: 0.7rem;
+  border-top: 1px solid var(--pw-line);
+}
+
+.persona-world-skeleton,
+.persona-world-card-skeleton {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+}
+
+.persona-world-card-skeleton {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.persona-world-card-skeleton .skeleton-block {
+  min-height: 190px;
+}
+
+@media (max-width: 1180px) {
+  .persona-world-layout {
+    grid-template-columns: minmax(230px, 0.8fr) minmax(480px, 1.7fr);
+  }
+
+  .persona-world-right {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-top: 1px solid var(--pw-line);
+    border-left: 0;
+  }
+
+  .persona-world-right section {
+    border-right: 1px solid var(--pw-line);
+  }
+}
+
+@media (max-width: 760px) {
+  .persona-world-hero {
+    grid-template-columns: 1fr;
+    padding: 22px 16px;
+  }
+
+  .persona-world-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .persona-world-center {
+    order: 1;
+  }
+
+  .persona-world-left {
+    order: 2;
+    border-top: 1px solid var(--pw-line);
+    border-right: 0;
+  }
+
+  .persona-world-right {
+    order: 3;
+    display: block;
+  }
+
+  .persona-world-search {
+    grid-template-columns: 1fr auto;
+  }
+
+  .persona-world-search label {
+    grid-column: 1 / -1;
+  }
+
+  .persona-world-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 390px) {
+  .persona-world-hero h2 {
+    font-size: 1.35rem;
+  }
+
+  .persona-world-center > header {
+    align-items: flex-start;
+  }
+
+  .persona-world-card-attributes > span {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .persona-world-page *,
+  .persona-world-page *::before,
+  .persona-world-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

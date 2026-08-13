@@ -37,7 +37,6 @@ def build_raw_evidence(evidence_id: str) -> dict[str, object]:
         "kind": "media_article",
         "article": raw_article,
         "content_sha256": calculate_content_sha256(content),
-        "company_ids": ["company-001"],
     }
 
 

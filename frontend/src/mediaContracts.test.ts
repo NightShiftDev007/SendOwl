@@ -10,7 +10,7 @@ import {
 
 const validArticle = {
   id: "02e985f8-82f9-4e89-aa26-34539874dfde",
-  title: "企业发布季度经营数据",
+  title: "行业发布季度经营数据",
   source_name: "Example News",
   published_at: "2026-08-12T04:30:00Z",
   excerpt: "报道摘录必须来自接口，且不能使用空字符串。",
@@ -18,6 +18,7 @@ const validArticle = {
   country_code: "CN",
   topic_id: "7a60965f-12b4-46be-b78b-61b39922059c",
   topic: "季度业绩",
+  evidence_revision_sha256: "a".repeat(64),
 };
 
 describe("media overview contract", () => {
@@ -129,6 +130,27 @@ describe("media articles contract", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("requires an exact lowercase SHA-256 evidence revision", () => {
+    expect(
+      mediaArticlesResponseSchema.safeParse({
+        items: [{ ...validArticle, evidence_revision_sha256: "A".repeat(64) }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+        facets: { countries: [], topics: [] },
+      }).success,
+    ).toBe(false);
+    expect(
+      mediaArticlesResponseSchema.safeParse({
+        items: [{ ...validArticle, evidence_revision_sha256: "a".repeat(63) }],
+        page: 1,
+        page_size: 20,
+        total: 1,
+        facets: { countries: [], topics: [] },
+      }).success,
+    ).toBe(false);
   });
 });
 

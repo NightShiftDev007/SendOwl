@@ -8,6 +8,7 @@ import {
 import { ZodError } from "zod";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
+import { SemanticExperimentPage } from "./SemanticExperimentPage";
 import { isAmbiguousPostResultError } from "./apiClient";
 import { formatMediaCount, formatMediaTimestamp } from "./mediaPresentation";
 import {
@@ -20,6 +21,7 @@ import {
   type PlatformSmokeRunSummary,
 } from "./oasisContracts";
 import type { AlternativeVariant, ScenarioDetail } from "./scenarioContracts";
+import type { RunStudioRoute } from "./runStudioRoute";
 import {
   useOasisReadiness,
   usePlatformSmokeRunDetail,
@@ -270,8 +272,8 @@ function RunInputPreview({
       </div>
       <div className="oasis-frozen-context">
         <div>
-          <span>冻结企业</span>
-          <strong>{scenario.snapshot.company_name}</strong>
+          <span>冻结现实</span>
+          <strong>v{scenario.snapshot.version} · {scenario.snapshot.evidence_count} 篇证据</strong>
         </div>
         <div>
           <span>scenario_sha256</span>
@@ -287,7 +289,7 @@ function RunInputPreview({
           <li key={intervention.id}>
             <header>
               <strong>帖子 #{intervention.position + 1}</strong>
-              <span>snapshot_company</span>
+              <span>scenario_actor · synthetic</span>
               <span>Reddit</span>
               <time>+{intervention.offset_minutes} 分钟</time>
             </header>
@@ -329,18 +331,6 @@ function RunLauncher({
     && isValidSeed(seed)
     && isScopeAcknowledged
     && !isSubmitting;
-
-  useEffect(() => {
-    if (selectedScenarioId !== null || scenariosState.data === null) {
-      return;
-    }
-
-    const firstScenario = scenariosState.data.items[0];
-
-    if (firstScenario !== undefined) {
-      setSelectedScenarioId(firstScenario.id);
-    }
-  }, [scenariosState.data, selectedScenarioId]);
 
   useEffect(() => {
     if (scenario === null || selectedVariantId === null) {
@@ -527,7 +517,7 @@ function RunLauncher({
                     <option value="" disabled>请选择决策实验</option>
                     {scenarios.map((candidate) => (
                       <option value={candidate.id} key={candidate.id}>
-                        {candidate.title} · {candidate.snapshot.company_name}
+                        {candidate.title} · 现实 v{candidate.snapshot.version}
                       </option>
                     ))}
                   </select>
@@ -751,7 +741,7 @@ function RunList({
                   <RunStatusBadge status={run.status} />
                   <span className="oasis-run-list-copy">
                     <strong>{run.scenario.variant_name}</strong>
-                    <small>{run.scenario.company_name} · seed {run.seed}</small>
+                    <small>synthetic actor · seed {run.seed}</small>
                     <time dateTime={run.created_at}>{formatMediaTimestamp(run.created_at)}</time>
                     <code title={run.input_sha256}>{abbreviatedDigest(run.input_sha256)}</code>
                   </span>
@@ -772,7 +762,7 @@ function RunDetailView({ run }: { readonly run: PlatformSmokeRunDetail }): JSX.E
         <div>
           <RunStatusBadge status={run.status} />
           <h3>{run.scenario.variant_name}</h3>
-          <p>{run.scenario.company_name} · Reddit manual smoke · seed {run.seed}</p>
+          <p>合成场景角色 · Reddit manual smoke · seed {run.seed}</p>
         </div>
         <span className="contract-endpoint">GET /api/v2/simulation-runs/platform-smoke/&#123;id&#125;</span>
       </div>
@@ -964,7 +954,7 @@ function RunDetailPanel({
   );
 }
 
-export function OasisPlatformSmokePage(): JSX.Element {
+function PlatformSmokeWorkspace(): JSX.Element {
   const {
     state: readinessState,
     reload: reloadReadiness,
@@ -1071,5 +1061,54 @@ export function OasisPlatformSmokePage(): JSX.Element {
         </aside>
       </div>
     </div>
+  );
+}
+
+interface OasisPlatformSmokePageProps {
+  readonly route: RunStudioRoute;
+  readonly onRouteChange: (route: RunStudioRoute) => void;
+}
+
+export function OasisPlatformSmokePage({
+  route,
+  onRouteChange,
+}: OasisPlatformSmokePageProps): JSX.Element {
+  return (
+    <>
+      <nav className="run-studio-mode-switch" aria-label="Run Studio 运行模式">
+        <span>RUN STUDIO / MODE</span>
+        <button
+          type="button"
+          aria-pressed={route.mode === "platform"}
+          onClick={() => onRouteChange({
+            mode: "platform",
+            cohortId: null,
+            scenarioId: null,
+            experimentId: null,
+            trialId: null,
+            panel: null,
+          })}
+        >
+          平台烟雾测试
+        </button>
+        <button
+          type="button"
+          aria-pressed={route.mode === "semantic"}
+          onClick={() => onRouteChange({
+            mode: "semantic",
+            cohortId: null,
+            scenarioId: null,
+            experimentId: null,
+            trialId: null,
+            panel: null,
+          })}
+        >
+          语义实验
+        </button>
+      </nav>
+      {route.mode === "platform"
+        ? <PlatformSmokeWorkspace />
+        : <SemanticExperimentPage route={route} onRouteChange={onRouteChange} />}
+    </>
   );
 }

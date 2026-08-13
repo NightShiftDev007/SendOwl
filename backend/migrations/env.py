@@ -8,15 +8,33 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.companies import models as company_models
 from app.config import load_runtime_settings
 from app.database import ApplicationBase, normalize_async_database_url
+from app.decision_reports import models as decision_report_models
+from app.decision_threads import models as decision_thread_models
+from app.matraix_surveys import models as matraix_survey_models
 from app.media import models as media_models
+from app.populations import models as population_models
+from app.report_questions import models as report_question_models
 from app.scenarios import models as scenario_models
+from app.semantic_experiments import models as semantic_experiment_models
 from app.simulations import models as simulation_models
+from app.world_graphs import models as world_graph_models
 from app.world_models import models as world_model_models
 
-del company_models, media_models, scenario_models, simulation_models, world_model_models
+del (
+    media_models,
+    matraix_survey_models,
+    decision_thread_models,
+    decision_report_models,
+    population_models,
+    report_question_models,
+    scenario_models,
+    semantic_experiment_models,
+    simulation_models,
+    world_model_models,
+    world_graph_models,
+)
 
 config = context.config
 if config.config_file_name is not None:

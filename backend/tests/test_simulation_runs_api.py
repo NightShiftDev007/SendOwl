@@ -34,7 +34,6 @@ def _detail(request: PlatformSmokeCreateRequest) -> PlatformSmokeRunDetail:
             variant_name="Clarify",
             world_snapshot_id=uuid4(),
             snapshot_sha256="b" * 64,
-            company_name="Acme",
         ),
         seed=request.seed,
         input_sha256="c" * 64,

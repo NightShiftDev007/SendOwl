@@ -49,6 +49,18 @@ commit whenever code is migrated.
 - Future role: social-network evolution and multi-agent simulation only after
   authorized Persona data and an explicitly configured LLM runtime are added.
 
+## NASA Blue Marble
+
+- Source: https://visibleearth.nasa.gov/images/57723/the-blue-marble
+- Credit: NASA Goddard Space Flight Center; image by Reto Stöckli, with ocean
+  color and compositing enhancements by Robert Simmon.
+- Bundled derivative: `frontend/public/earth/day.webp`, resized and compressed
+  from the equirectangular Blue Marble image distributed with the audited
+  MatrAIx frontend.
+- Usage: geographic context for the media globe only. The asset does not encode
+  article volume, propagation, or any simulated result, and its inclusion does
+  not imply NASA endorsement.
+
 Third-party dependencies retain their own licenses and service terms. This
 notice does not replace legal review of source-code grants, datasets, model
 weights, media content, or external services.

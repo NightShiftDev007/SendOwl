@@ -35,10 +35,9 @@ const MediaGlobe = lazy(async () => {
 
 const decisionPathSteps: readonly DecisionPathStep[] = [
   { code: "01", label: "Evidence", title: "媒体证据" },
-  { code: "02", label: "Company", title: "企业核验" },
-  { code: "03", label: "World Snapshot", title: "冻结现实" },
-  { code: "04", label: "Scenario", title: "决策实验" },
-  { code: "05", label: "Run", title: "推演运行" },
+  { code: "02", label: "World Snapshot", title: "冻结现实" },
+  { code: "03", label: "Scenario", title: "决策实验" },
+  { code: "04", label: "Run", title: "推演运行" },
 ];
 
 const capabilityStateLabels: Readonly<
@@ -239,13 +238,13 @@ function SituationIntro({
       </div>
       <h1 id="situation-home-title">从正在发生的事实，进入下一步决策</h1>
       <p>
-        先看真实报道正在聚焦哪里，再将可追溯证据带入企业核验、世界快照与决策实验。
+        先看真实报道正在聚焦哪里，再将可追溯证据冻结为世界快照并带入决策实验。
       </p>
       <div className="situation-home__actions">
         <button
           className="button situation-home__button-primary"
           type="button"
-          onClick={() => onNavigate("companies")}
+          onClick={() => onNavigate("world")}
         >
           进入 Decision Workspace
           <span aria-hidden="true">→</span>

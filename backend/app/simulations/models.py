@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -40,7 +41,6 @@ class SimulationRunRecord(ApplicationBase):
         nullable=False,
     )
     snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    company_name: Mapped[str] = mapped_column(String(300), nullable=False)
     seed: Mapped[int] = mapped_column(BigInteger, nullable=False)
     actor_user_name: Mapped[str] = mapped_column(String(32), nullable=False)
     actor_name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -87,10 +87,6 @@ class SimulationRunRecord(ApplicationBase):
         CheckConstraint(
             "length(btrim(variant_name)) BETWEEN 1 AND 200 AND variant_name !~ E'[\\r\\n]'",
             name="ck_simulation_runs_variant_name",
-        ),
-        CheckConstraint(
-            "length(btrim(company_name)) BETWEEN 1 AND 300 AND company_name !~ E'[\\r\\n]'",
-            name="ck_simulation_runs_company_name",
         ),
         CheckConstraint(
             "actor_user_name ~ '^[A-Za-z0-9_-]{1,32}$'",
@@ -190,6 +186,22 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
     camel_version: Mapped[str] = mapped_column(String(32), nullable=False)
     mode: Mapped[str] = mapped_column(String(32), nullable=False)
     platform_runtime_ready: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    semantic_runtime_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
+    semantic_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    semantic_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    semantic_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    survey_runtime_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
+    survey_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    survey_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    survey_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -205,5 +217,27 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
         ),
         CheckConstraint("camel_version = '0.2.78'", name="ck_simulation_worker_camel_version"),
         CheckConstraint("mode = 'reddit_manual_smoke'", name="ck_simulation_worker_mode"),
+        CheckConstraint(
+            "(semantic_runtime_ready AND platform_runtime_ready AND "
+            "length(btrim(semantic_model_name)) BETWEEN 1 AND 200 "
+            "AND semantic_model_name !~ E'[\\r\\n]' "
+            "AND semantic_config_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND semantic_prompt_schema_version = 'matraix-semantic-profile/v1') OR "
+            "(NOT semantic_runtime_ready AND semantic_model_name IS NULL "
+            "AND semantic_config_sha256 IS NULL "
+            "AND semantic_prompt_schema_version IS NULL)",
+            name="ck_simulation_worker_semantic_config",
+        ),
+        CheckConstraint(
+            "(survey_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready AND "
+            "length(btrim(survey_model_name)) BETWEEN 1 AND 200 "
+            "AND survey_model_name !~ E'[\\r\\n]' "
+            "AND survey_config_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND survey_prompt_schema_version = 'matraix-survey-scenario-preference/v1') OR "
+            "(NOT survey_runtime_ready AND survey_model_name IS NULL "
+            "AND survey_config_sha256 IS NULL "
+            "AND survey_prompt_schema_version IS NULL)",
+            name="ck_simulation_worker_survey_config",
+        ),
         Index("ix_simulation_worker_heartbeats_last_seen", "last_seen_at"),
     )

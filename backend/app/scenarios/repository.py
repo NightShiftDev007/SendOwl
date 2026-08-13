@@ -33,7 +33,6 @@ def _snapshot_ref(snapshot: SnapshotDetail) -> ScenarioSnapshotRef:
         world_snapshot_id=snapshot.id,
         version=snapshot.version,
         snapshot_sha256=snapshot.snapshot_sha256,
-        company_name=snapshot.company.canonical_name,
         evidence_count=len(snapshot.evidence),
     )
 
@@ -95,7 +94,6 @@ def _scenario_records(
         world_snapshot_id=snapshot.world_snapshot_id,
         snapshot_version=snapshot.version,
         snapshot_sha256=snapshot.snapshot_sha256,
-        snapshot_company_name=snapshot.company_name,
         snapshot_evidence_count=snapshot.evidence_count,
         scenario_sha256=scenario_sha256,
         created_at=created_at,
@@ -160,7 +158,6 @@ def _snapshot_ref_from_record(scenario: ScenarioRecord) -> ScenarioSnapshotRef:
         world_snapshot_id=scenario.world_snapshot_id,
         version=scenario.snapshot_version,
         snapshot_sha256=scenario.snapshot_sha256,
-        company_name=scenario.snapshot_company_name,
         evidence_count=scenario.snapshot_evidence_count,
     )
 

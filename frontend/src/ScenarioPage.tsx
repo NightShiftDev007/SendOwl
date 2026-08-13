@@ -18,6 +18,7 @@ import {
   type ScenarioIntervention,
   type ScenarioSummary,
 } from "./scenarioContracts";
+import { createRunStudioHash } from "./runStudioRoute";
 import {
   useScenarioDetail,
   useScenarios,
@@ -217,6 +218,17 @@ function abbreviatedDigest(digest: string): string {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`;
 }
 
+function scenarioRunStudioHref(scenarioId: string): string {
+  return createRunStudioHash({
+    mode: "semantic",
+    cohortId: null,
+    scenarioId,
+    experimentId: null,
+    trialId: null,
+    panel: null,
+  });
+}
+
 function selectedWorldModelSummary(
   state: WorldModelsLoadState,
   worldModelId: string | null,
@@ -270,7 +282,7 @@ function SnapshotContext({
       <div>
         <span className="scenario-version-marker" aria-hidden="true">v{snapshot.version}</span>
         <p>
-          <strong>{snapshot.company_name}</strong>
+          <strong>冻结现实版本</strong>
           <small>{snapshot.evidence_count} 篇冻结证据 · 只读版本</small>
         </p>
       </div>
@@ -373,7 +385,7 @@ function AlternativeEditor({
       <div className="scenario-intervention-heading">
         <div>
           <h5>初始帖子</h5>
-          <p>固定由快照企业在 Reddit 发布；时间相对实验开始计算。</p>
+          <p>固定由场景角色在 Reddit 发布；时间相对实验开始计算。</p>
         </div>
         <button
           className="button button-secondary button-compact"
@@ -402,7 +414,7 @@ function AlternativeEditor({
             <li key={intervention.clientId}>
               <div className="scenario-intervention-meta">
                 <strong>帖子 {interventionIndex + 1}</strong>
-                <span>冻结企业</span>
+                <span>场景角色</span>
                 <span>Reddit</span>
                 <button
                   type="button"
@@ -623,7 +635,7 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
           hypothesis: alternative.hypothesis,
           interventions: alternative.interventions.map((intervention) => ({
             kind: "initial_post",
-            actor: "snapshot_company",
+            actor: "scenario_actor",
             channel: "reddit",
             content: intervention.content,
             offset_minutes: Number(intervention.offsetMinutes),
@@ -703,7 +715,7 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
           {worldModelsState.data !== null && worldModels.length === 0 ? (
             <div className="scenario-builder-empty" role="status">
               <strong>还没有可用于实验的现实快照</strong>
-              <p>先到“世界模型”完成企业证据的人工确认与冻结，再回来设计决策实验。</p>
+              <p>先到“世界模型”完成媒体证据的人工确认与冻结，再回来设计决策实验。</p>
             </div>
           ) : null}
 
@@ -727,7 +739,7 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
                     <option value="" disabled>请选择世界模型</option>
                     {worldModels.map((worldModel) => (
                       <option value={worldModel.id} key={worldModel.id}>
-                        {worldModel.title} · {worldModel.company_name}
+                        {worldModel.title} · {worldModel.latest_snapshot.evidence_count} 篇证据
                       </option>
                     ))}
                   </select>
@@ -961,6 +973,12 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
                     <p>
                       {creationState.scenario.title} · {abbreviatedDigest(creationState.scenario.scenario_sha256)}
                     </p>
+                    <a
+                      className="button button-primary"
+                      href={scenarioRunStudioHref(creationState.scenario.id)}
+                    >
+                      带着这个实验进入 Playground →
+                    </a>
                   </div>
                 ) : null}
               </aside>
@@ -1051,7 +1069,7 @@ function ScenarioList({
                   <span className="scenario-list-copy">
                     <strong>{scenario.title}</strong>
                     <small>{scenario.decision_question}</small>
-                    <span>{scenario.snapshot.company_name} · {scenario.snapshot.evidence_count} 篇证据</span>
+                    <span>{scenario.snapshot.evidence_count} 篇冻结证据</span>
                     <code title={scenario.scenario_sha256}>
                       {abbreviatedDigest(scenario.scenario_sha256)}
                     </code>
@@ -1075,7 +1093,7 @@ function InterventionDetail({
     <li>
       <header>
         <strong>帖子 #{intervention.position + 1}</strong>
-        <span>冻结企业</span>
+        <span>场景角色</span>
         <span>Reddit</span>
         <time>+{intervention.offset_minutes} 分钟</time>
       </header>
@@ -1127,10 +1145,18 @@ function ScenarioDetailView({ scenario }: { readonly scenario: ScenarioDetail })
           <p>{scenario.decision_question}</p>
           <time dateTime={scenario.created_at}>创建于 {formatMediaTimestamp(scenario.created_at)}</time>
         </div>
-        <details className="decision-diagnostics">
-          <summary>接口诊断</summary>
-          <code>GET /api/v2/scenarios/&#123;id&#125;</code>
-        </details>
+        <div className="scenario-detail-actions">
+          <a
+            className="button button-primary"
+            href={scenarioRunStudioHref(scenario.id)}
+          >
+            进入 Playground →
+          </a>
+          <details className="decision-diagnostics">
+            <summary>接口诊断</summary>
+            <code>GET /api/v2/scenarios/&#123;id&#125;</code>
+          </details>
+        </div>
       </div>
 
       <dl className="scenario-detail-ledger" aria-label="实验摘要">
@@ -1139,8 +1165,8 @@ function ScenarioDetailView({ scenario }: { readonly scenario: ScenarioDetail })
           <dd>v{scenario.snapshot.version}</dd>
         </div>
         <div>
-          <dt>冻结企业</dt>
-          <dd>{scenario.snapshot.company_name}</dd>
+          <dt>冻结证据</dt>
+          <dd>{scenario.snapshot.evidence_count}</dd>
         </div>
         <div>
           <dt>备选方案</dt>
@@ -1182,7 +1208,7 @@ function ScenarioDetailView({ scenario }: { readonly scenario: ScenarioDetail })
 
       <div className="scenario-alternative-details-heading">
         <h4>备选方案与初始帖子</h4>
-        <p>以下均为实验输入；固定 actor=snapshot_company、channel=reddit。</p>
+        <p>以下均为实验输入；固定 actor=scenario_actor、channel=reddit。</p>
       </div>
       <div className="scenario-alternative-details">
         {scenario.alternatives.map((alternative) => (
@@ -1281,7 +1307,7 @@ export function ScenarioPage(): JSX.Element {
             <small>
               {selectedScenario === null
                 ? "下方档案等待明确选择，不会自动打开第一条。"
-                : `现实 v${selectedScenario.snapshot.version} · ${selectedScenario.snapshot.company_name}`}
+                : `现实 v${selectedScenario.snapshot.version} · ${selectedScenario.snapshot.evidence_count} 篇证据`}
             </small>
           </div>
           <ul className="decision-boundary-legend" aria-label="实验边界">

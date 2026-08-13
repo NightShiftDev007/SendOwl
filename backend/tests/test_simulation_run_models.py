@@ -22,6 +22,7 @@ def test_platform_smoke_schema_uses_normalized_run_post_and_heartbeat_tables() -
         "artifact_sha256",
         "error_code",
     }.issubset(runs.columns.keys())
+    assert "company_name" not in runs.columns
     assert {"run_id", "position", "content", "offset_minutes"}.issubset(posts.columns.keys())
     assert any(
         constraint.name == "uq_simulation_runs_input_sha256" for constraint in runs.constraints

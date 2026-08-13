@@ -1,9 +1,11 @@
 export type SectionId =
   | "overview"
+  | "threads"
   | "media"
-  | "companies"
   | "world"
   | "decisions"
+  | "personas"
+  | "tasks"
   | "runs"
   | "reports";
 
@@ -25,7 +27,7 @@ export interface ModuleDefinition {
 
 export type MigratingSectionId = Exclude<
   SectionId,
-  "overview" | "media" | "companies" | "world" | "decisions" | "runs"
+  "overview" | "threads" | "media" | "world" | "decisions" | "personas" | "tasks" | "runs" | "reports"
 >;
 
 export const navigationItems: readonly NavigationItem[] = [
@@ -37,17 +39,17 @@ export const navigationItems: readonly NavigationItem[] = [
     state: "available",
   },
   {
+    id: "threads",
+    marker: "DT",
+    label: "决策任务",
+    description: "Decision portfolio",
+    state: "available",
+  },
+  {
     id: "media",
     marker: "MI",
     label: "媒体情报",
     description: "Media intelligence",
-    state: "available",
-  },
-  {
-    id: "companies",
-    marker: "CE",
-    label: "企业证据",
-    description: "Company evidence",
     state: "available",
   },
   {
@@ -65,10 +67,24 @@ export const navigationItems: readonly NavigationItem[] = [
     state: "available",
   },
   {
+    id: "personas",
+    marker: "PW",
+    label: "Persona World",
+    description: "Population workspace",
+    state: "available",
+  },
+  {
+    id: "tasks",
+    marker: "TG",
+    label: "Task Gallery",
+    description: "Capability catalog",
+    state: "available",
+  },
+  {
     id: "runs",
     marker: "RN",
-    label: "运行",
-    description: "Runs",
+    label: "Playground",
+    description: "Experiment cockpit",
     state: "available",
   },
   {
@@ -76,20 +92,13 @@ export const navigationItems: readonly NavigationItem[] = [
     marker: "RP",
     label: "报告",
     description: "Reports",
-    state: "migrating",
+    state: "available",
   },
 ];
 
 export const moduleDefinitions: Readonly<
   Record<MigratingSectionId, ModuleDefinition>
 > = {
-  reports: {
-    sectionId: "reports",
-    summary: "在不混淆现实证据和模拟结果的前提下，对比方案并形成判断。",
-    outcome: "输出带证据、限制条件和引擎溯源的决策报告。",
-    responsibilities: ["方案指标比较", "不确定性与限制", "证据引用与报告导出"],
-    source: "Decision Core",
-  },
 };
 
 export function requireNavigationItem(sectionId: SectionId): NavigationItem {

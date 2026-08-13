@@ -2,12 +2,16 @@
 
 from enum import StrEnum
 from hashlib import sha256
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
+from uuid import UUID
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, HttpUrl, model_validator
 
-from app.media.contracts import MediaArticle
+from app.evidence.hashing import calculate_evidence_bundle_sha256
+from app.media.contracts import ArticleExcerpt, CountryCode, MediaArticle
 from app.shared.contracts import ContractModel, Identifier, NonEmptyText, Sha256Digest
+from app.world_models.contracts import CapturedText, SnapshotEvidence, Verification, WorldModelTitle
+from app.world_models.hashing import calculate_snapshot_sha256
 
 
 def calculate_content_sha256(content: str) -> str:
@@ -28,7 +32,6 @@ class EvidenceItem(ContractModel):
     kind: EvidenceKind
     article: MediaArticle
     content_sha256: Sha256Digest
-    company_ids: tuple[Identifier, ...]
 
     @model_validator(mode="after")
     def validate_content_digest(self) -> Self:
@@ -64,3 +67,121 @@ class EvidenceBundle(ContractModel):
             duplicates = ", ".join(sorted(duplicate_evidence_ids))
             raise ValueError(f"items must use unique evidence_id values; duplicates: {duplicates}")
         return self
+
+
+class EvidenceBundleItem(ContractModel):
+    """One ordered media item projected from immutable snapshot storage."""
+
+    position: Annotated[int, Field(ge=0, le=49)]
+    kind: Literal["media_article"]
+    article_id: UUID
+    source_name: NonEmptyText
+    original_url: HttpUrl
+    title: NonEmptyText
+    published_at: AwareDatetime
+    captured_at: AwareDatetime
+    country_code: CountryCode | None
+    excerpt: ArticleExcerpt
+    captured_text_sha256: Sha256Digest
+
+
+class EvidenceBundleSummary(ContractModel):
+    """Lightweight identity for one sealed WorldSnapshot exposed as a bundle."""
+
+    id: UUID
+    bundle_sha256: Sha256Digest
+    title: WorldModelTitle
+    world_model_id: UUID
+    world_snapshot_id: UUID
+    version: Annotated[int, Field(ge=1)]
+    verification: Verification
+    snapshot_sha256: Sha256Digest
+    item_count: Annotated[int, Field(ge=1, le=50)]
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_derived_identity(self) -> Self:
+        if self.id != self.world_snapshot_id:
+            raise ValueError("bundle id must equal world_snapshot_id")
+        expected = calculate_evidence_bundle_sha256(self.id, self.snapshot_sha256)
+        if self.bundle_sha256 != expected:
+            raise ValueError("bundle_sha256 must bind bundle id to snapshot_sha256")
+        return self
+
+
+class EvidenceBundleDetail(EvidenceBundleSummary):
+    """Complete frozen bundle metadata without duplicating captured article text."""
+
+    items: Annotated[tuple[EvidenceBundleItem, ...], Field(min_length=1, max_length=50)]
+
+    @model_validator(mode="after")
+    def validate_snapshot_projection(self) -> Self:
+        positions = tuple(item.position for item in self.items)
+        if positions != tuple(range(len(self.items))):
+            raise ValueError("bundle item positions must be contiguous from zero")
+        article_ids = tuple(item.article_id for item in self.items)
+        if len(set(article_ids)) != len(article_ids):
+            raise ValueError("bundle items must use unique article_id values")
+        if self.item_count != len(self.items):
+            raise ValueError("item_count must equal items length")
+        snapshot_evidence = tuple(
+            SnapshotEvidence(
+                article_id=item.article_id,
+                source_name=item.source_name,
+                original_url=item.original_url,
+                title=item.title,
+                published_at=item.published_at,
+                captured_at=item.captured_at,
+                country_code=item.country_code,
+                excerpt=item.excerpt,
+                captured_text_sha256=item.captured_text_sha256,
+            )
+            for item in self.items
+        )
+        expected_snapshot_sha256 = calculate_snapshot_sha256(
+            self.world_model_id,
+            self.version,
+            self.verification,
+            snapshot_evidence,
+        )
+        if self.snapshot_sha256 != expected_snapshot_sha256:
+            raise ValueError("bundle items do not match snapshot_sha256")
+        return self
+
+
+class EvidenceBundleContent(ContractModel):
+    """Exact frozen article text retrieved separately from bundle metadata."""
+
+    bundle_id: UUID
+    bundle_sha256: Sha256Digest
+    article_id: UUID
+    captured_text: CapturedText
+    captured_text_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_captured_text(self) -> Self:
+        actual = calculate_content_sha256(self.captured_text)
+        if self.captured_text_sha256 != actual:
+            raise ValueError("captured_text_sha256 must match captured_text")
+        return self
+
+
+class EvidenceBundlesResponse(ContractModel):
+    """Complete sealed bundle directory ordered newest first."""
+
+    items: tuple[EvidenceBundleSummary, ...]
+    total: Annotated[int, Field(ge=0)]
+
+
+__all__ = [
+    "EvidenceBundle",
+    "EvidenceBundleContent",
+    "EvidenceBundleDetail",
+    "EvidenceBundleItem",
+    "EvidenceBundleSummary",
+    "EvidenceBundlesResponse",
+    "EvidenceItem",
+    "EvidenceItems",
+    "EvidenceKind",
+    "calculate_content_sha256",
+]

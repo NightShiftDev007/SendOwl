@@ -7,7 +7,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.companies.errors import CompanyNotFoundError
 from app.database import DatabaseConnector
 from app.world_models.contracts import (
     ModelDetail,
@@ -25,6 +24,8 @@ from app.world_models.errors import (
     WorldSnapshotNotFoundError,
     WorldSnapshotRevisionConflictError,
 )
+from app.world_models.graph import get_evidence_world_graph
+from app.world_models.graph_contracts import EvidenceWorldGraph
 from app.world_models.repository import (
     append_world_snapshot,
     create_world_model,
@@ -56,10 +57,7 @@ WorldModelSession = Annotated[AsyncSession, Depends(require_world_model_session)
 
 def _not_found(
     error: (
-        CompanyNotFoundError
-        | WorldModelNotFoundError
-        | WorldSnapshotNotFoundError
-        | WorldSnapshotEvidenceNotFoundError
+        WorldModelNotFoundError | WorldSnapshotNotFoundError | WorldSnapshotEvidenceNotFoundError
     ),
 ) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
@@ -87,8 +85,6 @@ def create_world_models_router() -> APIRouter:
         """Atomically create one model and version-one snapshot."""
         try:
             return await create_world_model(session, request)
-        except CompanyNotFoundError as error:
-            raise _not_found(error) from error
         except SnapshotEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
         except SnapshotEvidenceLimitError as error:
@@ -122,7 +118,7 @@ def create_world_models_router() -> APIRouter:
         """Lock the model and append exactly one next-version snapshot."""
         try:
             return await append_world_snapshot(session, model_id, request)
-        except (CompanyNotFoundError, WorldModelNotFoundError) as error:
+        except WorldModelNotFoundError as error:
             raise _not_found(error) from error
         except SnapshotEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
@@ -140,6 +136,21 @@ def create_world_models_router() -> APIRouter:
         """Return one immutable snapshot without joining mutable source tables."""
         try:
             return await get_world_snapshot(session, model_id, snapshot_id)
+        except (WorldModelNotFoundError, WorldSnapshotNotFoundError) as error:
+            raise _not_found(error) from error
+
+    @router.get(
+        "/{model_id}/snapshots/{snapshot_id}/evidence-graph",
+        response_model=EvidenceWorldGraph,
+    )
+    async def evidence_graph(
+        model_id: UUID,
+        snapshot_id: UUID,
+        session: WorldModelSession,
+    ) -> EvidenceWorldGraph:
+        """Project direct frozen evidence relationships without Zep or inferred facts."""
+        try:
+            return await get_evidence_world_graph(session, model_id, snapshot_id)
         except (WorldModelNotFoundError, WorldSnapshotNotFoundError) as error:
             raise _not_found(error) from error
 

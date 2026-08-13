@@ -3,7 +3,6 @@
 from app.world_models.contracts import (
     ModelDetail,
     ModelSummary,
-    SnapshotCompany,
     SnapshotCreateRequest,
     SnapshotDetail,
     SnapshotEvidence,
@@ -20,7 +19,6 @@ from app.world_models.contracts import (
 __all__ = [
     "ModelDetail",
     "ModelSummary",
-    "SnapshotCompany",
     "SnapshotCreateRequest",
     "SnapshotDetail",
     "SnapshotEvidence",

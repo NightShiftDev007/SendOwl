@@ -23,7 +23,7 @@ from app.scenarios.hashing import calculate_scenario_sha256
 def _request_payload() -> dict[str, object]:
     return {
         "title": "Verified response plan",
-        "decision_question": "Should the company publish a clarification?",
+        "decision_question": "Should the scenario actor publish a clarification?",
         "world_model_id": str(uuid4()),
         "world_snapshot_id": str(uuid4()),
         "baseline": {"name": "No action", "hypothesis": "Discussion continues."},
@@ -34,7 +34,7 @@ def _request_payload() -> dict[str, object]:
                 "interventions": [
                     {
                         "kind": "initial_post",
-                        "actor": "snapshot_company",
+                        "actor": "scenario_actor",
                         "channel": "reddit",
                         "content": "Here are the verified facts.",
                         "offset_minutes": 0,
@@ -51,7 +51,6 @@ def _scenario_response(request: ScenarioCreateRequest) -> ScenarioDetail:
         world_snapshot_id=request.world_snapshot_id,
         version=3,
         snapshot_sha256="a" * 64,
-        company_name="Acme",
         evidence_count=2,
     )
     baseline = ScenarioVariant(

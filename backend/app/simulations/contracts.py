@@ -133,15 +133,6 @@ class EngineResult(ContractModel):
 
 type PlatformSmokeMode = Literal["reddit_manual_smoke"]
 type PlatformSmokeStatus = Literal["queued", "running", "succeeded", "failed"]
-type CompanyName = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=300,
-        pattern=r"^[^\r\n]+$",
-        strip_whitespace=True,
-    ),
-]
 type VariantName = Annotated[
     str,
     StringConstraints(
@@ -202,7 +193,6 @@ class PlatformSmokeScenarioRef(ContractModel):
     variant_name: VariantName
     world_snapshot_id: UUID
     snapshot_sha256: Sha256Digest
-    company_name: CompanyName
 
 
 class PlatformSmokePost(ContractModel):

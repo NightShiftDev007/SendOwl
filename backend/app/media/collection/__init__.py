@@ -1,22 +1,12 @@
 """Pure media-collection primitives used by persistence and worker adapters."""
 
-from app.media.collection.aliases import (
-    find_company_alias_matches,
-    find_company_alias_matches_bounded,
-    find_company_mentions,
-)
 from app.media.collection.builders import (
     CollectedArticle,
-    EvidenceBuildResult,
     build_collected_article,
     build_evidence_item,
 )
 from app.media.collection.errors import (
-    AmbiguousCompanyAliasError,
-    AmbiguousCompanyMentionError,
     ArticleContentExtractionError,
-    CompanyAliasMatchLimitError,
-    DuplicateCompanyProfileError,
     InvalidArticleUrlError,
     InvalidExtractionConfigurationError,
     InvalidExtractorResultError,
@@ -34,14 +24,9 @@ from app.media.collection.extraction import (
 from app.media.collection.urls import calculate_sha256, calculate_url_sha256, normalize_url
 
 __all__ = [
-    "AmbiguousCompanyAliasError",
-    "AmbiguousCompanyMentionError",
     "ArticleContentExtractionError",
-    "CompanyAliasMatchLimitError",
     "CollectedArticle",
     "ContentStatus",
-    "DuplicateCompanyProfileError",
-    "EvidenceBuildResult",
     "ExtractedArticleContent",
     "ExtractionFailure",
     "ExtractorStep",
@@ -56,8 +41,5 @@ __all__ = [
     "calculate_url_sha256",
     "extract_article_content",
     "extract_html_text",
-    "find_company_alias_matches",
-    "find_company_alias_matches_bounded",
-    "find_company_mentions",
     "normalize_url",
 ]

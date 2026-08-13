@@ -20,7 +20,7 @@ class WorldSnapshotEvidenceNotFoundError(WorldModelError):
 
 
 class WorldSnapshotRevisionConflictError(WorldModelError):
-    """Raised when selected articles changed after a user reviewed coverage."""
+    """Raised when selected articles changed after a user reviewed media evidence."""
 
     def __init__(self, stale_article_ids: tuple[UUID, ...]) -> None:
         if not stale_article_ids:
@@ -70,11 +70,9 @@ class SnapshotEvidenceSelectionError(WorldModelError):
         self,
         missing_article_ids: tuple[UUID, ...],
         duplicate_article_ids: tuple[UUID, ...],
-        unmatched_article_ids: tuple[UUID, ...],
     ) -> None:
         self.missing_article_ids = missing_article_ids
         self.duplicate_article_ids = duplicate_article_ids
-        self.unmatched_article_ids = unmatched_article_ids
         reasons: list[str] = []
         if missing_article_ids:
             reasons.append(
@@ -84,11 +82,6 @@ class SnapshotEvidenceSelectionError(WorldModelError):
             reasons.append(
                 "duplicate media row article IDs: "
                 + ", ".join(str(value) for value in duplicate_article_ids)
-            )
-        if unmatched_article_ids:
-            reasons.append(
-                "article IDs without an exact company alias match: "
-                + ", ".join(str(value) for value in unmatched_article_ids)
             )
         if not reasons:
             raise ValueError("at least one invalid evidence article ID is required")

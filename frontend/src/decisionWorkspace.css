@@ -24,7 +24,6 @@
   background: var(--decision-bg);
 }
 
-.decision-company-surface,
 .decision-world-surface,
 .decision-scenario-surface {
   gap: 0;
@@ -173,13 +172,11 @@
 }
 
 .decision-context-rail,
-.decision-inspector,
-.decision-cockpit > .company-directory {
+.decision-inspector {
   padding: 22px;
   background: #09151d;
 }
 
-.decision-cockpit > .company-directory,
 .decision-context-rail {
   border-right: 1px solid var(--decision-line);
 }
@@ -310,110 +307,6 @@
   background: rgba(229, 165, 90, 0.13);
 }
 
-/* Company evidence cockpit */
-.decision-company-surface .company-evidence-workbench {
-  align-items: stretch;
-  gap: 0;
-  margin-top: 0;
-}
-
-.decision-company-surface .company-directory,
-.decision-company-surface .company-coverage {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.decision-company-surface .company-directory-heading,
-.decision-company-surface .company-coverage-heading,
-.decision-company-surface .company-coverage-results-heading {
-  border-color: var(--decision-line);
-}
-
-.decision-company-surface .company-directory-heading h2,
-.decision-company-surface .company-coverage-heading h2,
-.decision-company-surface .company-coverage-results-heading h3,
-.decision-company-surface .company-create-form h3 {
-  color: var(--decision-ink);
-}
-
-.decision-company-surface .company-directory-heading p,
-.decision-company-surface .company-coverage-heading p,
-.decision-company-surface .company-coverage-results-heading p,
-.decision-company-surface .company-create-form p {
-  color: var(--decision-muted);
-}
-
-.decision-company-surface .company-list button {
-  color: var(--decision-ink);
-  background: transparent;
-  border-color: transparent;
-}
-
-.decision-company-surface .company-list button:hover {
-  background: rgba(91, 213, 212, 0.05);
-}
-
-.decision-company-surface .company-list button[data-selected="true"] {
-  background: rgba(91, 213, 212, 0.08);
-  border-color: rgba(91, 213, 212, 0.35);
-}
-
-.decision-company-surface .company-list-copy small,
-.decision-company-surface .company-list-copy time {
-  color: var(--decision-muted);
-}
-
-.decision-company-surface .company-coverage {
-  min-height: 100%;
-  padding: clamp(20px, 2.5vw, 36px);
-  background: var(--decision-bg);
-}
-
-.decision-company-surface .company-coverage-unselected,
-.decision-stage-empty {
-  display: grid;
-  min-height: 420px;
-  place-items: center;
-  text-align: center;
-}
-
-.decision-company-surface .company-coverage-unselected h2,
-.decision-company-surface .company-coverage-unselected p {
-  max-width: 460px;
-  color: var(--decision-ink);
-}
-
-.decision-company-surface .company-coverage-unselected p {
-  color: var(--decision-muted);
-}
-
-.decision-company-surface .company-coverage-ledger {
-  border-color: var(--decision-line);
-  background: transparent;
-}
-
-.decision-company-surface .company-coverage-ledger > div {
-  border-color: var(--decision-line);
-}
-
-.decision-company-surface .company-coverage-ledger dt,
-.decision-company-surface .media-article-row,
-.decision-company-surface .evidence-explanation small {
-  color: var(--decision-muted);
-}
-
-.decision-company-surface .company-coverage-ledger dd,
-.decision-company-surface .media-article-row h3,
-.decision-company-surface .evidence-explanation q {
-  color: var(--decision-ink);
-}
-
-.decision-company-surface .company-evidence-article {
-  border-color: var(--decision-line);
-  background: transparent;
-}
-
 /* World model cockpit */
 .decision-world-surface .world-model-builder,
 .decision-world-surface .world-model-registry {
@@ -474,8 +367,7 @@
 
 .decision-world-surface .world-evidence-toolbar,
 .decision-world-surface .world-candidate-heading,
-.decision-world-surface .world-candidate-list > li,
-.decision-world-surface .world-candidate-context li {
+.decision-world-surface .world-candidate-list > li {
   border-color: var(--decision-line);
 }
 
@@ -488,16 +380,40 @@
   border-color: rgba(91, 213, 212, 0.32);
 }
 
-.decision-world-surface .world-candidate-heading strong,
-.decision-world-surface .world-candidate-context q {
+.decision-world-surface .world-candidate-heading strong {
   color: var(--decision-ink);
 }
 
 .decision-world-surface .world-candidate-heading span,
 .decision-world-surface .world-candidate-excerpt,
-.decision-world-surface .world-candidate-context small,
 .decision-world-surface .world-evidence-toolbar p {
   color: var(--decision-muted);
+}
+
+.decision-world-surface .world-evidence-search label > span,
+.decision-world-surface .world-candidate-revision,
+.decision-world-surface .world-selected-empty,
+.decision-world-surface .world-selected-evidence-list li > span,
+.decision-world-surface .world-selected-evidence-list small,
+.decision-world-surface .world-selected-evidence-list code,
+.decision-world-surface .world-selected-evidence-list button {
+  color: var(--decision-muted);
+}
+
+.decision-world-surface .world-candidate-revision,
+.decision-world-surface .world-evidence-pagination,
+.decision-world-surface .world-selected-empty,
+.decision-world-surface .world-selected-evidence-list,
+.decision-world-surface .world-selected-evidence-list li {
+  border-color: var(--decision-line);
+}
+
+.decision-world-surface .world-selected-evidence-list strong {
+  color: var(--decision-ink);
+}
+
+.decision-world-surface .world-selected-evidence-list button:hover {
+  color: var(--decision-cyan);
 }
 
 .world-freeze-inspector {
@@ -815,6 +731,21 @@
   border-color: rgba(131, 211, 161, 0.45);
 }
 
+.decision-scenario-surface .scenario-create-success .button {
+  width: fit-content;
+  margin-top: 10px;
+}
+
+.decision-scenario-surface .scenario-detail-actions {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+
+.decision-scenario-surface .scenario-detail-actions .button {
+  white-space: nowrap;
+}
+
 .decision-scenario-surface .scenario-registry-workbench {
   max-width: 1580px;
   margin: 0 auto;
@@ -984,7 +915,6 @@
     order: 1;
   }
 
-  .decision-cockpit > .company-directory,
   .decision-context-rail,
   .scenario-context-rail {
     order: 2;
@@ -998,7 +928,6 @@
     order: 3;
   }
 
-  .decision-company-surface .company-coverage,
   .world-evidence-stage,
   .scenario-experiment-stage {
     padding: 18px;
@@ -1035,12 +964,10 @@
   }
 
   .decision-context-rail,
-  .decision-inspector,
-  .decision-cockpit > .company-directory {
+  .decision-inspector {
     padding: 18px 15px;
   }
 
-  .decision-company-surface .company-coverage,
   .world-evidence-stage,
   .scenario-experiment-stage {
     padding: 18px 15px;

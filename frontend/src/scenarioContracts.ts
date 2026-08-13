@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
-import { sha256DigestSchema } from "./companyContracts";
+import { sha256DigestSchema } from "./mediaContracts";
 
 const scenariosEndpoint = "/api/v2/scenarios";
 const identifierSchema = z.string().uuid();
@@ -13,7 +13,6 @@ const singleLineTextSchema = nonEmptyTextSchema.regex(
 );
 
 const scenarioTitleSchema = singleLineTextSchema.max(300);
-const snapshotCompanyNameSchema = singleLineTextSchema.max(300);
 const variantNameSchema = singleLineTextSchema.max(200);
 const decisionQuestionSchema = nonEmptyTextSchema.max(2_000);
 const hypothesisSchema = nonEmptyTextSchema.max(2_000);
@@ -26,7 +25,6 @@ export const scenarioSnapshotSchema = z
     world_snapshot_id: identifierSchema,
     version: z.number().int().positive(),
     snapshot_sha256: sha256DigestSchema,
-    company_name: snapshotCompanyNameSchema,
     evidence_count: z.number().int().min(1).max(50),
   })
   .strict();
@@ -47,7 +45,7 @@ export const scenarioInterventionSchema = z
     id: identifierSchema,
     position: z.number().int().nonnegative(),
     kind: z.literal("initial_post"),
-    actor: z.literal("snapshot_company"),
+    actor: z.literal("scenario_actor"),
     channel: z.literal("reddit"),
     content: interventionContentSchema,
     offset_minutes: interventionOffsetSchema,
@@ -167,7 +165,7 @@ export const scenariosResponseSchema = z
 export const scenarioInterventionRequestSchema = z
   .object({
     kind: z.literal("initial_post"),
-    actor: z.literal("snapshot_company"),
+    actor: z.literal("scenario_actor"),
     channel: z.literal("reddit"),
     content: interventionContentSchema,
     offset_minutes: interventionOffsetSchema,

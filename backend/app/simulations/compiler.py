@@ -12,10 +12,26 @@ from app.simulations.contracts import (
 from app.simulations.errors import baseline_variant_error, unknown_variant_error
 
 
-def derive_company_actor_user_name(world_snapshot_id: UUID, company_name: str) -> str:
-    """Derive one stable privacy-neutral platform handle from frozen company identity."""
-    material = f"{world_snapshot_id}\0{company_name}".encode()
-    return f"company_{sha256(material).hexdigest()[:16]}"
+def _scenario_actor_digest(scenario_id: UUID, variant_id: UUID) -> str:
+    return sha256(f"{scenario_id}\0{variant_id}".encode()).hexdigest()[:16]
+
+
+def derive_scenario_actor_user_name(scenario_id: UUID, variant_id: UUID) -> str:
+    """Derive a stable privacy-neutral handle from the immutable scenario path."""
+    return f"scenario_{_scenario_actor_digest(scenario_id, variant_id)}"
+
+
+def derive_scenario_actor_name(scenario_id: UUID, variant_id: UUID) -> str:
+    """Derive a stable display name from the immutable scenario path."""
+    return f"Scenario actor {_scenario_actor_digest(scenario_id, variant_id)}"
+
+
+def derive_scenario_actor_bio(scenario_id: UUID, variant_id: UUID) -> str:
+    """Describe the synthetic actor's exact immutable source."""
+    return (
+        f"Synthetic actor compiled from Scenario {scenario_id} variant {variant_id}. "
+        "Manual OASIS platform smoke only."
+    )
 
 
 def _selected_alternative(scenario: ScenarioDetail, variant_id: UUID) -> ScenarioVariant:
@@ -41,7 +57,6 @@ def compile_platform_smoke_input(
         variant_name=alternative.name,
         world_snapshot_id=scenario.snapshot.world_snapshot_id,
         snapshot_sha256=scenario.snapshot.snapshot_sha256,
-        company_name=scenario.snapshot.company_name,
     )
     posts = tuple(
         PlatformSmokePost(
@@ -51,19 +66,12 @@ def compile_platform_smoke_input(
         )
         for intervention in alternative.interventions
     )
-    company_name = scenario.snapshot.company_name
     return CompiledPlatformSmokeInput(
         mode="reddit_manual_smoke",
         scenario=scenario_ref,
         seed=seed,
-        actor_user_name=derive_company_actor_user_name(
-            scenario.snapshot.world_snapshot_id,
-            company_name,
-        ),
-        actor_name=company_name[:200],
-        actor_bio=(
-            f"Frozen company actor from WorldSnapshot {scenario.snapshot.world_snapshot_id}. "
-            "Manual OASIS platform smoke only."
-        ),
+        actor_user_name=derive_scenario_actor_user_name(scenario.id, alternative.id),
+        actor_name=derive_scenario_actor_name(scenario.id, alternative.id),
+        actor_bio=derive_scenario_actor_bio(scenario.id, alternative.id),
         posts=posts,
     )

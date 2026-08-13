@@ -7,6 +7,7 @@ const countryCodeSchema = z
   .regex(/^[A-Z]{2}$/, "country_code must be an uppercase ISO 3166-1 alpha-2 code");
 const topicIdSchema = z.string().uuid().nullable();
 const isoTimestampSchema = z.string().datetime({ offset: true });
+export const sha256DigestSchema = z.string().regex(/^[0-9a-f]{64}$/u);
 const originalArticleUrlSchema = z
   .string()
   .url()
@@ -37,6 +38,7 @@ export const mediaArticleSchema = z
     country_code: countryCodeSchema.nullable(),
     topic_id: topicIdSchema,
     topic: z.string().trim().min(1),
+    evidence_revision_sha256: sha256DigestSchema,
   })
   .strict();
 

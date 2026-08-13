@@ -23,7 +23,8 @@
     "verify": "pnpm run migrate:check && pnpm run test:backend && pnpm run lint:backend && pnpm run test:oasis-worker && pnpm run lint:oasis-worker && pnpm run test:frontend && pnpm run typecheck:frontend && pnpm run build:frontend && docker compose --env-file .env.example config --quiet",
     "stack": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} up --build",
     "stack:down": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} down",
-    "import:agendascope": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e AGENDASCOPE_DATABASE_URL backend python -m app.media.import_agendascope"
+    "import:agendascope": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e AGENDASCOPE_DATABASE_URL backend python -m app.media.import_agendascope",
+    "import:matraix-personas": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e MATRAIX_PERSONA_DATASET_PATH=/matraix-personas --volume \"${MATRAIX_PERSONA_DATASET_PATH:?MATRAIX_PERSONA_DATASET_PATH is required}:/matraix-personas:ro\" backend python -m app.populations.import_matraix"
   },
   "devDependencies": {
     "concurrently": "^9.2.3"

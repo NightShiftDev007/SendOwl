@@ -31,28 +31,28 @@ const PRIMARY_DESTINATIONS: readonly PrimaryDestination[] = [
     id: "workspace",
     label: "Decision Workspace",
     shortLabel: "Workspace",
-    hrefSection: "media",
-    sections: ["media", "companies", "world", "decisions"],
+    hrefSection: "threads",
+    sections: ["threads", "media", "world", "decisions"],
   },
   {
     id: "runs",
     label: "Run Studio",
     shortLabel: "Run Studio",
     hrefSection: "runs",
-    sections: ["runs", "reports"],
+    sections: ["personas", "tasks", "runs", "reports"],
   },
 ];
 
 const WORKSPACE_STAGE_IDS = [
+  "threads",
   "media",
-  "companies",
   "world",
   "decisions",
 ] as const satisfies readonly SectionId[];
 
 const WORKSPACE_STAGE_LABELS: Readonly<Record<(typeof WORKSPACE_STAGE_IDS)[number], string>> = {
+  threads: "决策任务",
   media: "媒体证据",
-  companies: "企业核验",
   world: "冻结现实",
   decisions: "决策实验",
 };
@@ -87,7 +87,10 @@ export function AppShell({
   const mainContentRef = useRef<HTMLElement>(null);
   const previousSectionRef = useRef<SectionId>(activeSection);
   const isDecisionWorkspace = includesSection(WORKSPACE_STAGE_IDS, activeSection);
-  const isRunWorkspace = activeSection === "runs" || activeSection === "reports";
+  const isRunWorkspace = activeSection === "personas"
+    || activeSection === "tasks"
+    || activeSection === "runs"
+    || activeSection === "reports";
 
   useEffect(() => {
     if (previousSectionRef.current === activeSection) {
@@ -178,16 +181,33 @@ export function AppShell({
         {isRunWorkspace ? (
           <div className="product-run-rail" aria-label="Run Studio 阶段">
             <a
+              href={createSectionHref("personas")}
+              data-active={activeSection === "personas"}
+              aria-current={activeSection === "personas" ? "page" : undefined}
+            >
+              Persona World
+            </a>
+            <a
+              href={createSectionHref("tasks")}
+              data-active={activeSection === "tasks"}
+              aria-current={activeSection === "tasks" ? "page" : undefined}
+            >
+              Task Gallery
+            </a>
+            <a
               href={createSectionHref("runs")}
               data-active={activeSection === "runs"}
               aria-current={activeSection === "runs" ? "page" : undefined}
             >
-              运行控制
+              Playground
             </a>
-            <span aria-disabled="true" data-active={activeSection === "reports"}>
+            <a
+              href={createSectionHref("reports")}
+              data-active={activeSection === "reports"}
+              aria-current={activeSection === "reports" ? "page" : undefined}
+            >
               决策报告
-              <small>待真实 API</small>
-            </span>
+            </a>
           </div>
         ) : null}
       </header>

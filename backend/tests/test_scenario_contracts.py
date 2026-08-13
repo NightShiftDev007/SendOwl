@@ -33,7 +33,7 @@ def _raw_request(model_id: UUID, snapshot_id: UUID) -> dict[str, object]:
                 "interventions": [
                     {
                         "kind": "initial_post",
-                        "actor": "snapshot_company",
+                        "actor": "scenario_actor",
                         "channel": "reddit",
                         "content": "We are publishing the verified facts.",
                         "offset_minutes": 15,
@@ -62,7 +62,7 @@ def _public_variants() -> tuple[ScenarioVariant, tuple[ScenarioVariant, ...]]:
                 id=uuid4(),
                 position=0,
                 kind="initial_post",
-                actor="snapshot_company",
+                actor="scenario_actor",
                 channel="reddit",
                 content="We are publishing the verified facts.",
                 offset_minutes=15,
@@ -123,7 +123,6 @@ def test_scenario_response_rejects_uuid_transport_strings() -> None:
         world_snapshot_id=uuid4(),
         version=1,
         snapshot_sha256="a" * 64,
-        company_name="A" * 300,
         evidence_count=2,
     )
     baseline, alternatives = _public_variants()
@@ -148,7 +147,6 @@ def test_scenario_hash_excludes_generated_ids_but_preserves_ordered_semantics() 
         world_snapshot_id=uuid4(),
         version=2,
         snapshot_sha256="b" * 64,
-        company_name="Acme",
         evidence_count=3,
     )
     baseline, alternatives = _public_variants()

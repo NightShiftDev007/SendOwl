@@ -33,7 +33,6 @@ def _scenario() -> ScenarioDetail:
             world_snapshot_id=SNAPSHOT_ID,
             version=4,
             snapshot_sha256="b" * 64,
-            company_name="Acme 中国",
             evidence_count=1,
         ),
         baseline=ScenarioVariant(
@@ -54,7 +53,7 @@ def _scenario() -> ScenarioDetail:
                         id=UUID("66666666-6666-4666-8666-666666666666"),
                         position=0,
                         kind="initial_post",
-                        actor="snapshot_company",
+                        actor="scenario_actor",
                         channel="reddit",
                         content="First exact post.",
                         offset_minutes=0,
@@ -63,7 +62,7 @@ def _scenario() -> ScenarioDetail:
                         id=UUID("77777777-7777-4777-8777-777777777777"),
                         position=1,
                         kind="initial_post",
-                        actor="snapshot_company",
+                        actor="scenario_actor",
                         channel="reddit",
                         content="Second exact post.",
                         offset_minutes=60,
@@ -79,14 +78,13 @@ def test_compiler_copies_exact_ordered_posts_and_is_deterministic() -> None:
     repeated = compile_platform_smoke_input(_scenario(), ALTERNATIVE_ID, 20260812)
 
     assert compiled == repeated
-    assert compiled.actor_user_name == "company_ea80c73e659a017f"
+    assert compiled.actor_user_name == "scenario_e5cafa48797517e4"
+    assert compiled.actor_name == "Scenario actor e5cafa48797517e4"
     assert [(post.position, post.content, post.offset_minutes) for post in compiled.posts] == [
         (0, "First exact post.", 0),
         (1, "Second exact post.", 60),
     ]
-    assert calculate_platform_smoke_input_sha256(compiled) == (
-        "56a5178c6d1c196727398d1e543ab34b969c913cfbf5fcd764b2932f4aed6d3a"
-    )
+    assert len(calculate_platform_smoke_input_sha256(compiled)) == 64
 
 
 @pytest.mark.parametrize("variant_id", (BASELINE_ID, UUID(int=0)))

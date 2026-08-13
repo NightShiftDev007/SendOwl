@@ -1,4 +1,4 @@
-name: ai-decision-center-v2
+name: ai-decision-center-core
 
 services:
   postgres:
@@ -46,7 +46,7 @@ services:
       - no-new-privileges:true
 
   migrate:
-    image: ai-decision-center-backend:2.0.0-dev
+    image: ai-decision-center-core-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -68,7 +68,7 @@ services:
       - no-new-privileges:true
 
   backend:
-    image: ai-decision-center-backend:2.0.0-dev
+    image: ai-decision-center-core-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -102,7 +102,7 @@ services:
       - no-new-privileges:true
 
   oasis-worker:
-    image: ai-decision-center-oasis-worker:2.0.0-dev
+    image: ai-decision-center-core-oasis-worker:2.0.0-dev
     build:
       context: ./backend
       dockerfile: OasisWorker.Dockerfile
@@ -112,11 +112,15 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OASIS_ARTIFACT_ROOT: /artifacts
       OASIS_WORKER_ID: compose-oasis-worker
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
     command:
       - daemon
+    working_dir: /tmp
     volumes:
       - oasis_artifacts:/artifacts
     read_only: true
@@ -126,7 +130,7 @@ services:
       - no-new-privileges:true
 
   frontend:
-    image: ai-decision-center-frontend:2.0.0-dev
+    image: ai-decision-center-core-frontend:2.0.0-dev
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -159,5 +163,8 @@ services:
 
 volumes:
   postgres_data:
+    name: ai-decision-center-core-postgres-data
   redis_data:
+    name: ai-decision-center-core-redis-data
   oasis_artifacts:
+    name: ai-decision-center-core-oasis-artifacts

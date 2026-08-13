@@ -1,0 +1,218 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import {
+  enqueueSemanticWorldGraph,
+  fetchSemanticWorldGraphEvidenceTimeline,
+  fetchSemanticWorldGraphSlice,
+  fetchSemanticWorldGraphs,
+  type SemanticWorldGraph,
+  type SemanticWorldGraphEvidenceTimeline,
+  type SemanticWorldGraphSlice,
+  type SemanticWorldGraphSliceDirection,
+  type SemanticWorldGraphsResponse,
+} from "./worldModelContracts";
+
+export type SemanticWorldGraphsState =
+  | { readonly status: "loading"; readonly data: SemanticWorldGraphsResponse | null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphsResponse }
+  | {
+    readonly status: "error";
+    readonly data: SemanticWorldGraphsResponse | null;
+    readonly error: Error;
+    readonly isRetrying: boolean;
+  };
+
+function normalizedError(error: unknown): Error {
+  return error instanceof Error
+    ? error
+    : new Error("语义世界图请求抛出了非标准错误。");
+}
+
+export function useSemanticWorldGraphs(
+  worldModelId: string,
+  snapshotId: string,
+): {
+  readonly state: SemanticWorldGraphsState;
+  readonly enqueueState: "idle" | "submitting";
+  readonly selectedGraphId: string | null;
+  readonly selectGraph: (graphId: string) => void;
+  readonly enqueue: () => Promise<void>;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphsState>({
+    status: "loading",
+    data: null,
+  });
+  const [enqueueState, setEnqueueState] = useState<"idle" | "submitting">("idle");
+  const [selectedGraphId, setSelectedGraphId] = useState<string | null>(null);
+  const enqueueController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState((current) => ({ status: "loading", data: current.data }));
+    void fetchSemanticWorldGraphs(worldModelId, snapshotId, controller.signal)
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState((current) => ({
+          status: "error",
+          data: current.data,
+          error: normalizedError(error),
+          isRetrying: false,
+        }));
+      });
+    return () => controller.abort();
+  }, [requestVersion, snapshotId, worldModelId]);
+
+  useEffect(() => {
+    const data = state.data;
+    if (data === null || !data.items.some((item) => ["queued", "running"].includes(item.status))) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => setRequestVersion((current) => current + 1), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [state.data]);
+
+  useEffect(() => () => enqueueController.current?.abort(), []);
+
+  const reload = useCallback((): void => {
+    setState((current) => current.status === "error"
+      ? { ...current, isRetrying: true }
+      : current);
+    setRequestVersion((current) => current + 1);
+  }, []);
+
+  const enqueue = useCallback(async (): Promise<void> => {
+    if (enqueueController.current !== null) return;
+    const controller = new AbortController();
+    enqueueController.current = controller;
+    setEnqueueState("submitting");
+    try {
+      const graph = await enqueueSemanticWorldGraph(worldModelId, snapshotId, controller.signal);
+      setSelectedGraphId(graph.id);
+      setRequestVersion((current) => current + 1);
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setState((current) => ({
+        status: "error",
+        data: current.data,
+        error: normalizedError(error),
+        isRetrying: false,
+      }));
+    } finally {
+      if (enqueueController.current === controller) {
+        enqueueController.current = null;
+        setEnqueueState("idle");
+      }
+    }
+  }, [snapshotId, worldModelId]);
+
+  return {
+    state,
+    enqueueState,
+    selectedGraphId,
+    selectGraph: setSelectedGraphId,
+    enqueue,
+    reload,
+  };
+}
+
+export function selectedSemanticWorldGraph(
+  response: SemanticWorldGraphsResponse | null,
+  graphId: string | null,
+): SemanticWorldGraph | null {
+  if (response === null || graphId === null) return null;
+  return response.items.find((graph) => graph.id === graphId) ?? null;
+}
+
+export type SemanticWorldGraphSliceState =
+  | { readonly status: "idle"; readonly data: null }
+  | { readonly status: "loading"; readonly data: null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphSlice }
+  | { readonly status: "error"; readonly data: null; readonly error: Error };
+
+export function useSemanticWorldGraphSlice(
+  graphId: string | null,
+  rootNodeId: string | null,
+  direction: SemanticWorldGraphSliceDirection,
+  hops: number,
+  maxNodes: number,
+): {
+  readonly state: SemanticWorldGraphSliceState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphSliceState>({
+    status: "idle",
+    data: null,
+  });
+
+  useEffect(() => {
+    if (graphId === null || rootNodeId === null) {
+      setState({ status: "idle", data: null });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ status: "loading", data: null });
+    void fetchSemanticWorldGraphSlice(
+      graphId,
+      rootNodeId,
+      direction,
+      hops,
+      maxNodes,
+      controller.signal,
+    )
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", data: null, error: normalizedError(error) });
+      });
+    return () => controller.abort();
+  }, [direction, graphId, hops, maxNodes, requestVersion, rootNodeId]);
+
+  return {
+    state,
+    reload: () => setRequestVersion((current) => current + 1),
+  };
+}
+
+export type SemanticWorldGraphTimelineState =
+  | { readonly status: "idle"; readonly data: null }
+  | { readonly status: "loading"; readonly data: null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphEvidenceTimeline }
+  | { readonly status: "error"; readonly data: null; readonly error: Error };
+
+export function useSemanticWorldGraphTimeline(
+  graphId: string | null,
+): {
+  readonly state: SemanticWorldGraphTimelineState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphTimelineState>({
+    status: "idle",
+    data: null,
+  });
+
+  useEffect(() => {
+    if (graphId === null) {
+      setState({ status: "idle", data: null });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ status: "loading", data: null });
+    void fetchSemanticWorldGraphEvidenceTimeline(graphId, controller.signal)
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", data: null, error: normalizedError(error) });
+      });
+    return () => controller.abort();
+  }, [graphId, requestVersion]);
+
+  return {
+    state,
+    reload: () => setRequestVersion((current) => current + 1),
+  };
+}

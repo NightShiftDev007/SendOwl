@@ -107,20 +107,30 @@ def test_capabilities_endpoint_exposes_all_foundation_domains() -> None:
     assert {capability.name for capability in capabilities.capabilities} == {
         "media",
         "evidence",
-        "companies",
         "world_models",
+        "world_graphs",
+        "decision_threads",
+        "decision_reports",
+        "report_questions",
         "scenarios",
+        "populations.matraix",
         "simulations.matraix",
+        "tasks.matraix.survey",
         "simulations.oasis",
     }
     states_by_name = {capability.name: capability.state for capability in capabilities.capabilities}
     assert states_by_name["media"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["companies"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["world_models"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["evidence"] is CapabilityStatus.CONTRACT_READY
+    assert states_by_name["world_graphs"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["decision_threads"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["decision_reports"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["report_questions"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["evidence"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["scenarios"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["populations.matraix"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["simulations.matraix"] is CapabilityStatus.CONTRACT_READY
-    assert states_by_name["simulations.oasis"] is CapabilityStatus.CONTRACT_READY
+    assert states_by_name["tasks.matraix.survey"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["simulations.oasis"] is CapabilityStatus.RUNTIME_READY
 
 
 def test_readyz_returns_503_when_required_database_is_not_configured() -> None:

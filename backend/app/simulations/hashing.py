@@ -9,7 +9,7 @@ from app.simulations.contracts import CompiledPlatformSmokeInput
 def canonical_platform_smoke_input_json(compiled: CompiledPlatformSmokeInput) -> str:
     """Serialize every immutable worker input while excluding resource identity and paths."""
     payload = {
-        "schema_version": "oasis-platform-smoke/v1",
+        "schema_version": "oasis-platform-smoke/v2",
         "mode": compiled.mode,
         "scenario": {
             "id": str(compiled.scenario.id),
@@ -18,7 +18,6 @@ def canonical_platform_smoke_input_json(compiled: CompiledPlatformSmokeInput) ->
             "variant_name": compiled.scenario.variant_name,
             "world_snapshot_id": str(compiled.scenario.world_snapshot_id),
             "snapshot_sha256": compiled.scenario.snapshot_sha256,
-            "company_name": compiled.scenario.company_name,
         },
         "seed": compiled.seed,
         "actor": {

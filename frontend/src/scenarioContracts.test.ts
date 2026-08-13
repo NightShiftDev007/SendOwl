@@ -22,13 +22,12 @@ const validSnapshot = {
   world_snapshot_id: worldSnapshotId,
   version: 2,
   snapshot_sha256: snapshotDigest,
-  company_name: "星河科技有限公司",
   evidence_count: 3,
 };
 
 const validSummary = {
   id: scenarioId,
-  title: "星河科技回应策略实验",
+  title: "信息回应策略实验",
   decision_question: "主动公开进展是否比保持现状更能降低质疑？",
   created_at: "2026-08-12T08:30:00Z",
   scenario_sha256: scenarioDigest,
@@ -39,7 +38,7 @@ const validIntervention = {
   id: interventionId,
   position: 0,
   kind: "initial_post",
-  actor: "snapshot_company",
+  actor: "scenario_actor",
   channel: "reddit",
   content: "我们将公开供应链进展并持续更新。",
   offset_minutes: 30,
@@ -66,7 +65,7 @@ const validDetail = {
 };
 
 const validRequest = {
-  title: "星河科技回应策略实验",
+  title: "信息回应策略实验",
   decision_question: "主动公开进展是否比保持现状更能降低质疑？",
   world_model_id: worldModelId,
   world_snapshot_id: worldSnapshotId,
@@ -81,7 +80,7 @@ const validRequest = {
       interventions: [
         {
           kind: "initial_post",
-          actor: "snapshot_company",
+          actor: "scenario_actor",
           channel: "reddit",
           content: "我们将公开供应链进展并持续更新。",
           offset_minutes: 30,
@@ -196,13 +195,7 @@ describe("decision scenario contracts", () => {
     expect(
       scenarioSummarySchema.safeParse({
         ...validSummary,
-        snapshot: { ...validSnapshot, company_name: "企".repeat(301) },
-      }).success,
-    ).toBe(false);
-    expect(
-      scenarioSummarySchema.safeParse({
-        ...validSummary,
-        snapshot: { ...validSnapshot, company_name: "星河科技\n旧名称" },
+        snapshot: { ...validSnapshot, company_name: "removed" },
       }).success,
     ).toBe(false);
     expect(

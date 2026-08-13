@@ -1,23 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./AppShell";
-import { CompanyEvidencePage } from "./CompanyEvidencePage";
 import {
-  moduleDefinitions,
   navigationItems,
   requireNavigationItem,
   type SectionId,
 } from "./domain";
+import { DecisionReportsPage } from "./DecisionReportsPage";
+import { DecisionThreadsPage, createDecisionThreadHash } from "./DecisionThreadsPage";
 import { MediaPage } from "./MediaPage";
-import { ModulePage } from "./ModulePage";
 import { OasisPlatformSmokePage } from "./OasisPlatformSmokePage";
 import { OverviewPage } from "./OverviewPage";
+import { PersonaWorldPage } from "./PersonaWorldPage";
 import { ScenarioPage } from "./ScenarioPage";
+import { TaskGalleryPage } from "./TaskGalleryPage";
 import { WorldModelPage } from "./WorldModelPage";
+import {
+  createRunStudioHash,
+  resolveRunStudioRoute,
+  type RunStudioRoute,
+} from "./runStudioRoute";
 
 function renderActivePage(
   activeSection: SectionId,
   onNavigate: (sectionId: SectionId) => void,
+  runStudioRoute: RunStudioRoute | null,
+  onRunStudioRouteChange: (route: RunStudioRoute) => void,
+  resourceId: string | null,
 ): JSX.Element {
   if (activeSection === "overview") {
     return <OverviewPage onNavigate={onNavigate} />;
@@ -27,8 +36,15 @@ function renderActivePage(
     return <MediaPage />;
   }
 
-  if (activeSection === "companies") {
-    return <CompanyEvidencePage />;
+  if (activeSection === "threads") {
+    return (
+      <DecisionThreadsPage
+        selectedThreadId={resourceId}
+        onSelectThread={(threadId) => {
+          window.location.hash = createDecisionThreadHash(threadId);
+        }}
+      />
+    );
   }
 
   if (activeSection === "world") {
@@ -39,16 +55,32 @@ function renderActivePage(
     return <ScenarioPage />;
   }
 
-  if (activeSection === "runs") {
-    return <OasisPlatformSmokePage />;
+  if (activeSection === "personas") {
+    return <PersonaWorldPage />;
   }
 
-  return (
-    <ModulePage
-      definition={moduleDefinitions[activeSection]}
-      navigationItem={requireNavigationItem(activeSection)}
-    />
-  );
+  if (activeSection === "tasks") {
+    return <TaskGalleryPage initialTaskId={resourceId} />;
+  }
+
+  if (activeSection === "runs") {
+    if (runStudioRoute === null) {
+      throw new Error("Run Studio route is missing for the runs workspace.");
+    }
+
+    return (
+      <OasisPlatformSmokePage
+        route={runStudioRoute}
+        onRouteChange={onRunStudioRouteChange}
+      />
+    );
+  }
+
+  if (activeSection === "reports") {
+    return <DecisionReportsPage initialExperimentId={resourceId} />;
+  }
+
+  throw new Error(`Unsupported application section: ${String(activeSection)}`);
 }
 
 function createSectionHref(sectionId: SectionId): string {
@@ -56,12 +88,22 @@ function createSectionHref(sectionId: SectionId): string {
 }
 
 type HashRoute =
-  | { readonly status: "resolved"; readonly section: SectionId }
+  | {
+      readonly status: "resolved";
+      readonly section: SectionId;
+      readonly runStudioRoute: RunStudioRoute | null;
+      readonly resourceId: string | null;
+    }
   | { readonly status: "invalid"; readonly hash: string; readonly message: string };
 
 export function resolveSectionFromHash(hash: string): HashRoute {
   if (hash === "" || hash === "#") {
-    return { status: "resolved", section: "overview" };
+    return {
+      status: "resolved",
+      section: "overview",
+      runStudioRoute: null,
+      resourceId: null,
+    };
   }
 
   if (!hash.startsWith("#/")) {
@@ -74,7 +116,10 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     };
   }
 
-  const sectionName = hash.slice(2);
+  const routeValue = hash.slice(2);
+  const queryIndex = routeValue.indexOf("?");
+  const sectionName = queryIndex === -1 ? routeValue : routeValue.slice(0, queryIndex);
+  const query = queryIndex === -1 ? "" : routeValue.slice(queryIndex + 1);
   const section = navigationItems.find((item) => item.id === sectionName);
 
   if (section === undefined) {
@@ -87,7 +132,82 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     };
   }
 
-  return { status: "resolved", section: section.id };
+  if (query !== "" && !["runs", "threads", "reports", "tasks"].includes(section.id)) {
+    return {
+      status: "invalid",
+      hash,
+      message: `工作区“${section.id}”不接受查询参数。`,
+    };
+  }
+
+  if (section.id === "runs") {
+    const result = resolveRunStudioRoute(query);
+
+    if (result.status === "invalid") {
+      return {
+        status: "invalid",
+        hash,
+        message: result.message,
+      };
+    }
+
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: result.route,
+      resourceId: null,
+    };
+  }
+
+  if (section.id === "tasks") {
+    const parameters = new URLSearchParams(query);
+    if ([...parameters.keys()].some((name) => name !== "task")) {
+      return { status: "invalid", hash, message: "Task Gallery 包含不支持的查询参数。" };
+    }
+    const taskValues = parameters.getAll("task");
+    if (taskValues.length > 1) {
+      return { status: "invalid", hash, message: "Task Gallery 的 task 参数不能重复。" };
+    }
+    const taskId = taskValues[0] ?? null;
+    if (taskId !== null && taskId !== "survey") {
+      return { status: "invalid", hash, message: `Task Gallery 中不存在任务“${taskId}”。` };
+    }
+    return { status: "resolved", section: section.id, runStudioRoute: null, resourceId: taskId };
+  }
+
+  if (section.id === "threads" || section.id === "reports") {
+    const parameters = new URLSearchParams(query);
+    const expectedName = section.id === "threads" ? "thread_id" : "experiment_id";
+    if ([...parameters.keys()].some((name) => name !== expectedName)) {
+      return {
+        status: "invalid",
+        hash,
+        message: `工作区“${section.id}”包含不支持的查询参数。`,
+      };
+    }
+    const resourceId = parameters.get(expectedName);
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+    if (resourceId !== null && !uuidPattern.test(resourceId)) {
+      return {
+        status: "invalid",
+        hash,
+        message: `${expectedName} 必须是有效 UUID。`,
+      };
+    }
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      resourceId,
+    };
+  }
+
+  return {
+    status: "resolved",
+    section: section.id,
+    runStudioRoute: null,
+    resourceId: null,
+  };
 }
 
 function useHashRoute(): readonly [HashRoute, (sectionId: SectionId) => void] {
@@ -158,6 +278,9 @@ function RouteErrorPage({ route }: { readonly route: Extract<HashRoute, { status
 
 export function App(): JSX.Element {
   const [route, navigate] = useHashRoute();
+  const updateRunStudioRoute = useCallback((nextRoute: RunStudioRoute): void => {
+    window.location.hash = createRunStudioHash(nextRoute);
+  }, []);
 
   if (route.status === "invalid") {
     return <RouteErrorPage route={route} />;
@@ -173,7 +296,13 @@ export function App(): JSX.Element {
       navigation={navigationItems}
       createSectionHref={createSectionHref}
     >
-      {renderActivePage(activeSection, navigate)}
+      {renderActivePage(
+        activeSection,
+        navigate,
+        route.runStudioRoute,
+        updateRunStudioRoute,
+        route.resourceId,
+      )}
     </AppShell>
   );
 }

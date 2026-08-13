@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
-import { sha256DigestSchema } from "./companyContracts";
+import { sha256DigestSchema } from "./mediaContracts";
 
 const platformSmokeRunsEndpoint = "/api/v2/simulation-runs/platform-smoke";
 const oasisReadinessEndpoint = "/api/v2/simulations/oasis/readiness";
@@ -42,7 +42,6 @@ export const platformSmokeScenarioSchema = z
     variant_name: singleLineTextSchema.max(200),
     world_snapshot_id: identifierSchema,
     snapshot_sha256: sha256DigestSchema,
-    company_name: singleLineTextSchema.max(300),
   })
   .strict();
 
