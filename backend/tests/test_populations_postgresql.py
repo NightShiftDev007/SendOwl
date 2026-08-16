@@ -157,7 +157,7 @@ async def _exercise_population_repository(database_url: str) -> None:
                 current_revision = await connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-                assert current_revision == "20260816_core_0035"
+                assert current_revision == "20260816_core_0038"
                 dataset_id, persona_ids = await _insert_dataset(connection)
                 async with AsyncSession(
                     bind=connection,

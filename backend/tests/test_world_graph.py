@@ -41,6 +41,7 @@ def _snapshot() -> SnapshotDetail:
                 captured_text_sha256=calculate_captured_text_sha256("two", "body"),
             ),
         ),
+        policy_evidence=(),
     )
 
 

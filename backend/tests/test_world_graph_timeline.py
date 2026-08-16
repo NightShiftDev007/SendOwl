@@ -38,6 +38,7 @@ def _snapshot() -> SnapshotDetail:
         snapshot_sha256="a" * 64,
         created_at=datetime(2026, 8, 12, tzinfo=UTC),
         evidence=evidence,
+        policy_evidence=(),
     )
 
 

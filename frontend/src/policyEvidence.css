@@ -1,0 +1,33 @@
+.policy-page { display: grid; gap: 20px; }
+.policy-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; padding: 24px; border: 1px solid var(--border); background: var(--surface); }
+.policy-hero h2, .policy-capture h3, .policy-detail h3, .policy-directory h3 { margin: 4px 0 0; }
+.policy-hero p { max-width: 720px; margin: 0; color: var(--ink-muted); }
+.policy-hero span, .policy-capture header span, .policy-detail > header span, .policy-directory header span, .policy-content header span { color: var(--product-accent); font-size: 11px; letter-spacing: .14em; }
+.policy-layout { display: grid; grid-template-columns: minmax(280px, .85fr) minmax(420px, 1.5fr) minmax(280px, .85fr); gap: 16px; align-items: start; }
+.policy-capture, .policy-detail, .policy-directory { min-width: 0; border: 1px solid var(--border); background: var(--surface); padding: 18px; }
+.policy-capture { display: grid; gap: 12px; }
+.policy-capture label { display: grid; gap: 6px; color: var(--ink-muted); font-size: 12px; }
+.policy-capture input, .policy-capture textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--canvas); color: var(--ink); padding: 9px 10px; font: inherit; }
+.policy-capture textarea, .policy-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.policy-capture-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.policy-capture .policy-confirm { display: flex; align-items: start; gap: 8px; line-height: 1.5; }
+.policy-capture .policy-confirm input { width: auto; margin-top: 3px; }
+.policy-capture > button, .policy-directory button, .policy-versions button { border: 1px solid var(--border); background: var(--canvas); color: var(--ink); padding: 10px; cursor: pointer; }
+.policy-capture > button:disabled, .policy-directory button:disabled { cursor: not-allowed; opacity: .5; }
+.policy-detail > header, .policy-directory > header, .policy-content header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.policy-identity { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 18px 0; }
+.policy-identity div { padding: 10px; border: 1px solid var(--border); }
+.policy-identity span, .policy-identity strong { display: block; }
+.policy-identity span { color: var(--ink-muted); font-size: 11px; }
+.policy-versions { display: grid; gap: 8px; }
+.policy-versions button { display: grid; gap: 5px; text-align: left; }
+.policy-versions button[aria-pressed="true"], .policy-directory button[data-selected="true"] { border-color: var(--product-accent); }
+.policy-versions span, .policy-versions small, .policy-directory span, .policy-directory small, .policy-directory time { color: var(--ink-muted); }
+.policy-content { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
+.policy-content pre { max-height: 520px; overflow: auto; padding: 16px; background: var(--canvas); border: 1px solid var(--border); font: inherit; line-height: 1.65; }
+.policy-directory ol { list-style: none; padding: 0; display: grid; gap: 8px; }
+.policy-directory li > button { width: 100%; display: grid; gap: 5px; text-align: left; }
+.policy-directory nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.policy-empty { padding: 28px 8px; color: var(--ink-muted); }
+@media (max-width: 1120px) { .policy-layout { grid-template-columns: 1fr 1.5fr; } .policy-directory { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .policy-hero { display: grid; } .policy-layout { grid-template-columns: 1fr; } .policy-directory { grid-column: auto; } .policy-identity { grid-template-columns: 1fr 1fr; } }

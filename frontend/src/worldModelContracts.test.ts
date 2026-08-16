@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mediaArticleSchema } from "./mediaContracts";
+import { policyDocumentSummarySchema } from "./policyEvidenceContracts";
 import {
   appendWorldSnapshot,
   buildWorldSnapshotCreateRequest,
@@ -33,6 +34,8 @@ afterEach(() => {
 const worldModelId = "16f59066-b4e9-4d71-8c51-7742f85943f2";
 const snapshotId = "33f6aee5-2912-4429-85ab-601dbfe41c19";
 const articleId = "4fe5517f-6dd4-4376-8337-d94f50acc074";
+const policyDocumentId = "a27d8829-3cfb-4128-8791-cf4525e66741";
+const policyVersionId = "3ef1126d-b174-4d68-a5e1-9be5f506bb53";
 const snapshotDigest = "a".repeat(64);
 const contentDigest = "b".repeat(64);
 const evidenceRevisionDigest = "c".repeat(64);
@@ -55,10 +58,41 @@ const currentArticle = mediaArticleSchema.parse({
   evidence_revision_sha256: evidenceRevisionDigest,
 });
 
+const currentPolicy = policyDocumentSummarySchema.parse({
+  id: policyDocumentId,
+  source: {
+    id: "29137742-424d-4701-bbdf-a3f11465f82f",
+    authority_name: "Example Policy Authority",
+    jurisdiction_code: "CN",
+    homepage_url: "https://policy.example.com/",
+    source_sha256: "d".repeat(64),
+    created_at: "2026-08-12T08:00:00Z",
+  },
+  canonical_identifier: "CN-2026-1",
+  document_sha256: "e".repeat(64),
+  created_at: "2026-08-12T08:00:00Z",
+  version_count: 1,
+  latest_version: {
+    id: policyVersionId,
+    version: 1,
+    title: "Example Policy",
+    original_url: "https://policy.example.com/documents/1",
+    language: "en",
+    publication_date: "2026-08-01",
+    effective_from: "2026-09-01",
+    effective_until: null,
+    captured_at: "2026-08-12T08:00:00Z",
+    verification: "human_confirmed",
+    content_sha256: "f".repeat(64),
+    version_sha256: "1".repeat(64),
+  },
+});
+
 const validSnapshotSummary = {
   id: snapshotId,
   version: 1,
   evidence_count: 1,
+  policy_evidence_count: 0,
   snapshot_sha256: snapshotDigest,
   created_at: "2026-08-12T08:30:00Z",
 };
@@ -88,6 +122,7 @@ const validWorldModelDetail = {
         captured_text_sha256: contentDigest,
       },
     ],
+    policy_evidence: [],
   },
 };
 
@@ -101,24 +136,35 @@ describe("world model contracts", () => {
           article_id: articleId,
           evidence_revision_sha256: evidenceRevisionDigest,
         }],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(true);
   });
 
   it("builds evidence revisions directly from validated media articles", () => {
-    expect(buildWorldModelCreateRequest("季度经营媒体现实基线", [currentArticle])).toEqual({
+    expect(
+      buildWorldModelCreateRequest("季度经营媒体现实基线", [currentArticle], [currentPolicy]),
+    ).toEqual({
       title: "季度经营媒体现实基线",
       evidence: [{
         article_id: articleId,
         evidence_revision_sha256: evidenceRevisionDigest,
       }],
+      policy_evidence: [{
+        policy_version_id: policyVersionId,
+        version_sha256: "1".repeat(64),
+      }],
       verification: "human_confirmed",
     });
-    expect(buildWorldSnapshotCreateRequest([currentArticle])).toEqual({
+    expect(buildWorldSnapshotCreateRequest([currentArticle], [currentPolicy])).toEqual({
       evidence: [{
         article_id: articleId,
         evidence_revision_sha256: evidenceRevisionDigest,
+      }],
+      policy_evidence: [{
+        policy_version_id: policyVersionId,
+        version_sha256: "1".repeat(64),
       }],
       verification: "human_confirmed",
     });
@@ -134,12 +180,14 @@ describe("world model contracts", () => {
       worldModelCreateRequestSchema.safeParse({
         title: "季度经营媒体现实基线",
         evidence: [selection, selection],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
     expect(
       worldSnapshotCreateRequestSchema.safeParse({
         evidence: [selection, selection],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -147,6 +195,7 @@ describe("world model contracts", () => {
       worldSnapshotCreateRequestSchema.safeParse({
         title: "追加版本不允许改名",
         evidence: [selection],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -155,6 +204,7 @@ describe("world model contracts", () => {
         title: "季度经营媒体现实基线",
         company_id: "a4d8d10b-d7e5-4a34-b135-a6e6f1101834",
         evidence: [selection],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -177,6 +227,7 @@ describe("world model contracts", () => {
       worldModelCreateRequestSchema.safeParse({
         title: "季度经营媒体现实基线",
         evidence: oversizedEvidence,
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -184,6 +235,7 @@ describe("world model contracts", () => {
       worldModelCreateRequestSchema.safeParse({
         title: "季度经营媒体现实基线",
         evidence: [{ article_id: articleId, evidence_revision_sha256: "not-a-digest" }],
+        policy_evidence: [],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -357,7 +409,7 @@ describe("world model contracts", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    const request = buildWorldSnapshotCreateRequest([currentArticle]);
+    const request = buildWorldSnapshotCreateRequest([currentArticle], []);
 
     await expect(
       appendWorldSnapshot(worldModelId, request, new AbortController().signal),

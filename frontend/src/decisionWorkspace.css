@@ -1066,8 +1066,94 @@
   color: #ffb1a8;
 }
 
+.world-policy-selector {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.world-policy-selector > header,
+.world-policy-selector > nav,
+.world-policy-candidates li,
+.world-selected-policy-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.world-policy-selector > header h3,
+.world-policy-selector > header p {
+  margin: 4px 0 0;
+}
+
+.world-policy-selector > header span,
+.world-policy-selector > header p,
+.world-policy-candidates span,
+.world-policy-candidates small,
+.world-selected-policy-list span {
+  color: var(--ink-muted);
+}
+
+.world-policy-selector > header span {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+}
+
+.world-policy-candidates,
+.world-selected-policy-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.world-policy-candidates li,
+.world-selected-policy-list li {
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--canvas);
+}
+
+.world-policy-candidates li[data-selected="true"] {
+  border-color: var(--product-accent);
+}
+
+.world-policy-candidates label,
+.world-selected-policy-list li > div {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+}
+
+.world-policy-candidates a,
+.world-policy-selector button {
+  flex: none;
+}
+
+.world-policy-loading {
+  padding: 16px;
+  color: var(--ink-muted);
+  border: 1px dashed var(--border);
+}
+
+.world-snapshot-policy-evidence {
+  border-left-color: var(--product-accent);
+}
+
 @media (max-width: 700px) {
   .world-evidence-handoff {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .world-policy-selector > header,
+  .world-policy-candidates li,
+  .world-selected-policy-list li {
     align-items: stretch;
     flex-direction: column;
   }

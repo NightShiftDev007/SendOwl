@@ -1,6 +1,6 @@
 # SendOwl 项目交接与上下文
 
-> 状态基准：2026-08-16；分支 `main`；基准提交 `5ff26ab`；代码迁移 head `20260816_core_0035`。
+> 状态基准：2026-08-16；分支 `main`；基准提交 `84239b1`；代码迁移 head `20260816_core_0038`。
 
 本文是接手 SendOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 
@@ -42,7 +42,7 @@ SendOwl 将 AgendaScope、原 AI Decision Center、MatrAIx 与 MiroFish/OASIS �
 
 系统严格区分四类内容：
 
-1. 现实证据：导入的原始媒体内容和来源元数据。
+1. 现实证据：导入的原始媒体内容，以及人工核对捕获的政策原文、来源、版本和效力日期。
 2. 人工确认：用户选择并确认后冻结的证据快照。
 3. 实验假设：Scenario baseline、alternative 和干预规格。
 4. 合成输出：OASIS、Survey、Chat、Web、Linux 和 Persona Interview 的模型产物。
@@ -131,7 +131,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 ### 6.1 服务与迁移
 
 - 后端 `/health` 和 `/readyz` 正常；数据库已连接。
-- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0035` 需在下次 SendOwl 专属迁移后生效。
+- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0038` 需在下次 SendOwl 专属迁移后生效。
 - OASIS worker 在线；platform smoke ready。
 - Compose 还包含 Acme REST/MCP、固定 Chromium executor、Linux artifact runner 和 Nginx frontend。
 
@@ -200,6 +200,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 frontend/src/                    统一 React 工作台、严格 Zod 契约与 hooks
 backend/app/api/                 /api/v2 路由
 backend/app/media/               AgendaScope 导入、副本、同步与媒体查询
+backend/app/policy_evidence/     政策来源、稳定文档身份与不可变版本
 backend/app/world_models/        WorldModel / WorldSnapshot
 backend/app/world_graphs/        直接证据图、语义图、Slice、检索和来源链
 backend/app/scenarios/           baseline / alternative 规格
@@ -211,7 +212,7 @@ backend/app/report_questions/    证据问答与追问链
 backend/app/persona_interviews/  合成 Persona 报告访谈
 backend/app/matraix_*            Survey、Chat、Web、Linux、Trial Archive、Batch Registry
 backend/oasis_worker/            Python 3.11 OASIS 与各 LLM 任务执行器
-backend/migrations/versions/     0001～0035 独立 Core 迁移链
+backend/migrations/versions/     0001～0038 独立 Core 迁移链
 compose.yaml                     sendowl 独立运行拓扑
 ```
 
@@ -241,7 +242,7 @@ compose.yaml                     sendowl 独立运行拓扑
 
 - 事实有效期与证据发布时间仍是不同语义；当前 timeline 只表示文章发布时间。
 - PostgreSQL 图的混合全文/向量检索、规模基准和可选阿里云 GDB Provider 尚未实现。
-- 政策来源、政策文档、效力层级、生效/失效时间和与 WorldSnapshot 的证据契约尚未建立。
+- 政策来源、稳定文档身份、不可变版本、发布/施行/失效日期、完整正文、内容哈希及与 WorldSnapshot/Evidence Bundle 的精确版本冻结已建立；效力层级和自动摄取尚未建立。
 - 企业实体、企业关系链和 GTV 是明确非目标，不应作为“遗漏”重新加回。
 
 ### 9.5 生产治理未完成范围
@@ -265,15 +266,17 @@ compose.yaml                     sendowl 独立运行拓扑
 
 ### 阶段 B：补齐当前内部断链
 
-1. Survey、Chat、Web、Linux 四类 sealed parent 的有界分页、轻量 progress 和修订驱动轮询已接通；继续为超长 transcript/artifact 增加真正的详情增量读取。
+1. 已完成。Survey、Chat、Web、Linux 四类 sealed parent 的有界分页、轻量 progress 和修订驱动轮询已接通；Chat transcript 使用不进入内容哈希的数据库 identity 游标实现真正增量读取。Web pages/quotes 与成功状态在同一事务提交，Linux artifact 也只在终态结果封存后开放读取，因此两者不存在可观察的运行中详情增量，不增加伪游标接口。
 
-### 阶段 C：选择下一项大能力，不要同时铺开
+### 阶段 C：按证据、分析、执行三层依次扩展
 
-建议在以下三项中只选一项形成真实纵向切片：
+三个方向互补且都纳入目标路线，但禁止同时铺开；每一层必须形成通过真实 PostgreSQL 验证的纵向切片后再进入下一层：
 
-- Policy evidence：最贴近“现实证据 → 决策”的产品主线。
-- PostgreSQL evidence tools + bounded ReportAgent narrative：增强报告解释，但仍保持逐条引用和无预测边界。
-- 隔离 Harbor-compatible executor：工作量最大，需要先明确任务、auth、artifact、retry 和成本边界。
+1. **Policy evidence（证据层，基础闭环已完成）**：政策来源、稳定文档身份、不可变版本、发布/施行/失效时间、内容哈希、人工确认工作区，以及显式政策版本与 WorldSnapshot/Evidence Bundle 的冻结绑定已接通，并通过真实 PostgreSQL 验证。政策是外部现实证据，不能被 Agent 输出或执行结果替代；自动摄取和效力层级属于后续增强。
+2. **PostgreSQL evidence tools + bounded ReportAgent（分析编排层，下一步）**：在媒体与政策证据上增加有界工具计划、动态但受约束的大纲、逐条引用和可审计生成记录。Agent 输出是分析，不自动成为事实。
+3. **隔离 Harbor-compatible executor（执行层）**：最后建设通用 job、worker plane、cancel/retry、verifier、trajectory、artifact、授权下载和资源治理。执行结果是观测或 verifier 产物，不自动升级为现实证据。
+
+跨层连接必须保留来源、版本、时间、内容哈希和运行身份；ReportAgent 可以读取 Policy evidence 并提交 Harbor 任务，但任何下游结果进入 World 或 Report 前仍需显式、类型化引用。
 
 ### 阶段 D：生产化
 
@@ -343,7 +346,7 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 ## 13. 已知交接风险
 
-- 当前 `main` 已提交到 `5ff26ab`；其后的 Linux Evaluation 父目录是正在验证的未提交切片，禁止整体 reset。
+- 当前 `main` 已提交到 `84239b1`；其后的 Chat transcript 增量游标是已通过聚焦验证的未提交切片，禁止整体 reset。
 - 系统 capability 的 `runtime_ready` 表示能力代码已存在；真正是否允许执行仍要读取对应实时 readiness。当前需要 LLM 的五类执行均未就绪。
 - 媒体同步当前处于显式启用状态；任何调整源 DSN、schema revision 或同步周期的操作都必须保持源只读并只影响 SendOwl。
 - 固定 source sample 的成功只证明该受约束纵向链路，不代表通用 Chat/Web/Linux/Harbor 能力。

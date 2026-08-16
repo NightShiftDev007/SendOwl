@@ -19,6 +19,8 @@ import {
   type MediaArticlesResponse,
 } from "./mediaContracts";
 import { formatMediaCount, formatMediaTimestamp } from "./mediaPresentation";
+import type { PolicyDocumentSummary } from "./policyEvidenceContracts";
+import { usePolicyDocuments } from "./usePolicyEvidence";
 import {
   useMediaArticles,
   type MediaArticlesLoadState,
@@ -38,6 +40,7 @@ import {
   createWorldModel,
   type SnapshotEvidence,
   type SnapshotDetail,
+  type SnapshotPolicyEvidence,
   type WorldModelCreateRequest,
   type WorldModelDetail,
   type WorldModelSummary,
@@ -51,6 +54,7 @@ import "./decisionWorkspace.css";
 
 const articlesPerPage = 20;
 const maximumEvidenceCount = 50;
+type PolicyDirectoryState = ReturnType<typeof usePolicyDocuments>["state"];
 
 type WorldModelCreationState =
   | { readonly status: "idle" }
@@ -70,10 +74,12 @@ interface WorldModelBuilderProps {
   readonly mediaState: MediaArticlesLoadState;
   readonly page: number;
   readonly selectedArticles: readonly MediaArticle[];
+  readonly selectedPolicies: readonly PolicyDocumentSummary[];
   readonly isHumanConfirmed: boolean;
   readonly onChangeDraftQuery: (query: string) => void;
   readonly onChangePage: (page: number) => void;
   readonly onChangeSelectedArticles: (articles: readonly MediaArticle[]) => void;
+  readonly onChangeSelectedPolicies: (policies: readonly PolicyDocumentSummary[]) => void;
   readonly onChangeHumanConfirmed: (isConfirmed: boolean) => void;
   readonly onClearSearch: () => void;
   readonly onReloadMedia: () => void;
@@ -84,6 +90,7 @@ interface WorldModelBuilderProps {
 interface CandidateEvidenceSelectorProps {
   readonly response: MediaArticlesResponse;
   readonly selectedArticles: readonly MediaArticle[];
+  readonly selectionLimit: number;
   readonly disabled: boolean;
   readonly onChange: (articles: readonly MediaArticle[]) => void;
   readonly onInvalidateConfirmation: () => void;
@@ -126,11 +133,17 @@ function isStaleEvidenceRevisionError(error: Error): boolean {
 function evidenceSelectionKey(
   worldModelId: string,
   selectedArticles: readonly MediaArticle[],
+  selectedPolicies: readonly PolicyDocumentSummary[],
 ): string {
   return [
     worldModelId,
     ...selectedArticles.map(
       (article) => `${article.id}:${article.evidence_revision_sha256}`,
+    ),
+    ...selectedPolicies.map(
+      (document) => (
+        `${document.latest_version.id}:${document.latest_version.version_sha256}`
+      ),
     ),
   ].join("|");
 }
@@ -157,6 +170,7 @@ function BuilderSkeleton(): JSX.Element {
 function CandidateEvidenceSelector({
   response,
   selectedArticles,
+  selectionLimit,
   disabled,
   onChange,
   onInvalidateConfirmation,
@@ -177,7 +191,7 @@ function CandidateEvidenceSelector({
     }
 
     if (isSelected) {
-      if (selectedIds.has(article.id) || selectedArticles.length >= maximumEvidenceCount) {
+      if (selectedIds.has(article.id) || selectedArticles.length >= selectionLimit) {
         return;
       }
 
@@ -199,7 +213,7 @@ function CandidateEvidenceSelector({
       return;
     }
 
-    const availableSlots = maximumEvidenceCount - selectedArticles.length;
+    const availableSlots = selectionLimit - selectedArticles.length;
     const additions = response.items
       .filter((article) => !selectedIds.has(article.id))
       .slice(0, availableSlots);
@@ -212,7 +226,7 @@ function CandidateEvidenceSelector({
       <div className="world-evidence-toolbar">
         <p>
           选择会跨搜索与分页保留；打开原文核验后再确认冻结。
-          <strong>{selectedArticles.length} / {maximumEvidenceCount} 已选</strong>
+          <strong>{selectedArticles.length} / {selectionLimit} 可选媒体位</strong>
         </p>
         <button
           className="button button-secondary button-compact"
@@ -235,7 +249,7 @@ function CandidateEvidenceSelector({
             const inputId = `world-evidence-${article.id}`;
             const descriptionId = `world-evidence-description-${article.id}`;
             const isSelected = selectedIds.has(article.id);
-            const selectionLimitReached = selectedArticles.length >= maximumEvidenceCount
+            const selectionLimitReached = selectedArticles.length >= selectionLimit
               && !isSelected;
 
             return (
@@ -327,16 +341,165 @@ function SelectedEvidenceList({
   );
 }
 
+function WorldPolicyEvidenceSelector({
+  state,
+  page,
+  selectedPolicies,
+  mediaEvidenceCount,
+  disabled,
+  onChangePage,
+  onChange,
+  onReload,
+  onInvalidateConfirmation,
+}: {
+  readonly state: PolicyDirectoryState;
+  readonly page: number;
+  readonly selectedPolicies: readonly PolicyDocumentSummary[];
+  readonly mediaEvidenceCount: number;
+  readonly disabled: boolean;
+  readonly onChangePage: (page: number) => void;
+  readonly onChange: (policies: readonly PolicyDocumentSummary[]) => void;
+  readonly onReload: () => void;
+  readonly onInvalidateConfirmation: () => void;
+}): JSX.Element {
+  const selectedVersionIds = new Set(
+    selectedPolicies.map((document) => document.latest_version.id),
+  );
+  const total = state.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / 20));
+  const policyLimit = maximumEvidenceCount - mediaEvidenceCount;
+
+  const togglePolicy = (document: PolicyDocumentSummary, checked: boolean): void => {
+    if (disabled) return;
+    const versionId = document.latest_version.id;
+    const next = checked
+      ? selectedVersionIds.has(versionId) || selectedPolicies.length >= policyLimit
+        ? selectedPolicies
+        : [...selectedPolicies, document]
+      : selectedPolicies.filter((item) => item.latest_version.id !== versionId);
+    if (next !== selectedPolicies) {
+      onChange(next);
+      onInvalidateConfirmation();
+    }
+  };
+
+  return (
+    <section className="world-policy-selector" aria-labelledby="world-policy-selector-title">
+      <header>
+        <div>
+          <span>POLICY / IMMUTABLE VERSIONS</span>
+          <h3 id="world-policy-selector-title">选择要共同冻结的政策版本</h3>
+          <p>目录展示每份政策当前最新版本；已选项保留精确版本 ID 和哈希，不随目录更新漂移。</p>
+        </div>
+        <strong>{selectedPolicies.length} / {policyLimit} 可选政策位</strong>
+      </header>
+
+      {selectedPolicies.length === 0 ? null : (
+        <ol className="world-selected-policy-list" aria-label="待冻结政策版本">
+          {selectedPolicies.map((document) => (
+            <li key={document.latest_version.id}>
+              <div>
+                <strong>{document.latest_version.title}</strong>
+                <span>
+                  {document.source.authority_name} · {document.canonical_identifier} · v
+                  {document.latest_version.version}
+                </span>
+                <code title={document.latest_version.version_sha256}>
+                  {abbreviatedDigest(document.latest_version.version_sha256)}
+                </code>
+              </div>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => togglePolicy(document, false)}
+              >
+                移除
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {state.status === "error" ? (
+        <ApiErrorPanel
+          title="无法读取政策证据目录"
+          error={state.error}
+          isRetrying={false}
+          onRetry={onReload}
+        />
+      ) : null}
+      {state.status === "loading" && state.data === null ? (
+        <div className="world-policy-loading" role="status">正在读取政策版本…</div>
+      ) : null}
+      {state.data?.items.length === 0 ? (
+        <div className="world-policy-loading" role="status">
+          尚无可选政策证据；先在“政策证据”工作区人工捕获真实版本。
+        </div>
+      ) : null}
+      <ul className="world-policy-candidates">
+        {state.data?.items.map((document) => {
+          const version = document.latest_version;
+          const checked = selectedVersionIds.has(version.id);
+          const limitReached = selectedPolicies.length >= policyLimit && !checked;
+          return (
+            <li key={version.id} data-selected={checked}>
+              <input
+                id={`world-policy-${version.id}`}
+                type="checkbox"
+                checked={checked}
+                disabled={disabled || limitReached}
+                onChange={(event) => togglePolicy(document, event.target.checked)}
+              />
+              <label htmlFor={`world-policy-${version.id}`}>
+                <strong>{version.title}</strong>
+                <span>
+                  {document.source.authority_name} · {document.canonical_identifier} · v
+                  {version.version}
+                </span>
+                <small>
+                  发布 {version.publication_date} · 施行 {version.effective_from ?? "未标明"}
+                </small>
+              </label>
+              <a href={version.original_url} target="_blank" rel="noopener noreferrer">
+                原文 ↗
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+      <nav aria-label="政策证据分页">
+        <button
+          type="button"
+          disabled={disabled || page <= 1}
+          onClick={() => onChangePage(page - 1)}
+        >
+          上一页
+        </button>
+        <span>{page} / {pageCount}</span>
+        <button
+          type="button"
+          disabled={disabled || page >= pageCount}
+          onClick={() => onChangePage(page + 1)}
+        >
+          下一页
+        </button>
+      </nav>
+    </section>
+  );
+}
+
 function WorldModelBuilder({
   appliedQuery,
   draftQuery,
   mediaState,
   page,
   selectedArticles,
+  selectedPolicies,
   isHumanConfirmed,
   onChangeDraftQuery,
   onChangePage,
   onChangeSelectedArticles,
+  onChangeSelectedPolicies,
   onChangeHumanConfirmed,
   onClearSearch,
   onReloadMedia,
@@ -355,7 +518,7 @@ function WorldModelBuilder({
     && isStaleEvidenceRevisionError(creationState.error);
   const canSubmit = title.trim() !== ""
     && selectedArticles.length > 0
-    && selectedArticles.length <= maximumEvidenceCount
+    && selectedArticles.length + selectedPolicies.length <= maximumEvidenceCount
     && isHumanConfirmed
     && !isSubmitting;
 
@@ -365,6 +528,12 @@ function WorldModelBuilder({
     };
   }, []);
 
+  useEffect(() => {
+    if (activeController.current === null) {
+      setCreationState({ status: "idle" });
+    }
+  }, [selectedPolicies]);
+
   const submitWorldModel = async (): Promise<void> => {
     if (!canSubmit || activeController.current !== null) {
       return;
@@ -373,7 +542,7 @@ function WorldModelBuilder({
     let request: WorldModelCreateRequest;
 
     try {
-      request = buildWorldModelCreateRequest(title, selectedArticles);
+      request = buildWorldModelCreateRequest(title, selectedArticles, selectedPolicies);
     } catch (error: unknown) {
       setCreationState({ status: "error", error: normalizeWorldModelCreationError(error) });
       return;
@@ -392,6 +561,7 @@ function WorldModelBuilder({
 
       setTitle("");
       onChangeSelectedArticles([]);
+      onChangeSelectedPolicies([]);
       onChangeHumanConfirmed(false);
       setCreationState({ status: "success", worldModel });
       onCreated(worldModel);
@@ -537,6 +707,7 @@ function WorldModelBuilder({
                 <CandidateEvidenceSelector
                   response={response}
                   selectedArticles={selectedArticles}
+                  selectionLimit={maximumEvidenceCount - selectedPolicies.length}
                   disabled={isSubmitting || mediaState.status === "loading"}
                   onChange={onChangeSelectedArticles}
                   onInvalidateConfirmation={() => {
@@ -574,7 +745,7 @@ function WorldModelBuilder({
             </div>
             <div className="world-freeze-note">
               <strong>不可变边界</strong>
-              <p>保存所选报道的来源、正文哈希和修订地址；后续采集不会改写这一版本。</p>
+              <p>保存所选报道修订与政策版本的来源、日期和正文哈希；后续采集不会改写这一版本。</p>
             </div>
 
             <SelectedEvidenceList
@@ -595,7 +766,7 @@ function WorldModelBuilder({
                   }}
                 />
                 <span>
-                  <strong>我已核验所选来源，并确认以这些修订冻结当前现实</strong>
+                  <strong>我已核验所选媒体与政策来源，并确认冻结这些精确版本</strong>
                   <small>这是人工冻结声明，不代表系统已判断报道真伪或未来走势。</small>
                 </span>
               </label>
@@ -633,7 +804,9 @@ function WorldModelBuilder({
               aria-busy={isSubmitting}
               onClick={() => void submitWorldModel()}
             >
-              {isSubmitting ? "正在冻结证据…" : `确认并创建 v1 · ${selectedArticles.length} 篇`}
+              {isSubmitting
+                ? "正在冻结证据…"
+                : `确认并创建 v1 · ${selectedArticles.length} 篇媒体 · ${selectedPolicies.length} 份政策`}
             </button>
           </aside>
         </div>
@@ -721,7 +894,10 @@ function WorldModelList({
                   </span>
                   <span className="world-model-list-copy">
                     <strong>{worldModel.title}</strong>
-                    <small>{worldModel.latest_snapshot.evidence_count} 篇冻结证据</small>
+                    <small>
+                      {worldModel.latest_snapshot.evidence_count} 篇媒体 ·
+                      {` ${worldModel.latest_snapshot.policy_evidence_count} 份政策`}
+                    </small>
                     <code title={worldModel.latest_snapshot.snapshot_sha256}>
                       {abbreviatedDigest(worldModel.latest_snapshot.snapshot_sha256)}
                     </code>
@@ -761,15 +937,50 @@ function SnapshotEvidenceArticle({ evidence }: { readonly evidence: SnapshotEvid
   );
 }
 
+function SnapshotPolicyEvidenceArticle({
+  evidence,
+}: {
+  readonly evidence: SnapshotPolicyEvidence;
+}): JSX.Element {
+  return (
+    <article className="world-snapshot-evidence world-snapshot-policy-evidence">
+      <div className="world-snapshot-source">
+        <span>
+          <strong>{evidence.authority_name}</strong>
+          <small>{evidence.jurisdiction_code}</small>
+          <small>{evidence.canonical_identifier}</small>
+        </span>
+        <a href={evidence.original_url} target="_blank" rel="noopener noreferrer">
+          回查政策原文 ↗
+        </a>
+      </div>
+      <h5>{evidence.title}</h5>
+      <p>
+        v{evidence.version} · 发布 {evidence.publication_date} · 施行
+        {` ${evidence.effective_from ?? "未标明"}`} · 失效
+        {` ${evidence.effective_until ?? "未标明"}`}
+      </p>
+      <footer>
+        <span>正文捕获于 {formatMediaTimestamp(evidence.captured_at)}</span>
+        <code title={evidence.version_sha256}>
+          version_sha256 {evidence.version_sha256}
+        </code>
+      </footer>
+    </article>
+  );
+}
+
 function WorldSnapshotAppender({
   worldModel,
   selectedArticles,
+  selectedPolicies,
   onAppended,
   onResetStaleEvidence,
   onVerifyAmbiguousResult,
 }: {
   readonly worldModel: WorldModelDetail;
   readonly selectedArticles: readonly MediaArticle[];
+  readonly selectedPolicies: readonly PolicyDocumentSummary[];
   readonly onAppended: (snapshot: SnapshotDetail) => void;
   readonly onResetStaleEvidence: () => void;
   readonly onVerifyAmbiguousResult: () => void;
@@ -777,7 +988,7 @@ function WorldSnapshotAppender({
   const [confirmedSelectionKey, setConfirmedSelectionKey] = useState<string | null>(null);
   const [appendState, setAppendState] = useState<WorldSnapshotAppendState>({ status: "idle" });
   const activeController = useRef<AbortController | null>(null);
-  const selectionKey = evidenceSelectionKey(worldModel.id, selectedArticles);
+  const selectionKey = evidenceSelectionKey(worldModel.id, selectedArticles, selectedPolicies);
   const isHumanConfirmed = selectedArticles.length > 0
     && confirmedSelectionKey === selectionKey;
   const isSubmitting = appendState.status === "submitting";
@@ -786,7 +997,7 @@ function WorldSnapshotAppender({
   const isAmbiguousResult = appendState.status === "error"
     && isAmbiguousPostResultError(appendState.error);
   const canAppend = selectedArticles.length > 0
-    && selectedArticles.length <= maximumEvidenceCount
+    && selectedArticles.length + selectedPolicies.length <= maximumEvidenceCount
     && isHumanConfirmed
     && !isSubmitting
     && !isRevisionConflict
@@ -813,7 +1024,7 @@ function WorldSnapshotAppender({
     let request: WorldSnapshotCreateRequest;
 
     try {
-      request = buildWorldSnapshotCreateRequest(selectedArticles);
+      request = buildWorldSnapshotCreateRequest(selectedArticles, selectedPolicies);
     } catch (error: unknown) {
       setAppendState({ status: "error", error: normalizeWorldSnapshotAppendError(error) });
       return;
@@ -875,10 +1086,12 @@ function WorldSnapshotAppender({
       <div className="world-snapshot-appender-heading">
         <div>
           <span>追加版本</span>
-          <h4 id="world-snapshot-appender-title">把当前媒体选择冻结为下一版</h4>
-          <p>沿用上方已选报道的精确修订；旧版本保持不变，提交不会自动重试。</p>
+          <h4 id="world-snapshot-appender-title">把当前媒体与政策选择冻结为下一版</h4>
+          <p>沿用上方精确媒体修订和政策版本；旧版本保持不变，提交不会自动重试。</p>
         </div>
-        <strong>{selectedArticles.length} / {maximumEvidenceCount} 篇</strong>
+        <strong>
+          {selectedArticles.length} 篇媒体 · {selectedPolicies.length} 份政策
+        </strong>
       </div>
 
       {selectedArticles.length === 0 ? (
@@ -897,7 +1110,10 @@ function WorldSnapshotAppender({
             }}
           />
           <span>
-            <strong>我已重新核验这 {selectedArticles.length} 篇修订，并确认追加到此模型</strong>
+            <strong>
+              我已重新核验 {selectedArticles.length} 篇媒体和 {selectedPolicies.length}
+              份政策版本，并确认追加到此模型
+            </strong>
             <small>证据选择、顺序或目标模型变化后，本次确认立即失效。</small>
           </span>
         </label>
@@ -965,6 +1181,7 @@ function WorldModelDetailView({
   worldModel,
   snapshot,
   selectedArticles,
+  selectedPolicies,
   onSelectSnapshot,
   onSnapshotAppended,
   onResetStaleEvidence,
@@ -973,6 +1190,7 @@ function WorldModelDetailView({
   readonly worldModel: WorldModelDetail;
   readonly snapshot: SnapshotDetail;
   readonly selectedArticles: readonly MediaArticle[];
+  readonly selectedPolicies: readonly PolicyDocumentSummary[];
   readonly onSelectSnapshot: (snapshotId: string | null) => void;
   readonly onSnapshotAppended: (snapshot: SnapshotDetail) => void;
   readonly onResetStaleEvidence: () => void;
@@ -1000,7 +1218,12 @@ function WorldModelDetailView({
 
       <dl className="world-snapshot-ledger" aria-label="当前选定不可变快照摘要">
         <div><dt>选定版本</dt><dd>v{snapshot.version}</dd></div>
-        <div><dt>冻结证据</dt><dd>{formatMediaCount(snapshot.evidence.length)}</dd></div>
+        <div>
+          <dt>冻结证据</dt>
+          <dd>
+            {formatMediaCount(snapshot.evidence.length)} · {snapshot.policy_evidence.length} 份政策
+          </dd>
+        </div>
         <div><dt>确认方式</dt><dd>人工确认</dd></div>
         <div><dt>冻结时间</dt><dd>{formatMediaTimestamp(snapshot.created_at)}</dd></div>
       </dl>
@@ -1028,7 +1251,9 @@ function WorldModelDetailView({
                 )}
               >
                 <strong>v{version.version}</strong>
-                <span>{version.evidence_count} 篇</span>
+                <span>
+                  {version.evidence_count} 篇 · {version.policy_evidence_count} 份政策
+                </span>
                 <time dateTime={version.created_at}>{formatMediaTimestamp(version.created_at)}</time>
                 <code title={version.snapshot_sha256}>{abbreviatedDigest(version.snapshot_sha256)}</code>
               </button>
@@ -1041,6 +1266,7 @@ function WorldModelDetailView({
         key={worldModel.id}
         worldModel={worldModel}
         selectedArticles={selectedArticles}
+        selectedPolicies={selectedPolicies}
         onAppended={onSnapshotAppended}
         onResetStaleEvidence={onResetStaleEvidence}
         onVerifyAmbiguousResult={onVerifyAmbiguousResult}
@@ -1072,6 +1298,29 @@ function WorldModelDetailView({
           ))}
         </div>
       </section>
+
+      {snapshot.policy_evidence.length === 0 ? null : (
+        <section
+          className="world-frozen-evidence world-frozen-policy-evidence"
+          aria-labelledby="world-frozen-policy-evidence-title"
+        >
+          <div className="world-frozen-evidence-heading">
+            <div>
+              <h4 id="world-frozen-policy-evidence-title">冻结政策证据</h4>
+              <p>政策来源、具体版本、效力日期和正文哈希均已复制进此快照。</p>
+            </div>
+            <span>{snapshot.policy_evidence.length} 份</span>
+          </div>
+          <div className="world-snapshot-evidence-list">
+            {snapshot.policy_evidence.map((evidence) => (
+              <SnapshotPolicyEvidenceArticle
+                evidence={evidence}
+                key={evidence.policy_version_id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1080,6 +1329,7 @@ function WorldModelDetailPanel({
   selectedWorldModelId,
   selectedSnapshotId,
   selectedArticles,
+  selectedPolicies,
   worldModelState,
   snapshotState,
   onReloadWorldModel,
@@ -1092,6 +1342,7 @@ function WorldModelDetailPanel({
   readonly selectedWorldModelId: string | null;
   readonly selectedSnapshotId: string | null;
   readonly selectedArticles: readonly MediaArticle[];
+  readonly selectedPolicies: readonly PolicyDocumentSummary[];
   readonly worldModelState: WorldModelDetailLoadState;
   readonly snapshotState: WorldSnapshotDetailLoadState;
   readonly onReloadWorldModel: () => void;
@@ -1166,6 +1417,7 @@ function WorldModelDetailPanel({
           worldModel={worldModel}
           snapshot={snapshot}
           selectedArticles={selectedArticles}
+          selectedPolicies={selectedPolicies}
           onSelectSnapshot={onSelectSnapshot}
           onSnapshotAppended={onSnapshotAppended}
           onResetStaleEvidence={onResetStaleEvidence}
@@ -1186,7 +1438,9 @@ export function WorldModelPage({
   const [draftQuery, setDraftQuery] = useState<string>("");
   const [appliedQuery, setAppliedQuery] = useState<string | null>(null);
   const [page, setPage] = useState<number>(1);
+  const [policyPage, setPolicyPage] = useState<number>(1);
   const [selectedArticles, setSelectedArticles] = useState<readonly MediaArticle[]>([]);
+  const [selectedPolicies, setSelectedPolicies] = useState<readonly PolicyDocumentSummary[]>([]);
   const [isHumanConfirmed, setIsHumanConfirmed] = useState<boolean>(false);
   const [handoffError, setHandoffError] = useState<Error | null>(null);
   const hydratedEvidenceId = useRef<string | null>(null);
@@ -1201,6 +1455,7 @@ export function WorldModelPage({
     [appliedQuery, page],
   );
   const { state: mediaState, reload: reloadMedia } = useMediaArticles(query);
+  const policyDirectory = usePolicyDocuments(policyPage);
   const { state: worldModelsState, reload: reloadWorldModels } = useWorldModels();
   const selectedWorldModelId = route.worldModelId;
   const selectedSnapshotId = route.snapshotId;
@@ -1346,13 +1601,17 @@ export function WorldModelPage({
           <span className="decision-stage-index">02 · 现实版本室</span>
           <div>
             <h2 id="world-model-page-title">把核验过的证据冻结成共同现实</h2>
-            <p>研究员从媒体证据库明确选择报道与修订，让后续实验始终回到同一个可复核版本。</p>
+            <p>研究员明确选择媒体修订与政策版本，让后续实验始终回到同一个可复核现实。</p>
           </div>
         </div>
         <div className="decision-context-bar">
           <div className="decision-context-current" data-active={selectedArticles.length > 0}>
             <span>待冻结证据</span>
-            <strong>{selectedArticles.length === 0 ? "尚未选择报道" : `${selectedArticles.length} 篇已选`}</strong>
+            <strong>
+              {selectedArticles.length === 0 && selectedPolicies.length === 0
+                ? "尚未选择证据"
+                : `${selectedArticles.length} 篇媒体 · ${selectedPolicies.length} 份政策`}
+            </strong>
             <small>{isHumanConfirmed ? "人工冻结声明已确认" : "选择变化后需要重新确认"}</small>
           </div>
           <div className="decision-context-current" data-active={selectedWorldModel !== null}>
@@ -1363,7 +1622,7 @@ export function WorldModelPage({
                 ? "从下方档案明确打开一个版本。"
                 : selectedSnapshot === null
                   ? "正在读取明确选定的快照…"
-                  : `v${selectedSnapshot.version} · ${selectedSnapshot.evidence.length} 篇证据`}
+                  : `v${selectedSnapshot.version} · ${selectedSnapshot.evidence.length} 篇媒体 · ${selectedSnapshot.policy_evidence.length} 份政策`}
             </small>
           </div>
           <ul className="decision-boundary-legend" aria-label="世界模型边界">
@@ -1374,16 +1633,30 @@ export function WorldModelPage({
         </div>
       </header>
 
+      <WorldPolicyEvidenceSelector
+        state={policyDirectory.state}
+        page={policyPage}
+        selectedPolicies={selectedPolicies}
+        mediaEvidenceCount={selectedArticles.length}
+        disabled={false}
+        onChangePage={setPolicyPage}
+        onChange={setSelectedPolicies}
+        onReload={policyDirectory.reload}
+        onInvalidateConfirmation={() => setIsHumanConfirmed(false)}
+      />
+
       <WorldModelBuilder
         appliedQuery={appliedQuery}
         draftQuery={draftQuery}
         mediaState={mediaState}
         page={page}
         selectedArticles={selectedArticles}
+        selectedPolicies={selectedPolicies}
         isHumanConfirmed={isHumanConfirmed}
         onChangeDraftQuery={setDraftQuery}
         onChangePage={setPage}
         onChangeSelectedArticles={setSelectedArticles}
+        onChangeSelectedPolicies={setSelectedPolicies}
         onChangeHumanConfirmed={setIsHumanConfirmed}
         onClearSearch={clearSearch}
         onReloadMedia={reloadMedia}
@@ -1436,6 +1709,7 @@ export function WorldModelPage({
             selectedWorldModelId={selectedWorldModelId}
             selectedSnapshotId={selectedSnapshotId}
             selectedArticles={selectedArticles}
+            selectedPolicies={selectedPolicies}
             worldModelState={worldModelDetailState}
             snapshotState={worldSnapshotDetailState}
             onReloadWorldModel={reloadWorldModelDetail}

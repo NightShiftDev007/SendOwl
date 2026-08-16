@@ -3,7 +3,7 @@
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 
@@ -23,9 +23,12 @@ from app.evidence.revisions import (
     calculate_evidence_revision_sha256,
     combine_article_text,
 )
+from app.policy_evidence.contracts import PolicyDocumentCaptureRequest, PolicySourceInput
+from app.policy_evidence.repository import capture_policy_document
 from app.world_models.contracts import (
     WorldModelCreateRequest,
     WorldSnapshotEvidenceSelection,
+    WorldSnapshotPolicyEvidenceSelection,
 )
 from app.world_models.repository import create_world_model
 
@@ -111,6 +114,27 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                     expire_on_commit=False,
                     join_transaction_mode="create_savepoint",
                 ) as session:
+                    policy = await capture_policy_document(
+                        session,
+                        PolicyDocumentCaptureRequest(
+                            source=PolicySourceInput(
+                                authority_name="Evidence Policy Authority",
+                                jurisdiction_code="CN",
+                                homepage_url="https://policy.example.com/",
+                            ),
+                            canonical_identifier="CN-EVIDENCE-2026-1",
+                            title="Evidence Bundle Policy",
+                            original_url="https://policy.example.com/documents/1",
+                            language="en",
+                            publication_date=date(2026, 8, 1),
+                            effective_from=date(2026, 9, 1),
+                            effective_until=None,
+                            captured_text=(
+                                "Article 1. This Policy text is frozen into the snapshot."
+                            ),
+                            verification="human_confirmed",
+                        ),
+                    )
                     world_model = await create_world_model(
                         session,
                         WorldModelCreateRequest(
@@ -119,6 +143,12 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                                 WorldSnapshotEvidenceSelection(
                                     article_id=article_id,
                                     evidence_revision_sha256=revision_sha256,
+                                ),
+                            ),
+                            policy_evidence=(
+                                WorldSnapshotPolicyEvidenceSelection(
+                                    policy_version_id=policy.latest_version.id,
+                                    version_sha256=policy.latest_version.version_sha256,
                                 ),
                             ),
                             verification="human_confirmed",
@@ -155,6 +185,7 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                     assert listed["bundle_sha256"] == expected_bundle_sha256
                     assert listed["world_snapshot_id"] == str(snapshot.id)
                     assert listed["item_count"] == 1
+                    assert listed["policy_item_count"] == 1
 
                     detail_response = await client.get(f"/api/v2/evidence-bundles/{snapshot.id}")
                     assert detail_response.status_code == 200
@@ -163,6 +194,10 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                     assert detail["snapshot_sha256"] == snapshot.snapshot_sha256
                     assert detail["items"][0]["position"] == 0
                     assert detail["items"][0]["article_id"] == str(article_id)
+                    assert detail["policy_items"][0]["policy_version_id"] == str(
+                        policy.latest_version.id
+                    )
+                    assert detail["policy_items"][0]["title"] == "Evidence Bundle Policy"
 
                     content_response = await client.get(
                         f"/api/v2/evidence-bundles/{snapshot.id}/items/{article_id}/content"
@@ -171,6 +206,13 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                     frozen_content = content_response.json()
                     assert frozen_content["bundle_sha256"] == expected_bundle_sha256
                     assert frozen_content["captured_text"] == combine_article_text(title, content)
+
+                    policy_content_response = await client.get(
+                        f"/api/v2/evidence-bundles/{snapshot.id}/policy-items/"
+                        f"{policy.latest_version.id}/content"
+                    )
+                    assert policy_content_response.status_code == 200
+                    assert policy_content_response.json()["captured_text"].startswith("Article 1.")
 
                     missing_response = await client.get(
                         f"/api/v2/evidence-bundles/{snapshot.id}/items/{uuid4()}/content"

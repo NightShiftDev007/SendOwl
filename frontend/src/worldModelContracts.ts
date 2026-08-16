@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema, type MediaArticle } from "./mediaContracts";
+import type { PolicyDocumentSummary } from "./policyEvidenceContracts";
 import {
   cohortCreateRequestSchema,
   cohortDatasetSchema,
@@ -14,6 +15,7 @@ import {
 const worldModelsEndpoint = "/api/v2/world-models";
 const identifierSchema = z.string().uuid();
 const isoTimestampSchema = z.string().datetime({ offset: true });
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 const nonEmptyTextSchema = z.string().trim().min(1);
 const worldModelTitleSchema = nonEmptyTextSchema
   .max(300)
@@ -32,6 +34,7 @@ export const snapshotSummarySchema = z
     id: identifierSchema,
     version: z.number().int().positive(),
     evidence_count: z.number().int().min(1).max(50),
+    policy_evidence_count: z.number().int().min(0).max(50),
     snapshot_sha256: sha256DigestSchema,
     created_at: isoTimestampSchema,
   })
@@ -67,6 +70,38 @@ export const snapshotEvidenceSchema = z
   })
   .strict();
 
+export const snapshotPolicyEvidenceSchema = z
+  .object({
+    policy_version_id: identifierSchema,
+    authority_name: nonEmptyTextSchema.max(300),
+    jurisdiction_code: z.string().regex(/^[A-Z0-9][A-Z0-9-]{1,15}$/u),
+    homepage_url: httpUrlSchema,
+    canonical_identifier: nonEmptyTextSchema.max(256),
+    source_sha256: sha256DigestSchema,
+    document_sha256: sha256DigestSchema,
+    version: z.number().int().min(1).max(100),
+    title: nonEmptyTextSchema.max(500),
+    original_url: httpUrlSchema,
+    language: z.string().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u),
+    publication_date: isoDateSchema,
+    effective_from: isoDateSchema.nullable(),
+    effective_until: isoDateSchema.nullable(),
+    captured_at: isoTimestampSchema,
+    content_sha256: sha256DigestSchema,
+    version_sha256: sha256DigestSchema,
+  })
+  .strict()
+  .superRefine((item, context) => {
+    if (item.effective_from !== null && item.effective_until !== null
+      && item.effective_until <= item.effective_from) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effective_until"],
+        message: "Policy effective_until must follow effective_from",
+      });
+    }
+  });
+
 export const snapshotDetailSchema = z
   .object({
     id: identifierSchema,
@@ -76,8 +111,13 @@ export const snapshotDetailSchema = z
     snapshot_sha256: sha256DigestSchema,
     created_at: isoTimestampSchema,
     evidence: z.array(snapshotEvidenceSchema).min(1).max(50),
+    policy_evidence: z.array(snapshotPolicyEvidenceSchema).max(50),
   })
-  .strict();
+  .strict()
+  .refine(
+    (snapshot) => snapshot.evidence.length + snapshot.policy_evidence.length <= 50,
+    { message: "Snapshot cannot contain more than 50 total evidence items" },
+  );
 
 export const worldModelDetailSchema = z
   .object({
@@ -108,6 +148,7 @@ export const worldModelDetailSchema = z
       || latestSummary.version !== worldModel.latest_snapshot.version
       || latestSummary.snapshot_sha256 !== worldModel.latest_snapshot.snapshot_sha256
       || latestSummary.evidence_count !== worldModel.latest_snapshot.evidence.length
+      || latestSummary.policy_evidence_count !== worldModel.latest_snapshot.policy_evidence.length
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -136,7 +177,17 @@ export const worldModelEvidenceSelectionSchema = z
   })
   .strict();
 
+export const worldModelPolicyEvidenceSelectionSchema = z
+  .object({
+    policy_version_id: identifierSchema,
+    version_sha256: sha256DigestSchema,
+  })
+  .strict();
+
 const worldModelEvidenceArraySchema = z.array(worldModelEvidenceSelectionSchema).min(1).max(50);
+const worldModelPolicyEvidenceArraySchema = z
+  .array(worldModelPolicyEvidenceSelectionSchema)
+  .max(50);
 
 function hasDuplicateEvidenceArticleIds(
   evidence: readonly WorldModelEvidenceSelection[],
@@ -146,38 +197,61 @@ function hasDuplicateEvidenceArticleIds(
   return new Set(articleIds).size !== articleIds.length;
 }
 
+function hasDuplicatePolicyVersionIds(
+  evidence: readonly WorldModelPolicyEvidenceSelection[],
+): boolean {
+  const versionIds = evidence.map((selection) => selection.policy_version_id);
+  return new Set(versionIds).size !== versionIds.length;
+}
+
+function validateCreateEvidence(
+  request: {
+    readonly evidence: readonly WorldModelEvidenceSelection[];
+    readonly policy_evidence: readonly WorldModelPolicyEvidenceSelection[];
+  },
+  context: z.RefinementCtx,
+): void {
+  if (hasDuplicateEvidenceArticleIds(request.evidence)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["evidence"],
+      message: "evidence article_id values must not contain duplicates",
+    });
+  }
+  if (hasDuplicatePolicyVersionIds(request.policy_evidence)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["policy_evidence"],
+      message: "policy_evidence policy_version_id values must not contain duplicates",
+    });
+  }
+  if (request.evidence.length + request.policy_evidence.length > 50) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["policy_evidence"],
+      message: "snapshot cannot contain more than 50 total evidence items",
+    });
+  }
+}
+
 export const worldModelCreateRequestSchema = z
   .object({
     title: worldModelTitleSchema,
     evidence: worldModelEvidenceArraySchema,
+    policy_evidence: worldModelPolicyEvidenceArraySchema,
     verification: z.literal("human_confirmed"),
   })
   .strict()
-  .superRefine((request, context) => {
-    if (hasDuplicateEvidenceArticleIds(request.evidence)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["evidence"],
-        message: "evidence article_id values must not contain duplicates",
-      });
-    }
-  });
+  .superRefine(validateCreateEvidence);
 
 export const worldSnapshotCreateRequestSchema = z
   .object({
     evidence: worldModelEvidenceArraySchema,
+    policy_evidence: worldModelPolicyEvidenceArraySchema,
     verification: z.literal("human_confirmed"),
   })
   .strict()
-  .superRefine((request, context) => {
-    if (hasDuplicateEvidenceArticleIds(request.evidence)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["evidence"],
-        message: "evidence article_id values must not contain duplicates",
-      });
-    }
-  });
+  .superRefine(validateCreateEvidence);
 
 const evidenceGraphNodeKindSchema = z.enum(["world_snapshot", "article", "source", "country"]);
 const evidenceGraphEdgeKindSchema = z.enum(["contains_evidence", "published_by", "located_in"]);
@@ -728,8 +802,12 @@ export type WorldModelSummary = z.infer<typeof worldModelSummarySchema>;
 export type WorldModelsResponse = z.infer<typeof worldModelsResponseSchema>;
 export type SnapshotEvidence = z.infer<typeof snapshotEvidenceSchema>;
 export type SnapshotDetail = z.infer<typeof snapshotDetailSchema>;
+export type SnapshotPolicyEvidence = z.infer<typeof snapshotPolicyEvidenceSchema>;
 export type WorldModelDetail = z.infer<typeof worldModelDetailSchema>;
 export type WorldModelEvidenceSelection = z.infer<typeof worldModelEvidenceSelectionSchema>;
+export type WorldModelPolicyEvidenceSelection = z.infer<
+  typeof worldModelPolicyEvidenceSelectionSchema
+>;
 export type WorldModelCreateRequest = z.infer<typeof worldModelCreateRequestSchema>;
 export type WorldSnapshotCreateRequest = z.infer<typeof worldSnapshotCreateRequestSchema>;
 export type EvidenceWorldGraphNode = z.infer<typeof evidenceWorldGraphNodeSchema>;
@@ -754,6 +832,7 @@ export type SemanticWorldGraphSearchResponse = z.infer<typeof semanticWorldGraph
 export function buildWorldModelCreateRequest(
   title: string,
   selectedArticles: readonly MediaArticle[],
+  selectedPolicies: readonly PolicyDocumentSummary[],
 ): WorldModelCreateRequest {
   return worldModelCreateRequestSchema.parse({
     title,
@@ -761,17 +840,26 @@ export function buildWorldModelCreateRequest(
       article_id: article.id,
       evidence_revision_sha256: article.evidence_revision_sha256,
     })),
+    policy_evidence: selectedPolicies.map((document) => ({
+      policy_version_id: document.latest_version.id,
+      version_sha256: document.latest_version.version_sha256,
+    })),
     verification: "human_confirmed",
   });
 }
 
 export function buildWorldSnapshotCreateRequest(
   selectedArticles: readonly MediaArticle[],
+  selectedPolicies: readonly PolicyDocumentSummary[],
 ): WorldSnapshotCreateRequest {
   return worldSnapshotCreateRequestSchema.parse({
     evidence: selectedArticles.map((article) => ({
       article_id: article.id,
       evidence_revision_sha256: article.evidence_revision_sha256,
+    })),
+    policy_evidence: selectedPolicies.map((document) => ({
+      policy_version_id: document.latest_version.id,
+      version_sha256: document.latest_version.version_sha256,
     })),
     verification: "human_confirmed",
   });

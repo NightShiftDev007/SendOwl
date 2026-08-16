@@ -9,6 +9,8 @@ from app.evidence.contracts import (
     EvidenceBundleContent,
     EvidenceBundleDetail,
     EvidenceBundleItem,
+    EvidenceBundlePolicyContent,
+    EvidenceBundlePolicyItem,
     EvidenceBundlesResponse,
     EvidenceBundleSummary,
 )
@@ -17,11 +19,13 @@ from app.evidence.hashing import calculate_evidence_bundle_sha256
 from app.world_models.models import (
     WorldModelRecord,
     WorldSnapshotEvidenceRecord,
+    WorldSnapshotPolicyEvidenceRecord,
     WorldSnapshotRecord,
 )
 from app.world_models.repository import (
     get_world_snapshot,
     get_world_snapshot_evidence_content,
+    get_world_snapshot_policy_evidence_content,
 )
 
 
@@ -29,6 +33,7 @@ def _bundle_summary(
     snapshot: WorldSnapshotRecord,
     world_model_title: str,
     item_count: int,
+    policy_item_count: int,
 ) -> EvidenceBundleSummary:
     if snapshot.sealed_at is None:
         raise RuntimeError(f"world snapshot {snapshot.id} is not sealed")
@@ -45,6 +50,7 @@ def _bundle_summary(
         verification=snapshot.verification,
         snapshot_sha256=snapshot.snapshot_sha256,
         item_count=item_count,
+        policy_item_count=policy_item_count,
         created_at=snapshot.created_at,
     )
 
@@ -57,12 +63,19 @@ async def list_evidence_bundles(session: AsyncSession) -> EvidenceBundlesRespons
         .correlate(WorldSnapshotRecord)
         .scalar_subquery()
     )
+    policy_item_count = (
+        select(func.count(WorldSnapshotPolicyEvidenceRecord.position))
+        .where(WorldSnapshotPolicyEvidenceRecord.snapshot_id == WorldSnapshotRecord.id)
+        .correlate(WorldSnapshotRecord)
+        .scalar_subquery()
+    )
     rows = (
         await session.execute(
             select(
                 WorldSnapshotRecord,
                 WorldModelRecord.title,
                 item_count.label("item_count"),
+                policy_item_count.label("policy_item_count"),
             )
             .join(
                 WorldModelRecord,
@@ -73,8 +86,8 @@ async def list_evidence_bundles(session: AsyncSession) -> EvidenceBundlesRespons
         )
     ).all()
     items = tuple(
-        _bundle_summary(snapshot, world_model_title, int(count))
-        for snapshot, world_model_title, count in rows
+        _bundle_summary(snapshot, world_model_title, int(count), int(policy_count))
+        for snapshot, world_model_title, count, policy_count in rows
     )
     return EvidenceBundlesResponse(items=items, total=len(items))
 
@@ -124,8 +137,20 @@ async def get_evidence_bundle(
         )
         for position, evidence in enumerate(verified.evidence)
     )
-    summary = _bundle_summary(snapshot, world_model_title, len(items))
-    return EvidenceBundleDetail(**summary.model_dump(), items=items)
+    policy_items = tuple(
+        EvidenceBundlePolicyItem(
+            **evidence.model_dump(mode="python"),
+            position=position,
+            kind="policy_document",
+        )
+        for position, evidence in enumerate(verified.policy_evidence)
+    )
+    summary = _bundle_summary(snapshot, world_model_title, len(items), len(policy_items))
+    return EvidenceBundleDetail(
+        **summary.model_dump(),
+        items=items,
+        policy_items=policy_items,
+    )
 
 
 async def get_evidence_bundle_content(
@@ -162,8 +187,49 @@ async def get_evidence_bundle_content(
     )
 
 
+async def get_evidence_bundle_policy_content(
+    session: AsyncSession,
+    bundle_id: UUID,
+    policy_version_id: UUID,
+) -> EvidenceBundlePolicyContent:
+    """Return exact frozen Policy text only when it belongs to the verified bundle."""
+    bundle = await get_evidence_bundle(session, bundle_id)
+    item = next(
+        (
+            candidate
+            for candidate in bundle.policy_items
+            if candidate.policy_version_id == policy_version_id
+        ),
+        None,
+    )
+    if item is None:
+        raise EvidenceBundleItemNotFoundError(
+            f"Policy version {policy_version_id} was not found in sealed evidence bundle "
+            f"{bundle_id}"
+        )
+    content = await get_world_snapshot_policy_evidence_content(
+        session,
+        bundle.world_model_id,
+        bundle.world_snapshot_id,
+        policy_version_id,
+    )
+    if content.content_sha256 != item.content_sha256:
+        raise RuntimeError(
+            f"evidence bundle {bundle_id} Policy version {policy_version_id} "
+            "metadata/content digest mismatch"
+        )
+    return EvidenceBundlePolicyContent(
+        bundle_id=bundle.id,
+        bundle_sha256=bundle.bundle_sha256,
+        policy_version_id=content.policy_version_id,
+        captured_text=content.captured_text,
+        content_sha256=content.content_sha256,
+    )
+
+
 __all__ = [
     "get_evidence_bundle",
     "get_evidence_bundle_content",
+    "get_evidence_bundle_policy_content",
     "list_evidence_bundles",
 ]

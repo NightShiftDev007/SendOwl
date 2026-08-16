@@ -33,6 +33,7 @@ def _request() -> dict[str, object]:
                 "evidence_revision_sha256": "a" * 64,
             }
         ],
+        "policy_evidence": [],
         "verification": "human_confirmed",
     }
 
@@ -48,7 +49,11 @@ def test_world_model_endpoints_return_explicit_503_without_database() -> None:
         client.get(f"/api/v2/world-models/{model_id}"),
         client.post(
             f"/api/v2/world-models/{model_id}/snapshots",
-            json={"evidence": request["evidence"], "verification": "human_confirmed"},
+            json={
+                "evidence": request["evidence"],
+                "policy_evidence": [],
+                "verification": "human_confirmed",
+            },
         ),
         client.get(f"/api/v2/world-models/{model_id}/snapshots/{snapshot_id}"),
         client.get(f"/api/v2/world-models/{model_id}/snapshots/{snapshot_id}/evidence-graph"),
@@ -91,7 +96,7 @@ def test_world_model_post_converts_json_uuid_strings_before_handler(monkeypatch)
                 captured_text_sha256=calculate_captured_text_sha256(title, content),
             ),
         )
-        digest = calculate_snapshot_sha256(model_id, 1, "human_confirmed", evidence)
+        digest = calculate_snapshot_sha256(model_id, 1, "human_confirmed", evidence, ())
         snapshot = SnapshotDetail(
             id=snapshot_id,
             world_model_id=model_id,
@@ -100,6 +105,7 @@ def test_world_model_post_converts_json_uuid_strings_before_handler(monkeypatch)
             snapshot_sha256=digest,
             created_at=created_at,
             evidence=evidence,
+            policy_evidence=(),
         )
         return ModelDetail(
             id=model_id,
@@ -110,6 +116,7 @@ def test_world_model_post_converts_json_uuid_strings_before_handler(monkeypatch)
                     id=snapshot_id,
                     version=1,
                     evidence_count=1,
+                    policy_evidence_count=0,
                     snapshot_sha256=digest,
                     created_at=created_at,
                 ),
@@ -130,6 +137,7 @@ def test_world_model_post_converts_json_uuid_strings_before_handler(monkeypatch)
                     "evidence_revision_sha256": "a" * 64,
                 }
             ],
+            "policy_evidence": [],
             "verification": "human_confirmed",
         },
     )

@@ -19,6 +19,36 @@ class WorldSnapshotEvidenceNotFoundError(WorldModelError):
     """Raised when a frozen snapshot does not contain a requested article."""
 
 
+class WorldSnapshotPolicyEvidenceNotFoundError(WorldModelError):
+    """Raised when a frozen snapshot does not contain a requested Policy version."""
+
+
+class SnapshotPolicyEvidenceSelectionError(WorldModelError):
+    """Raised when selected immutable Policy versions cannot be frozen exactly."""
+
+    def __init__(
+        self,
+        missing_policy_version_ids: tuple[UUID, ...],
+        mismatched_policy_version_ids: tuple[UUID, ...],
+    ) -> None:
+        self.missing_policy_version_ids = missing_policy_version_ids
+        self.mismatched_policy_version_ids = mismatched_policy_version_ids
+        reasons: list[str] = []
+        if missing_policy_version_ids:
+            reasons.append(
+                "missing Policy version IDs: "
+                + ", ".join(str(value) for value in missing_policy_version_ids)
+            )
+        if mismatched_policy_version_ids:
+            reasons.append(
+                "version_sha256 mismatch for Policy version IDs: "
+                + ", ".join(str(value) for value in mismatched_policy_version_ids)
+            )
+        if not reasons:
+            raise ValueError("at least one invalid Policy version ID is required")
+        super().__init__("selected Policy evidence is invalid; " + "; ".join(reasons))
+
+
 class WorldSnapshotRevisionConflictError(WorldModelError):
     """Raised when selected articles changed after a user reviewed media evidence."""
 

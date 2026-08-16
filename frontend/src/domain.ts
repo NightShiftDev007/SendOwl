@@ -2,6 +2,7 @@ export type SectionId =
   | "overview"
   | "threads"
   | "media"
+  | "policy"
   | "world"
   | "decisions"
   | "personas"
@@ -27,7 +28,7 @@ export interface ModuleDefinition {
 
 export type MigratingSectionId = Exclude<
   SectionId,
-  "overview" | "threads" | "media" | "world" | "decisions" | "personas" | "tasks" | "runs" | "reports"
+  "overview" | "threads" | "media" | "policy" | "world" | "decisions" | "personas" | "tasks" | "runs" | "reports"
 >;
 
 export const navigationItems: readonly NavigationItem[] = [
@@ -50,6 +51,13 @@ export const navigationItems: readonly NavigationItem[] = [
     marker: "MI",
     label: "媒体情报",
     description: "Media intelligence",
+    state: "available",
+  },
+  {
+    id: "policy",
+    marker: "PE",
+    label: "政策证据",
+    description: "Policy evidence",
     state: "available",
   },
   {

@@ -12,6 +12,7 @@ from app.world_models.contracts import (
     ModelDetail,
     SnapshotDetail,
     SnapshotEvidenceContent,
+    SnapshotPolicyEvidenceContent,
     WorldModelCreateRequest,
     WorldModelsResponse,
     WorldSnapshotCreateRequest,
@@ -19,9 +20,11 @@ from app.world_models.contracts import (
 from app.world_models.errors import (
     SnapshotEvidenceLimitError,
     SnapshotEvidenceSelectionError,
+    SnapshotPolicyEvidenceSelectionError,
     WorldModelNotFoundError,
     WorldSnapshotEvidenceNotFoundError,
     WorldSnapshotNotFoundError,
+    WorldSnapshotPolicyEvidenceNotFoundError,
     WorldSnapshotRevisionConflictError,
 )
 from app.world_models.graph import get_evidence_world_graph
@@ -32,6 +35,7 @@ from app.world_models.repository import (
     get_world_model,
     get_world_snapshot,
     get_world_snapshot_evidence_content,
+    get_world_snapshot_policy_evidence_content,
     list_world_models,
 )
 
@@ -57,14 +61,21 @@ WorldModelSession = Annotated[AsyncSession, Depends(require_world_model_session)
 
 def _not_found(
     error: (
-        WorldModelNotFoundError | WorldSnapshotNotFoundError | WorldSnapshotEvidenceNotFoundError
+        WorldModelNotFoundError
+        | WorldSnapshotNotFoundError
+        | WorldSnapshotEvidenceNotFoundError
+        | WorldSnapshotPolicyEvidenceNotFoundError
     ),
 ) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
 
 
 def _invalid_evidence(
-    error: SnapshotEvidenceSelectionError | SnapshotEvidenceLimitError,
+    error: (
+        SnapshotEvidenceSelectionError
+        | SnapshotEvidenceLimitError
+        | SnapshotPolicyEvidenceSelectionError
+    ),
 ) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error))
 
@@ -88,6 +99,8 @@ def create_world_models_router() -> APIRouter:
         except SnapshotEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
         except SnapshotEvidenceLimitError as error:
+            raise _invalid_evidence(error) from error
+        except SnapshotPolicyEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
         except WorldSnapshotRevisionConflictError as error:
             raise _revision_conflict(error) from error
@@ -123,6 +136,8 @@ def create_world_models_router() -> APIRouter:
         except SnapshotEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
         except SnapshotEvidenceLimitError as error:
+            raise _invalid_evidence(error) from error
+        except SnapshotPolicyEvidenceSelectionError as error:
             raise _invalid_evidence(error) from error
         except WorldSnapshotRevisionConflictError as error:
             raise _revision_conflict(error) from error
@@ -176,6 +191,31 @@ def create_world_models_router() -> APIRouter:
             WorldModelNotFoundError,
             WorldSnapshotNotFoundError,
             WorldSnapshotEvidenceNotFoundError,
+        ) as error:
+            raise _not_found(error) from error
+
+    @router.get(
+        "/{model_id}/snapshots/{snapshot_id}/policy-evidence/{policy_version_id}/content",
+        response_model=SnapshotPolicyEvidenceContent,
+    )
+    async def snapshot_policy_evidence_content(
+        model_id: UUID,
+        snapshot_id: UUID,
+        policy_version_id: UUID,
+        session: WorldModelSession,
+    ) -> SnapshotPolicyEvidenceContent:
+        """Return exact Policy text copied into a sealed world snapshot."""
+        try:
+            return await get_world_snapshot_policy_evidence_content(
+                session,
+                model_id,
+                snapshot_id,
+                policy_version_id,
+            )
+        except (
+            WorldModelNotFoundError,
+            WorldSnapshotNotFoundError,
+            WorldSnapshotPolicyEvidenceNotFoundError,
         ) as error:
             raise _not_found(error) from error
 

@@ -235,7 +235,7 @@ async def _exercise_chat_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0035"
+                assert revision == "20260816_core_0038"
                 cohort_id = await _insert_population(connection)
                 await _insert_ready_worker(connection)
                 application = FastAPI()
@@ -279,6 +279,12 @@ async def _exercise_chat_api(database_url: str) -> None:
                     assert progress["status"] == "queued"
                     assert progress["queued_trial_count"] == 1
                     assert progress["event_count"] == 0
+                    empty_delta_response = await client.get(
+                        f"/api/v2/matraix/chat-evaluations/{evaluation_id}/transcript-delta"
+                    )
+                    assert empty_delta_response.status_code == 200
+                    assert empty_delta_response.json()["items"] == []
+                    assert empty_delta_response.json()["next_event_sequence"] == "0"
 
                     await connection.execute(
                         text(
@@ -333,6 +339,28 @@ async def _exercise_chat_api(database_url: str) -> None:
                                 "content": content,
                             },
                         )
+                    delta_response = await client.get(
+                        f"/api/v2/matraix/chat-evaluations/{evaluation_id}/transcript-delta"
+                    )
+                    assert delta_response.status_code == 200
+                    delta = delta_response.json()
+                    assert [item["message"]["position"] for item in delta["items"]] == [0, 1, 2, 3]
+                    sequences = [int(item["event_sequence"]) for item in delta["items"]]
+                    assert sequences == sorted(sequences)
+                    assert len(set(sequences)) == 4
+                    assert delta["next_event_sequence"] == str(sequences[-1])
+                    exhausted_delta = await client.get(
+                        f"/api/v2/matraix/chat-evaluations/{evaluation_id}/transcript-delta"
+                        f"?after_event_sequence={delta['next_event_sequence']}"
+                    )
+                    assert exhausted_delta.status_code == 200
+                    assert exhausted_delta.json()["items"] == []
+                    assert exhausted_delta.json()["next_event_sequence"] == str(sequences[-1])
+                    invalid_delta_query = await client.get(
+                        f"/api/v2/matraix/chat-evaluations/{evaluation_id}/transcript-delta"
+                        "?after_event_sequence=01"
+                    )
+                    assert invalid_delta_query.status_code == 422
                     await connection.execute(
                         text(
                             """

@@ -101,6 +101,7 @@ def _snapshot(graph: SemanticWorldGraphDetail, version: int) -> SnapshotDetail:
                 captured_text_sha256="d" * 64,
             ),
         ),
+        policy_evidence=(),
     )
 
 

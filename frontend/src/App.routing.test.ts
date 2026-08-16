@@ -4,7 +4,7 @@ import { resolveSectionFromHash } from "./App";
 import { requireNavigationItem } from "./domain";
 
 describe("hash route resolution", () => {
-  it.each(["", "#", "#/overview", "#/threads", "#/media", "#/world", "#/decisions", "#/personas", "#/tasks", "#/runs", "#/reports"])(
+  it.each(["", "#", "#/overview", "#/threads", "#/media", "#/policy", "#/world", "#/decisions", "#/personas", "#/tasks", "#/runs", "#/reports"])(
     "resolves the legal route %s",
     (hash) => {
       expect(resolveSectionFromHash(hash).status).toBe("resolved");
@@ -223,6 +223,10 @@ describe("hash route resolution", () => {
 
   it("exposes the world model route as a runtime workspace", () => {
     expect(requireNavigationItem("world").state).toBe("available");
+  });
+
+  it("exposes Policy evidence as a runtime workspace", () => {
+    expect(requireNavigationItem("policy").state).toBe("available");
   });
 
   it("exposes persistent decision tasks as a runtime workspace", () => {

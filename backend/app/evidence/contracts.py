@@ -10,7 +10,13 @@ from pydantic import AwareDatetime, Field, HttpUrl, model_validator
 from app.evidence.hashing import calculate_evidence_bundle_sha256
 from app.media.contracts import ArticleExcerpt, CountryCode, MediaArticle
 from app.shared.contracts import ContractModel, Identifier, NonEmptyText, Sha256Digest
-from app.world_models.contracts import CapturedText, SnapshotEvidence, Verification, WorldModelTitle
+from app.world_models.contracts import (
+    CapturedText,
+    SnapshotEvidence,
+    SnapshotPolicyEvidence,
+    Verification,
+    WorldModelTitle,
+)
 from app.world_models.hashing import calculate_snapshot_sha256
 
 
@@ -85,6 +91,18 @@ class EvidenceBundleItem(ContractModel):
     captured_text_sha256: Sha256Digest
 
 
+class EvidenceBundlePolicyItem(SnapshotPolicyEvidence):
+    """One ordered Policy item projected from immutable snapshot storage."""
+
+    position: Annotated[int, Field(ge=0, le=49)]
+    kind: Literal["policy_document"]
+
+    def snapshot_policy_evidence(self) -> SnapshotPolicyEvidence:
+        return SnapshotPolicyEvidence.model_validate(
+            self.model_dump(exclude={"position", "kind"}, mode="python")
+        )
+
+
 class EvidenceBundleSummary(ContractModel):
     """Lightweight identity for one sealed WorldSnapshot exposed as a bundle."""
 
@@ -97,6 +115,7 @@ class EvidenceBundleSummary(ContractModel):
     verification: Verification
     snapshot_sha256: Sha256Digest
     item_count: Annotated[int, Field(ge=1, le=50)]
+    policy_item_count: Annotated[int, Field(ge=0, le=50)]
     created_at: AwareDatetime
 
     @model_validator(mode="after")
@@ -113,6 +132,7 @@ class EvidenceBundleDetail(EvidenceBundleSummary):
     """Complete frozen bundle metadata without duplicating captured article text."""
 
     items: Annotated[tuple[EvidenceBundleItem, ...], Field(min_length=1, max_length=50)]
+    policy_items: Annotated[tuple[EvidenceBundlePolicyItem, ...], Field(max_length=50)]
 
     @model_validator(mode="after")
     def validate_snapshot_projection(self) -> Self:
@@ -122,8 +142,16 @@ class EvidenceBundleDetail(EvidenceBundleSummary):
         article_ids = tuple(item.article_id for item in self.items)
         if len(set(article_ids)) != len(article_ids):
             raise ValueError("bundle items must use unique article_id values")
-        if self.item_count != len(self.items):
-            raise ValueError("item_count must equal items length")
+        if self.item_count != len(self.items) or self.policy_item_count != len(self.policy_items):
+            raise ValueError("bundle item counts must equal their item arrays")
+        if self.item_count + self.policy_item_count > 50:
+            raise ValueError("bundle cannot contain more than 50 total evidence items")
+        policy_positions = tuple(item.position for item in self.policy_items)
+        if policy_positions != tuple(range(len(self.policy_items))):
+            raise ValueError("bundle Policy item positions must be contiguous from zero")
+        policy_version_ids = tuple(item.policy_version_id for item in self.policy_items)
+        if len(set(policy_version_ids)) != len(policy_version_ids):
+            raise ValueError("bundle Policy items must use unique policy_version_id values")
         snapshot_evidence = tuple(
             SnapshotEvidence(
                 article_id=item.article_id,
@@ -143,6 +171,7 @@ class EvidenceBundleDetail(EvidenceBundleSummary):
             self.version,
             self.verification,
             snapshot_evidence,
+            tuple(item.snapshot_policy_evidence() for item in self.policy_items),
         )
         if self.snapshot_sha256 != expected_snapshot_sha256:
             raise ValueError("bundle items do not match snapshot_sha256")
@@ -166,6 +195,23 @@ class EvidenceBundleContent(ContractModel):
         return self
 
 
+class EvidenceBundlePolicyContent(ContractModel):
+    """Exact frozen Policy text retrieved separately from bundle metadata."""
+
+    bundle_id: UUID
+    bundle_sha256: Sha256Digest
+    policy_version_id: UUID
+    captured_text: CapturedText
+    content_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_captured_text(self) -> Self:
+        actual = calculate_content_sha256(self.captured_text)
+        if self.content_sha256 != actual:
+            raise ValueError("content_sha256 must match captured Policy text")
+        return self
+
+
 class EvidenceBundlesResponse(ContractModel):
     """Complete sealed bundle directory ordered newest first."""
 
@@ -178,6 +224,8 @@ __all__ = [
     "EvidenceBundleContent",
     "EvidenceBundleDetail",
     "EvidenceBundleItem",
+    "EvidenceBundlePolicyContent",
+    "EvidenceBundlePolicyItem",
     "EvidenceBundleSummary",
     "EvidenceBundlesResponse",
     "EvidenceItem",

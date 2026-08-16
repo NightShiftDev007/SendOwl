@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   chatEvaluationDetailSchema,
   chatReadinessSchema,
+  chatTranscriptDeltaSchema,
   chatTrialAtifProjectionSchema,
   chatTrialSchema,
   matraixChatTaskSchema,
+  mergeChatTranscriptDelta,
 } from "./chatEvaluationContracts";
 
 const digest = "a".repeat(64);
@@ -209,6 +211,66 @@ describe("MatrAIx Chat Evaluation contracts", () => {
       transcript: transcript.map((message, index) => (
         index === 1 ? { ...message, role: "customer" } : message
       )),
+    }).success).toBe(false);
+  });
+
+  it("merges a monotonic transcript delta idempotently", () => {
+    const runningTrial = {
+      ...succeededTrial,
+      status: "running",
+      completed_at: null,
+      transcript: transcript.slice(0, 1),
+      feedback: null,
+      result: null,
+      error: null,
+    } as const;
+    const detail = chatEvaluationDetailSchema.parse({
+      id: "2ce907de-4709-4eb6-b702-abac631607c7",
+      status: "running",
+      created_at: "2026-08-13T00:00:00Z",
+      task,
+      cohort: {
+        id: "782eb270-3504-45bd-9336-3ed88f48f71d",
+        title: "Chat Cohort",
+        cohort_sha256: digest,
+        dataset_sha256: otherDigest,
+        persona_count: 1,
+      },
+      trial_count: 1,
+      succeeded_trial_count: 0,
+      failed_trial_count: 0,
+      model_name: "qwen-plus",
+      chat_config_sha256: digest,
+      prompt_schema_version: "matraix-chat-acme-support/v1",
+      evaluation_sha256: digest,
+      retry_of_evaluation_id: null,
+      retry_of_evaluation_sha256: null,
+      attempt_number: 1,
+      trials: [runningTrial],
+    });
+    const delta = chatTranscriptDeltaSchema.parse({
+      evaluation_id: detail.id,
+      after_event_sequence: "0",
+      next_event_sequence: "102",
+      items: [
+        {
+          event_sequence: "101",
+          trial_id: runningTrial.id,
+          message: transcript[0],
+        },
+        {
+          event_sequence: "102",
+          trial_id: runningTrial.id,
+          message: transcript[1],
+        },
+      ],
+      observed_at: "2026-08-13T00:00:03Z",
+    });
+
+    expect(mergeChatTranscriptDelta(detail, delta).trials.at(0)?.transcript).toHaveLength(2);
+    expect(chatTranscriptDeltaSchema.safeParse({
+      ...delta,
+      next_event_sequence: "101",
     }).success).toBe(false);
   });
 

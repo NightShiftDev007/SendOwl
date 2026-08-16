@@ -21,6 +21,7 @@ function validDetail(): Record<string, unknown> {
     verification: "human_confirmed",
     snapshot_sha256: digest,
     item_count: 1,
+    policy_item_count: 0,
     created_at: "2026-08-13T00:00:00Z",
     items: [
       {
@@ -37,6 +38,7 @@ function validDetail(): Record<string, unknown> {
         captured_text_sha256: digest,
       },
     ],
+    policy_items: [],
   };
 }
 
@@ -54,7 +56,7 @@ describe("Evidence Bundle contracts", () => {
 
   it("rejects a directory whose total is not its complete item count", () => {
     const detail = validDetail();
-    const { items: _items, ...summary } = detail;
+    const { items: _items, policy_items: _policyItems, ...summary } = detail;
     expect(evidenceBundlesResponseSchema.safeParse({ items: [summary], total: 2 }).success).toBe(false);
   });
 });

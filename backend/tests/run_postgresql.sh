@@ -20,4 +20,5 @@ pytest -p no:cacheprovider \
   tests/test_migrations.py::test_population_child_write_waits_for_concurrent_dataset_seal \
   tests/test_migrations.py::test_semantic_postgresql_guards_verify_events_progress_and_results \
   tests/test_migrations.py::test_semantic_http_endpoints_execute_against_postgresql \
-  tests/test_populations_postgresql.py::test_population_repository_uses_sealed_postgresql_resources
+  tests/test_populations_postgresql.py::test_population_repository_uses_sealed_postgresql_resources \
+  tests/test_policy_evidence_postgresql.py::test_policy_evidence_executes_against_postgresql

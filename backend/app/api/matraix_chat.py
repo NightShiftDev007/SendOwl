@@ -14,6 +14,7 @@ from app.matraix_chat.contracts import (
     MatraixChatEvaluationsResponse,
     MatraixChatReadiness,
     MatraixChatTasksResponse,
+    MatraixChatTranscriptDelta,
     MatraixChatTrial,
 )
 from app.matraix_chat.errors import (
@@ -27,6 +28,7 @@ from app.matraix_chat.repository import (
     get_chat_evaluation,
     get_chat_evaluation_progress,
     get_chat_readiness,
+    get_chat_transcript_delta,
     get_chat_trial,
     list_chat_evaluations,
     list_chat_tasks,
@@ -42,6 +44,35 @@ from app.shared.pagination import parse_page_request
 from app.shared.progress import ParentProgress
 
 CHAT_UNAVAILABLE_DETAIL = "MatrAIx Chat data is unavailable because DATABASE_URL is not configured"
+CHAT_TRANSCRIPT_QUERY_FIELDS = frozenset({"after_event_sequence"})
+
+
+def _parse_after_event_sequence(request: Request) -> int:
+    unknown = sorted(set(request.query_params) - CHAT_TRANSCRIPT_QUERY_FIELDS)
+    repeated = len(request.query_params.getlist("after_event_sequence")) > 1
+    if unknown or repeated:
+        fragments: list[str] = []
+        if unknown:
+            fragments.append(f"unknown query fields: {', '.join(unknown)}")
+        if repeated:
+            fragments.append("repeated query fields: after_event_sequence")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="; ".join(fragments),
+        )
+    raw = request.query_params.get("after_event_sequence", "0")
+    if not raw.isdecimal() or len(raw) > 19 or (len(raw) > 1 and raw.startswith("0")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="after_event_sequence must be a canonical non-negative integer",
+        )
+    value = int(raw)
+    if value > 9_223_372_036_854_775_807:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="after_event_sequence exceeds the PostgreSQL bigint range",
+        )
+    return value
 
 
 async def require_chat_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -144,6 +175,25 @@ def create_matraix_chat_router() -> APIRouter:
     ) -> ParentProgress:
         try:
             return await get_chat_evaluation_progress(session, evaluation_id)
+        except MatraixChatEvaluationNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
+        "/api/v2/matraix/chat-evaluations/{evaluation_id}/transcript-delta",
+        response_model=MatraixChatTranscriptDelta,
+    )
+    async def chat_transcript_delta(
+        evaluation_id: UUID,
+        request: Request,
+        session: ChatSession,
+    ) -> MatraixChatTranscriptDelta:
+        after_event_sequence = _parse_after_event_sequence(request)
+        try:
+            return await get_chat_transcript_delta(
+                session,
+                evaluation_id,
+                after_event_sequence,
+            )
         except MatraixChatEvaluationNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 

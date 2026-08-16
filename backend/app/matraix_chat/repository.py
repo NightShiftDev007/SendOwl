@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.matraix_chat.contracts import (
     ChatCohortRef,
     ChatPersonaRef,
+    ChatTranscriptDeltaItem,
     ChatTranscriptMessage,
     ChatTrialError,
     ChatTrialFeedback,
@@ -22,6 +23,7 @@ from app.matraix_chat.contracts import (
     MatraixChatReadiness,
     MatraixChatTask,
     MatraixChatTasksResponse,
+    MatraixChatTranscriptDelta,
     MatraixChatTrial,
 )
 from app.matraix_chat.errors import (
@@ -825,6 +827,60 @@ async def get_chat_evaluation_progress(
     )
 
 
+async def get_chat_transcript_delta(
+    session: AsyncSession,
+    evaluation_id: UUID,
+    after_event_sequence: int,
+) -> MatraixChatTranscriptDelta:
+    evaluation_exists = await session.scalar(
+        select(MatraixChatEvaluationRecord.id).where(
+            MatraixChatEvaluationRecord.id == evaluation_id,
+            MatraixChatEvaluationRecord.input_sealed_at.is_not(None),
+        )
+    )
+    if evaluation_exists is None:
+        raise MatraixChatEvaluationNotFoundError(
+            f"MatrAIx Chat evaluation {evaluation_id} was not found"
+        )
+    records = tuple(
+        (
+            await session.execute(
+                select(MatraixChatMessageRecord)
+                .join(
+                    MatraixChatTrialRecord,
+                    MatraixChatTrialRecord.id == MatraixChatMessageRecord.trial_id,
+                )
+                .where(
+                    MatraixChatTrialRecord.evaluation_id == evaluation_id,
+                    MatraixChatMessageRecord.event_sequence > after_event_sequence,
+                )
+                .order_by(MatraixChatMessageRecord.event_sequence)
+                .limit(321)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(records) > 320:
+        raise RuntimeError(f"MatrAIx Chat evaluation {evaluation_id} exceeds the 320-message bound")
+    items = tuple(
+        ChatTranscriptDeltaItem(
+            event_sequence=str(record.event_sequence),
+            trial_id=record.trial_id,
+            message=_message(record),
+        )
+        for record in records
+    )
+    next_event_sequence = str(records[-1].event_sequence) if records else str(after_event_sequence)
+    return MatraixChatTranscriptDelta(
+        evaluation_id=evaluation_id,
+        after_event_sequence=str(after_event_sequence),
+        next_event_sequence=next_event_sequence,
+        items=items,
+        observed_at=datetime.now(UTC),
+    )
+
+
 async def get_chat_trial(session: AsyncSession, trial_id: UUID) -> MatraixChatTrial:
     trial_record = await session.scalar(
         select(MatraixChatTrialRecord).where(MatraixChatTrialRecord.id == trial_id)
@@ -933,6 +989,8 @@ __all__ = [
     "create_chat_evaluation",
     "ensure_chat_evaluation_record",
     "get_chat_evaluation",
+    "get_chat_evaluation_progress",
+    "get_chat_transcript_delta",
     "get_chat_readiness",
     "get_chat_trial",
     "list_chat_evaluations",

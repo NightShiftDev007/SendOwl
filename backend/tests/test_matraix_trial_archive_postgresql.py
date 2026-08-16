@@ -216,6 +216,7 @@ async def _insert_scenario(
         1,
         "human_confirmed",
         (evidence,),
+        (),
     )
     await connection.execute(
         text(
@@ -703,7 +704,7 @@ async def _exercise_archive_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0035"
+                assert revision == "20260816_core_0038"
                 cohort = await _insert_population(connection)
                 scenario, baseline, alternative = await _insert_scenario(connection)
                 trial_created_at = datetime.now(UTC)

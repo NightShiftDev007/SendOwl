@@ -11,12 +11,14 @@ from app.database import DatabaseConnector
 from app.evidence.contracts import (
     EvidenceBundleContent,
     EvidenceBundleDetail,
+    EvidenceBundlePolicyContent,
     EvidenceBundlesResponse,
 )
 from app.evidence.errors import EvidenceBundleItemNotFoundError, EvidenceBundleNotFoundError
 from app.evidence.repository import (
     get_evidence_bundle,
     get_evidence_bundle_content,
+    get_evidence_bundle_policy_content,
     list_evidence_bundles,
 )
 
@@ -65,6 +67,24 @@ def create_evidence_bundles_router() -> APIRouter:
     ) -> EvidenceBundleContent:
         try:
             return await get_evidence_bundle_content(session, bundle_id, article_id)
+        except (EvidenceBundleNotFoundError, EvidenceBundleItemNotFoundError) as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
+        "/{bundle_id}/policy-items/{policy_version_id}/content",
+        response_model=EvidenceBundlePolicyContent,
+    )
+    async def policy_content(
+        bundle_id: UUID,
+        policy_version_id: UUID,
+        session: EvidenceBundleSession,
+    ) -> EvidenceBundlePolicyContent:
+        try:
+            return await get_evidence_bundle_policy_content(
+                session,
+                bundle_id,
+                policy_version_id,
+            )
         except (EvidenceBundleNotFoundError, EvidenceBundleItemNotFoundError) as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 

@@ -154,6 +154,42 @@ class ChatTranscriptMessage(ContractModel):
     recorded_at: AwareDatetime
 
 
+class ChatTranscriptDeltaItem(ContractModel):
+    event_sequence: Annotated[
+        str,
+        StringConstraints(pattern=r"^[1-9][0-9]{0,18}$"),
+    ]
+    trial_id: UUID
+    message: ChatTranscriptMessage
+
+
+class MatraixChatTranscriptDelta(ContractModel):
+    evaluation_id: UUID
+    after_event_sequence: Annotated[
+        str,
+        StringConstraints(pattern=r"^(0|[1-9][0-9]{0,18})$"),
+    ]
+    next_event_sequence: Annotated[
+        str,
+        StringConstraints(pattern=r"^(0|[1-9][0-9]{0,18})$"),
+    ]
+    items: Annotated[tuple[ChatTranscriptDeltaItem, ...], Field(max_length=320)]
+    observed_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_cursor(self) -> Self:
+        after = int(self.after_event_sequence)
+        sequences = tuple(int(item.event_sequence) for item in self.items)
+        if sequences != tuple(sorted(sequences)) or len(set(sequences)) != len(sequences):
+            raise ValueError("chat delta event sequences must be strictly increasing")
+        if sequences and sequences[0] <= after:
+            raise ValueError("chat delta items must follow after_event_sequence")
+        expected_next = sequences[-1] if sequences else after
+        if int(self.next_event_sequence) != expected_next:
+            raise ValueError("next_event_sequence must equal the last observed event")
+        return self
+
+
 class ChatTrialFeedback(ContractModel):
     schema_version: ChatFeedbackSchemaVersion
     need_constraint_satisfaction: Satisfaction

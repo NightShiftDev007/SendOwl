@@ -17,6 +17,7 @@ from app.api.matraix_trial_archive import create_matraix_trial_archive_router
 from app.api.matraix_web import create_matraix_web_router
 from app.api.media import create_media_router
 from app.api.persona_interviews import create_persona_interviews_router
+from app.api.policy_evidence import create_policy_evidence_router
 from app.api.populations import create_populations_router
 from app.api.report_questions import create_report_questions_router
 from app.api.scenarios import create_scenarios_router
@@ -59,6 +60,7 @@ def create_app(settings: RuntimeSettings) -> FastAPI:
     application.include_router(create_decision_reports_router())
     application.include_router(create_report_questions_router())
     application.include_router(create_persona_interviews_router())
+    application.include_router(create_policy_evidence_router())
     application.include_router(create_media_router())
     application.include_router(create_evidence_bundles_router())
     application.include_router(create_matraix_batch_router())

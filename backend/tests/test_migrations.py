@@ -129,6 +129,13 @@ MATRAIX_LINUX_EVALUATION_REGISTRY_MIGRATION_FILE = (
 MATRAIX_WEB_LINUX_RETRY_MIGRATION_FILE = (
     VERSIONS_DIRECTORY / "20260816_core_0035_web_linux_retry_lineage.py"
 )
+MATRAIX_CHAT_CURSOR_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0036_chat_message_cursor.py"
+)
+POLICY_EVIDENCE_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260816_core_0037_policy_evidence.py"
+WORLD_SNAPSHOT_POLICY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0038_world_snapshot_policy_evidence.py"
+)
 TEST_POSTGRES_DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 
 
@@ -142,7 +149,7 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
     configuration = Config(str(BACKEND_DIRECTORY / "alembic.ini"))
     scripts = ScriptDirectory.from_config(configuration)
 
-    assert scripts.get_heads() == ["20260816_core_0035"]
+    assert scripts.get_heads() == ["20260816_core_0038"]
     assert {revision.revision for revision in scripts.walk_revisions()} == {
         *(f"20260812_core_{position:04d}" for position in range(1, 14)),
         "20260813_core_0014",
@@ -167,6 +174,9 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
         "20260816_core_0033",
         "20260816_core_0034",
         "20260816_core_0035",
+        "20260816_core_0036",
+        "20260816_core_0037",
+        "20260816_core_0038",
     }
 
 
@@ -407,6 +417,41 @@ def test_matraix_batch_registry_migration_seals_ordered_source_parents() -> None
     assert "cannot downgrade while Web or Linux retry attempts exist" in retry_source
 
 
+def test_matraix_chat_cursor_is_identity_transport_metadata() -> None:
+    source = MATRAIX_CHAT_CURSOR_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260816_core_0035"' in source
+    assert '"event_sequence"' in source
+    assert "sa.Identity(always=True)" in source
+    assert '"uq_chat_messages_event_sequence"' in source
+
+
+def test_policy_evidence_migration_is_immutable_and_content_addressed() -> None:
+    source = POLICY_EVIDENCE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260816_core_0036"' in source
+    assert '"policy_sources"' in source
+    assert '"policy_documents"' in source
+    assert '"policy_document_versions"' in source
+    assert "Policy evidence is immutable" in source
+    assert "Policy versions must be contiguous" in source
+    assert "Policy content hash mismatch" in source
+    assert "Policy evidence TRUNCATE is forbidden" in source
+
+
+def test_world_snapshot_policy_migration_extends_hash_without_rewriting_v2() -> None:
+    source = WORLD_SNAPSHOT_POLICY_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260816_core_0037"' in source
+    assert '"world_snapshot_policy_evidence"' in source
+    assert '"world-snapshot/v2"' in source
+    assert '"world-snapshot/v3"' in source
+    assert "canonical_world_snapshot_json" in source
+    assert "does not exactly match its immutable source version" in source
+    assert "reject_world_snapshot_mutation" in source
+    assert "reject_world_snapshot_truncate" in source
+
+
 def test_core_lineage_never_reuses_enterprise_revision_ids_or_schema() -> None:
     sources = _migration_sources()
 
@@ -608,6 +653,7 @@ def test_snapshot_hardening_canonical_json_matches_application_hashing() -> None
         3,
         "human_confirmed",
         (public_evidence,),
+        (),
     )
 
     assert migration._canonical_snapshot_json(stored_snapshot) == expected
@@ -1081,7 +1127,7 @@ async def _exercise_postgresql_content_address_guards(database_url: str) -> None
                 current_revision = await connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-                assert current_revision == "20260816_core_0035"
+                assert current_revision == "20260816_core_0038"
 
                 created_at = datetime.now(UTC)
                 world_model_id = uuid4()
@@ -1105,6 +1151,7 @@ async def _exercise_postgresql_content_address_guards(database_url: str) -> None
                     1,
                     "human_confirmed",
                     (evidence,),
+                    (),
                 )
                 await connection.execute(
                     text(
@@ -1668,6 +1715,7 @@ async def _insert_semantic_fixture(
         1,
         "human_confirmed",
         (evidence,),
+        (),
     )
     await connection.execute(
         text(

@@ -3,8 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import {
   fetchEvidenceBundleContent,
+  fetchEvidenceBundlePolicyContent,
   type EvidenceBundleContent,
   type EvidenceBundleDetail,
+  type EvidenceBundlePolicyContent,
   type EvidenceBundleSummary,
 } from "./evidenceBundleContracts";
 import { formatMediaTimestamp } from "./mediaPresentation";
@@ -27,7 +29,12 @@ function BundleDirectoryItem({
   return (
     <li>
       <button type="button" data-selected={isSelected} onClick={() => onSelect(bundle.id)}>
-        <span><strong>{bundle.title}</strong><small>v{bundle.version} · {bundle.item_count} 篇</small></span>
+        <span>
+          <strong>{bundle.title}</strong>
+          <small>
+            v{bundle.version} · {bundle.item_count} 篇媒体 · {bundle.policy_item_count} 份政策
+          </small>
+        </span>
         <time dateTime={bundle.created_at}>{formatMediaTimestamp(bundle.created_at)}</time>
         <code title={bundle.bundle_sha256}>{shortDigest(bundle.bundle_sha256)}</code>
       </button>
@@ -91,6 +98,62 @@ function FrozenContent({
   );
 }
 
+function FrozenPolicyContent({
+  bundle,
+  policyVersionId,
+}: {
+  readonly bundle: EvidenceBundleDetail;
+  readonly policyVersionId: string;
+}): JSX.Element {
+  const [state, setState] = useState<
+    | { readonly status: "idle" }
+    | { readonly status: "loading" }
+    | { readonly status: "success"; readonly data: EvidenceBundlePolicyContent }
+    | { readonly status: "error"; readonly error: Error }
+  >({ status: "idle" });
+  const controller = useRef<AbortController | null>(null);
+
+  useEffect(() => () => controller.current?.abort(), []);
+
+  const load = (): void => {
+    controller.current?.abort();
+    const nextController = new AbortController();
+    controller.current = nextController;
+    setState({ status: "loading" });
+    void fetchEvidenceBundlePolicyContent(bundle.id, policyVersionId, nextController.signal)
+      .then((data) => {
+        if (controller.current === nextController) setState({ status: "success", data });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (controller.current === nextController) {
+          setState({
+            status: "error",
+            error: error instanceof Error ? error : new Error("读取冻结政策正文失败。"),
+          });
+        }
+      });
+  };
+
+  if (state.status === "success") {
+    return (
+      <div className="evidence-bundle-content">
+        <pre>{state.data.captured_text}</pre>
+        <code title={state.data.content_sha256}>{state.data.content_sha256}</code>
+      </div>
+    );
+  }
+
+  return (
+    <div className="evidence-bundle-content-action">
+      <button type="button" disabled={state.status === "loading"} onClick={load}>
+        {state.status === "loading" ? "正在核验政策正文…" : "读取冻结政策正文"}
+      </button>
+      {state.status === "error" ? <p role="alert">{state.error.message}</p> : null}
+    </div>
+  );
+}
+
 function BundleDetail({ bundle }: { readonly bundle: EvidenceBundleDetail }): JSX.Element {
   return (
     <article className="evidence-bundle-detail">
@@ -101,7 +164,10 @@ function BundleDetail({ bundle }: { readonly bundle: EvidenceBundleDetail }): JS
       <dl>
         <div><dt>Bundle</dt><dd><code>{bundle.bundle_sha256}</code></dd></div>
         <div><dt>Snapshot</dt><dd><code>{bundle.snapshot_sha256}</code></dd></div>
-        <div><dt>冻结证据</dt><dd>{bundle.item_count} 篇</dd></div>
+        <div>
+          <dt>冻结证据</dt>
+          <dd>{bundle.item_count} 篇媒体 · {bundle.policy_item_count} 份政策</dd>
+        </div>
         <div><dt>创建时间</dt><dd>{formatMediaTimestamp(bundle.created_at)}</dd></div>
       </dl>
       <ol>
@@ -120,6 +186,37 @@ function BundleDetail({ bundle }: { readonly bundle: EvidenceBundleDetail }): JS
           </li>
         ))}
       </ol>
+      {bundle.policy_items.length === 0 ? null : (
+        <ol className="evidence-bundle-policy-items" aria-label="冻结政策证据">
+          {bundle.policy_items.map((item) => (
+            <li key={item.policy_version_id}>
+              <header>
+                <span>P{item.position + 1}</span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>
+                    {item.authority_name} · {item.canonical_identifier} · v{item.version}
+                  </small>
+                </div>
+                <a href={item.original_url} target="_blank" rel="noopener noreferrer">
+                  原文 ↗
+                </a>
+              </header>
+              <p>
+                发布 {item.publication_date} · 施行 {item.effective_from ?? "未标明"} ·
+                失效 {item.effective_until ?? "未标明"}
+              </p>
+              <details>
+                <summary>冻结政策正文与内容地址</summary>
+                <FrozenPolicyContent
+                  bundle={bundle}
+                  policyVersionId={item.policy_version_id}
+                />
+              </details>
+            </li>
+          ))}
+        </ol>
+      )}
     </article>
   );
 }

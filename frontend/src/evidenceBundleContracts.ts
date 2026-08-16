@@ -6,6 +6,7 @@ import { sha256DigestSchema } from "./mediaContracts";
 const evidenceBundlesEndpoint = "/api/v2/evidence-bundles";
 const identifierSchema = z.string().uuid();
 const timestampSchema = z.string().datetime({ offset: true });
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u);
 const singleLineTextSchema = z.string().trim().min(1).max(300).regex(/^[^\r\n]+$/u);
 const httpUrlSchema = z
   .string()
@@ -23,6 +24,7 @@ const evidenceBundleSummaryObjectSchema = z
     verification: z.literal("human_confirmed"),
     snapshot_sha256: sha256DigestSchema,
     item_count: z.number().int().min(1).max(50),
+    policy_item_count: z.number().int().min(0).max(50),
     created_at: timestampSchema,
   })
   .strict();
@@ -49,9 +51,34 @@ export const evidenceBundleItemSchema = z
   })
   .strict();
 
+export const evidenceBundlePolicyItemSchema = z
+  .object({
+    position: z.number().int().min(0).max(49),
+    kind: z.literal("policy_document"),
+    policy_version_id: identifierSchema,
+    authority_name: z.string().trim().min(1).max(300),
+    jurisdiction_code: z.string().regex(/^[A-Z0-9][A-Z0-9-]{1,15}$/u),
+    homepage_url: httpUrlSchema,
+    canonical_identifier: z.string().trim().min(1).max(256),
+    source_sha256: sha256DigestSchema,
+    document_sha256: sha256DigestSchema,
+    version: z.number().int().min(1).max(100),
+    title: z.string().trim().min(1).max(500),
+    original_url: httpUrlSchema,
+    language: z.string().regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u),
+    publication_date: dateSchema,
+    effective_from: dateSchema.nullable(),
+    effective_until: dateSchema.nullable(),
+    captured_at: timestampSchema,
+    content_sha256: sha256DigestSchema,
+    version_sha256: sha256DigestSchema,
+  })
+  .strict();
+
 export const evidenceBundleDetailSchema = evidenceBundleSummaryObjectSchema
   .extend({
     items: z.array(evidenceBundleItemSchema).min(1).max(50),
+    policy_items: z.array(evidenceBundlePolicyItemSchema).max(50),
   })
   .strict()
   .superRefine((bundle, context) => {
@@ -69,6 +96,19 @@ export const evidenceBundleDetailSchema = evidenceBundleSummaryObjectSchema
         message: "Evidence bundle item count must match item_count",
       });
     }
+    if (bundle.policy_items.length !== bundle.policy_item_count) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["policy_items"],
+        message: "Evidence bundle Policy item count must match policy_item_count",
+      });
+    }
+    if (bundle.item_count + bundle.policy_item_count > 50) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Evidence bundle cannot exceed 50 total items",
+      });
+    }
     if (!bundle.items.every((item, index) => item.position === index)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -82,6 +122,15 @@ export const evidenceBundleDetailSchema = evidenceBundleSummaryObjectSchema
         code: z.ZodIssueCode.custom,
         path: ["items"],
         message: "Evidence bundle article identities must be unique",
+      });
+    }
+    const policyVersionIds = bundle.policy_items.map((item) => item.policy_version_id);
+    if (new Set(policyVersionIds).size !== policyVersionIds.length
+      || !bundle.policy_items.every((item, index) => item.position === index)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["policy_items"],
+        message: "Evidence bundle Policy items must be unique and contiguous",
       });
     }
   });
@@ -107,9 +156,20 @@ export const evidenceBundleContentSchema = z
   })
   .strict();
 
+export const evidenceBundlePolicyContentSchema = z
+  .object({
+    bundle_id: identifierSchema,
+    bundle_sha256: sha256DigestSchema,
+    policy_version_id: identifierSchema,
+    captured_text: z.string().min(1),
+    content_sha256: sha256DigestSchema,
+  })
+  .strict();
+
 export type EvidenceBundleSummary = z.infer<typeof evidenceBundleSummarySchema>;
 export type EvidenceBundleDetail = z.infer<typeof evidenceBundleDetailSchema>;
 export type EvidenceBundleContent = z.infer<typeof evidenceBundleContentSchema>;
+export type EvidenceBundlePolicyContent = z.infer<typeof evidenceBundlePolicyContentSchema>;
 export type EvidenceBundlesResponse = z.infer<typeof evidenceBundlesResponseSchema>;
 
 export function fetchEvidenceBundles(signal: AbortSignal): Promise<EvidenceBundlesResponse> {
@@ -138,6 +198,20 @@ export function fetchEvidenceBundleContent(
   return getJson(
     `${evidenceBundlesEndpoint}/${encodeURIComponent(normalizedBundleId)}/items/${encodeURIComponent(normalizedArticleId)}/content`,
     evidenceBundleContentSchema,
+    signal,
+  );
+}
+
+export function fetchEvidenceBundlePolicyContent(
+  bundleId: string,
+  policyVersionId: string,
+  signal: AbortSignal,
+): Promise<EvidenceBundlePolicyContent> {
+  const normalizedBundleId = identifierSchema.parse(bundleId);
+  const normalizedPolicyVersionId = identifierSchema.parse(policyVersionId);
+  return getJson(
+    `${evidenceBundlesEndpoint}/${encodeURIComponent(normalizedBundleId)}/policy-items/${encodeURIComponent(normalizedPolicyVersionId)}/content`,
+    evidenceBundlePolicyContentSchema,
     signal,
   );
 }

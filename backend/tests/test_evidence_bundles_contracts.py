@@ -43,6 +43,7 @@ def _bundle_values() -> tuple[dict[str, object], EvidenceBundleItem]:
         1,
         "human_confirmed",
         (evidence,),
+        (),
     )
     item = EvidenceBundleItem(
         position=0,
@@ -60,6 +61,7 @@ def _bundle_values() -> tuple[dict[str, object], EvidenceBundleItem]:
             "verification": "human_confirmed",
             "snapshot_sha256": snapshot_sha256,
             "item_count": 1,
+            "policy_item_count": 0,
             "created_at": datetime(2026, 8, 13, 1, 10, tzinfo=UTC),
         },
         item,
@@ -89,18 +91,20 @@ def test_bundle_address_is_canonical_and_recomputable_from_summary() -> None:
 def test_bundle_detail_recomputes_snapshot_identity_from_ordered_items() -> None:
     values, item = _bundle_values()
 
-    detail = EvidenceBundleDetail(**values, items=(item,))
+    detail = EvidenceBundleDetail(**values, items=(item,), policy_items=())
 
     assert detail.id == detail.world_snapshot_id
     with pytest.raises(ValidationError, match="bundle item positions must be contiguous"):
         EvidenceBundleDetail(
             **values,
             items=(item.model_copy(update={"position": 1}),),
+            policy_items=(),
         )
     with pytest.raises(ValidationError, match="bundle items do not match snapshot_sha256"):
         EvidenceBundleDetail(
             **values,
             items=(item.model_copy(update={"title": "Altered evidence title"}),),
+            policy_items=(),
         )
 
 

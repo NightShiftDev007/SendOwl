@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   fetchChatEvaluation,
@@ -6,6 +6,7 @@ import {
   fetchChatEvaluations,
   fetchChatReadiness,
   fetchChatTasks,
+  fetchChatTranscriptDelta,
   fetchChatTrialTrajectory,
   type ChatEvaluationDetail,
   type ChatEvaluationSummary,
@@ -13,8 +14,9 @@ import {
   type ChatTrial,
   type ChatTrialAtifProjection,
   type MatraixChatTask,
+  mergeChatTranscriptDelta,
 } from "./chatEvaluationContracts";
-import { useProgressDrivenResource } from "./parentProgress";
+import type { ParentProgress } from "./parentProgress";
 
 export type ChatReadinessLoadState =
   | { readonly status: "loading"; readonly data: ChatReadiness | null }
@@ -219,13 +221,119 @@ export function useChatEvaluation(
   readonly state: ChatEvaluationDetailLoadState;
   readonly reload: () => void;
 } {
-  return useProgressDrivenResource(
-    evaluationId,
-    fetchChatEvaluation,
-    fetchChatEvaluationProgress,
-    2_000,
-    "读取 Chat Evaluation",
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatEvaluationDetailLoadState>(
+    evaluationId === null ? { status: "idle" } : { status: "loading", data: null },
   );
+  const cursor = useRef<string>("0");
+  const cursorInitialized = useRef<boolean>(false);
+  const progress = useRef<ParentProgress | null>(null);
+  const previousId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const changedEvaluation = previousId.current !== evaluationId;
+    if (changedEvaluation) {
+      previousId.current = evaluationId;
+      cursor.current = "0";
+      cursorInitialized.current = false;
+      progress.current = null;
+    }
+    if (evaluationId === null) {
+      setState({ status: "idle" });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState((current) => ({
+      status: "loading",
+      data: changedEvaluation || current.status === "idle" ? null : current.data,
+    }));
+    void fetchChatEvaluation(evaluationId, controller.signal)
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState((current) => ({
+          status: "error",
+          error: normalizeError(error, "读取 Chat Evaluation"),
+          isRetrying: false,
+          data: current.status === "idle" ? null : current.data,
+        }));
+      });
+    return () => controller.abort();
+  }, [evaluationId, requestVersion]);
+
+  useEffect(() => {
+    if (evaluationId === null || state.status !== "success") return undefined;
+    if (state.data.status === "succeeded" || state.data.status === "failed") return undefined;
+    const controller = new AbortController();
+    let timer: number | null = null;
+    const poll = (): void => {
+      void fetchChatEvaluationProgress(evaluationId, controller.signal)
+        .then(async (nextProgress) => {
+          if (nextProgress.id !== evaluationId) {
+            throw new Error("轻量进度不属于当前 Chat Evaluation。");
+          }
+          const currentData = state.data;
+          const runningCount = currentData.trials.filter(
+            (trial) => trial.status === "running",
+          ).length;
+          const queuedCount = currentData.trials.filter(
+            (trial) => trial.status === "queued",
+          ).length;
+          const statusChanged = nextProgress.status !== currentData.status
+            || nextProgress.queued_trial_count !== queuedCount
+            || nextProgress.running_trial_count !== runningCount
+            || nextProgress.succeeded_trial_count !== currentData.succeeded_trial_count
+            || nextProgress.failed_trial_count !== currentData.failed_trial_count;
+          let nextData = statusChanged
+            ? await fetchChatEvaluation(evaluationId, controller.signal)
+            : currentData;
+          const previousEventCount = progress.current?.event_count
+            ?? currentData.trials.reduce(
+              (total, trial) => total + trial.transcript.length,
+              0,
+            );
+          if (nextProgress.event_count !== previousEventCount || !cursorInitialized.current) {
+            const delta = await fetchChatTranscriptDelta(
+              evaluationId,
+              cursor.current,
+              controller.signal,
+            );
+            nextData = mergeChatTranscriptDelta(nextData, delta);
+            cursor.current = delta.next_event_sequence;
+            cursorInitialized.current = true;
+          }
+          progress.current = nextProgress;
+          setState({ status: "success", data: nextData });
+          if (nextProgress.status === "queued" || nextProgress.status === "running") {
+            timer = window.setTimeout(poll, 2_000);
+          }
+        })
+        .catch((error: unknown) => {
+          if (isAbortError(error)) return;
+          setState((current) => ({
+            status: "error",
+            error: normalizeError(error, "读取 Chat Evaluation 进度"),
+            isRetrying: false,
+            data: current.status === "idle" ? null : current.data,
+          }));
+        });
+    };
+    timer = window.setTimeout(poll, 2_000);
+    return () => {
+      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [evaluationId, state]);
+
+  return {
+    state,
+    reload: useCallback(() => {
+      cursor.current = "0";
+      cursorInitialized.current = false;
+      progress.current = null;
+      setRequestVersion((current) => current + 1);
+    }, []),
+  };
 }
 
 export function useChatTrialTrajectory(

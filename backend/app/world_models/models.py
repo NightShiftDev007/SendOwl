@@ -1,10 +1,11 @@
 """PostgreSQL records for persistent world models and immutable snapshots."""
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -105,4 +106,53 @@ class WorldSnapshotEvidenceRecord(ApplicationBase):
         ),
         UniqueConstraint("snapshot_id", "article_id", name="uq_world_snapshot_evidence_article"),
         Index("ix_world_snapshot_evidence_article", "article_id"),
+    )
+
+
+class WorldSnapshotPolicyEvidenceRecord(ApplicationBase):
+    """Complete immutable Policy version copy owned by one world snapshot."""
+
+    __tablename__ = "world_snapshot_policy_evidence"
+
+    snapshot_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("world_snapshots.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    policy_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("policy_document_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    authority_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    jurisdiction_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    homepage_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    canonical_identifier: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    publication_date: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_from: Mapped[date | None] = mapped_column(Date)
+    effective_until: Mapped[date | None] = mapped_column(Date)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    captured_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    version_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_world_snapshot_policy_position"),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_from IS NULL OR effective_until > effective_from",
+            name="ck_world_snapshot_policy_effectivity",
+        ),
+        UniqueConstraint(
+            "snapshot_id",
+            "policy_version_id",
+            name="uq_world_snapshot_policy_version",
+        ),
+        Index("ix_world_snapshot_policy_version", "policy_version_id"),
     )

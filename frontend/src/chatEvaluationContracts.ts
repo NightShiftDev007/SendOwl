@@ -123,6 +123,43 @@ export const chatTranscriptMessageSchema = z.object({
   recorded_at: timestampSchema,
 }).strict();
 
+const eventSequenceSchema = z.string().regex(/^(0|[1-9][0-9]{0,18})$/u);
+const positiveEventSequenceSchema = z.string().regex(/^[1-9][0-9]{0,18}$/u);
+
+export const chatTranscriptDeltaSchema = z.object({
+  evaluation_id: identifierSchema,
+  after_event_sequence: eventSequenceSchema,
+  next_event_sequence: eventSequenceSchema,
+  items: z.array(z.object({
+    event_sequence: positiveEventSequenceSchema,
+    trial_id: identifierSchema,
+    message: chatTranscriptMessageSchema,
+  }).strict()).max(320),
+  observed_at: timestampSchema,
+}).strict().superRefine((delta, context) => {
+  const sequences = delta.items.map((item) => BigInt(item.event_sequence));
+  const increasing = sequences.every((sequence, index) => (
+    index === 0
+      ? sequence > BigInt(delta.after_event_sequence)
+      : sequence > sequences[index - 1]!
+  ));
+  if (!increasing) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["items"],
+      message: "Transcript delta sequences must be strictly increasing after the cursor",
+    });
+  }
+  const expectedNext = sequences.at(-1)?.toString() ?? delta.after_event_sequence;
+  if (delta.next_event_sequence !== expectedNext) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["next_event_sequence"],
+      message: "Delta cursor must equal the last observed event sequence",
+    });
+  }
+});
+
 export const chatFeedbackSchema = z.object({
   schema_version: feedbackSchemaVersionSchema,
   need_constraint_satisfaction: z.enum(["yes", "partially", "no"]),
@@ -553,6 +590,7 @@ export const chatEvaluationCreateRequestSchema = z.object({
 export type MatraixChatTask = z.infer<typeof matraixChatTaskSchema>;
 export type ChatEvaluationSummary = z.infer<typeof chatEvaluationSummarySchema>;
 export type ChatEvaluationDetail = z.infer<typeof chatEvaluationDetailSchema>;
+export type ChatTranscriptDelta = z.infer<typeof chatTranscriptDeltaSchema>;
 export type ChatTrial = z.infer<typeof chatTrialSchema>;
 export type ChatTrialAtifProjection = z.infer<typeof chatTrialAtifProjectionSchema>;
 export type ChatReadiness = z.infer<typeof chatReadinessSchema>;
@@ -595,6 +633,67 @@ export function fetchChatEvaluationProgress(
     parentProgressSchema,
     signal,
   );
+}
+
+export function fetchChatTranscriptDelta(
+  evaluationId: string,
+  afterEventSequence: string,
+  signal: AbortSignal,
+): Promise<ChatTranscriptDelta> {
+  const id = identifierSchema.parse(evaluationId);
+  const cursor = eventSequenceSchema.parse(afterEventSequence);
+  return getJson(
+    `${evaluationsEndpoint}/${encodeURIComponent(id)}/transcript-delta?after_event_sequence=${encodeURIComponent(cursor)}`,
+    chatTranscriptDeltaSchema,
+    signal,
+  );
+}
+
+export function mergeChatTranscriptDelta(
+  detail: ChatEvaluationDetail,
+  delta: ChatTranscriptDelta,
+): ChatEvaluationDetail {
+  if (delta.evaluation_id !== detail.id) {
+    throw new Error("Transcript delta does not belong to the selected Chat evaluation.");
+  }
+  const trialIndexById = new Map(detail.trials.map((trial, index) => [trial.id, index]));
+  const transcripts = detail.trials.map((trial) => [...trial.transcript]);
+  for (const item of delta.items) {
+    const trialIndex = trialIndexById.get(item.trial_id);
+    if (trialIndex === undefined) {
+      throw new Error(`Transcript delta references unknown Chat trial ${item.trial_id}.`);
+    }
+    const transcript = transcripts[trialIndex];
+    if (transcript === undefined) {
+      throw new Error(`Transcript state is missing Chat trial ${item.trial_id}.`);
+    }
+    const existing = transcript[item.message.position];
+    if (existing !== undefined) {
+      if (JSON.stringify(existing) !== JSON.stringify(item.message)) {
+        throw new Error(
+          `Transcript delta conflicts with immutable Chat message ${item.trial_id}:${item.message.position}.`,
+        );
+      }
+      continue;
+    }
+    if (item.message.position !== transcript.length) {
+      throw new Error(
+        `Transcript delta is not contiguous for Chat trial ${item.trial_id}.`,
+      );
+    }
+    transcript.push(item.message);
+  }
+  const trials = detail.trials.map((trial, index) => {
+    const transcript = transcripts[index];
+    if (transcript === undefined) {
+      throw new Error(`Transcript state is missing Chat trial ${trial.id}.`);
+    }
+    return { ...trial, transcript };
+  });
+  return chatEvaluationDetailSchema.parse({
+    ...detail,
+    trials,
+  });
 }
 
 export function fetchChatTrial(

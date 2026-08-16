@@ -4,10 +4,12 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -249,6 +251,11 @@ class MatraixChatMessageRecord(ApplicationBase):
         nullable=False,
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_sequence: Mapped[int] = mapped_column(
+        BigInteger,
+        Identity(always=True),
+        nullable=False,
+    )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -263,6 +270,7 @@ class MatraixChatMessageRecord(ApplicationBase):
             name="ck_chat_message_content",
         ),
         Index("ix_chat_messages_trial_position", "trial_id", "position"),
+        Index("uq_chat_messages_event_sequence", "event_sequence", unique=True),
     )
 
 

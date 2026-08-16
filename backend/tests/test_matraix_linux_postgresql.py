@@ -57,7 +57,7 @@ async def _exercise_linux_retry(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0035"
+                assert revision == "20260816_core_0038"
                 cohort_id = await _insert_population(connection)
                 persona_id = await connection.scalar(
                     text(

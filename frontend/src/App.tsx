@@ -17,6 +17,7 @@ import {
 import { OasisPlatformSmokePage } from "./OasisPlatformSmokePage";
 import { OverviewPage } from "./OverviewPage";
 import { PersonaWorldPage } from "./PersonaWorldPage";
+import { PolicyEvidencePage } from "./PolicyEvidencePage";
 import { ScenarioPage } from "./ScenarioPage";
 import { TaskGalleryPage } from "./TaskGalleryPage";
 import {
@@ -66,6 +67,10 @@ function renderActivePage(
     }
 
     return <MediaPage route={mediaRoute} onRouteChange={onMediaRouteChange} />;
+  }
+
+  if (activeSection === "policy") {
+    return <PolicyEvidencePage />;
   }
 
   if (activeSection === "threads") {
