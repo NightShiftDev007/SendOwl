@@ -12,6 +12,7 @@ from app.decision_reports.models import DecisionReportRecord
 from app.report_questions.contracts import (
     ReportAnswerCitation,
     ReportQuestion,
+    ReportQuestionContext,
     ReportQuestionRequest,
     ReportQuestionsResponse,
 )
@@ -29,7 +30,8 @@ from app.simulations.models import SimulationWorkerHeartbeatRecord
 from app.world_graphs.models import SemanticWorldGraphRecord
 
 CITATIONS_ADAPTER = TypeAdapter(tuple[ReportAnswerCitation, ...])
-QA_PROMPT_SCHEMA_VERSION = "report-evidence-qa/v1"
+QA_ROOT_PROMPT_SCHEMA_VERSION = "report-evidence-qa/v1"
+QA_FOLLOW_UP_PROMPT_SCHEMA_VERSION = "report-evidence-qa/v2"
 
 
 def _project(record: ReportQuestionRecord) -> ReportQuestion:
@@ -48,7 +50,11 @@ def _project(record: ReportQuestionRecord) -> ReportQuestion:
         question_sha256=record.question_sha256,
         model_name=record.model_name,
         semantic_config_sha256=record.semantic_config_sha256,
-        prompt_schema_version=QA_PROMPT_SCHEMA_VERSION,
+        prompt_schema_version=record.prompt_schema_version,
+        parent_question_id=record.parent_question_id,
+        parent_question_sha256=record.parent_question_sha256,
+        parent_answer_sha256=record.parent_answer_sha256,
+        conversation_depth=record.conversation_depth,
         status=record.status,
         created_at=record.created_at,
         started_at=record.started_at,
@@ -79,17 +85,34 @@ async def enqueue_report_question(
     scenario = await session.get(ScenarioRecord, report.scenario_id)
     if scenario is None or scenario.sealed_at is None:
         raise RuntimeError(f"decision report {report_id} references a missing sealed scenario")
-    graph = await session.scalar(
-        select(SemanticWorldGraphRecord)
-        .where(
-            SemanticWorldGraphRecord.world_model_id == scenario.world_model_id,
-            SemanticWorldGraphRecord.snapshot_id == scenario.world_snapshot_id,
-            SemanticWorldGraphRecord.snapshot_sha256 == scenario.snapshot_sha256,
-            SemanticWorldGraphRecord.status == "succeeded",
+    parent: ReportQuestionRecord | None = None
+    if request.parent_question_id is not None:
+        parent = await session.get(ReportQuestionRecord, request.parent_question_id)
+        if parent is None or parent.report_id != report_id:
+            raise ReportQuestionNotFoundError(
+                f"succeeded parent report question {request.parent_question_id} was not found"
+            )
+        if parent.status != "succeeded" or parent.answer_sha256 is None:
+            raise ReportQuestionUnavailableError(
+                "a follow-up requires a succeeded parent report question"
+            )
+        if parent.conversation_depth >= 4:
+            raise ReportQuestionUnavailableError(
+                "report question conversation depth is limited to 4"
+            )
+        graph = await session.get(SemanticWorldGraphRecord, parent.graph_id)
+    else:
+        graph = await session.scalar(
+            select(SemanticWorldGraphRecord)
+            .where(
+                SemanticWorldGraphRecord.world_model_id == scenario.world_model_id,
+                SemanticWorldGraphRecord.snapshot_id == scenario.world_snapshot_id,
+                SemanticWorldGraphRecord.snapshot_sha256 == scenario.snapshot_sha256,
+                SemanticWorldGraphRecord.status == "succeeded",
+            )
+            .order_by(SemanticWorldGraphRecord.completed_at.desc(), SemanticWorldGraphRecord.id)
+            .limit(1)
         )
-        .order_by(SemanticWorldGraphRecord.completed_at.desc(), SemanticWorldGraphRecord.id)
-        .limit(1)
-    )
     if graph is None or graph.graph_sha256 is None:
         raise ReportQuestionUnavailableError(
             "report questions require a succeeded evidence-backed semantic graph "
@@ -118,7 +141,15 @@ async def enqueue_report_question(
         raise ReportQuestionUnavailableError(
             "report questions require a live model worker matching the graph configuration"
         )
-    digest = question_sha256(report.report_sha256, graph.graph_sha256, request.question)
+    parent_question_digest = None if parent is None else parent.question_sha256
+    parent_answer_digest = None if parent is None else parent.answer_sha256
+    digest = question_sha256(
+        report.report_sha256,
+        graph.graph_sha256,
+        request.question,
+        parent_question_digest,
+        parent_answer_digest,
+    )
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:digest, 0))"), {"digest": digest}
     )
@@ -137,7 +168,13 @@ async def enqueue_report_question(
         question_sha256=digest,
         model_name=heartbeat.semantic_model_name,
         semantic_config_sha256=heartbeat.semantic_config_sha256,
-        prompt_schema_version=QA_PROMPT_SCHEMA_VERSION,
+        prompt_schema_version=(
+            QA_ROOT_PROMPT_SCHEMA_VERSION if parent is None else QA_FOLLOW_UP_PROMPT_SCHEMA_VERSION
+        ),
+        parent_question_id=None if parent is None else parent.id,
+        parent_question_sha256=parent_question_digest,
+        parent_answer_sha256=parent_answer_digest,
+        conversation_depth=0 if parent is None else parent.conversation_depth + 1,
         status="queued",
         created_at=datetime.now(UTC),
         started_at=None,
@@ -159,6 +196,32 @@ async def get_report_question(session: AsyncSession, question_id: UUID) -> Repor
     if record is None:
         raise ReportQuestionNotFoundError(f"report question {question_id} was not found")
     return _project(record)
+
+
+async def get_report_question_context(
+    session: AsyncSession,
+    question_id: UUID,
+) -> ReportQuestionContext:
+    current = await session.get(ReportQuestionRecord, question_id)
+    if current is None:
+        raise ReportQuestionNotFoundError(f"report question {question_id} was not found")
+    if current.status != "succeeded":
+        raise ReportQuestionUnavailableError(
+            "report question context requires a succeeded current question"
+        )
+    records = [current]
+    cursor = current
+    while cursor.parent_question_id is not None:
+        parent = await session.get(ReportQuestionRecord, cursor.parent_question_id)
+        if parent is None:
+            raise RuntimeError(f"report question {cursor.id} references a missing parent")
+        records.append(parent)
+        cursor = parent
+    records.reverse()
+    return ReportQuestionContext(
+        current_question_id=question_id,
+        items=tuple(_project(record) for record in records),
+    )
 
 
 async def list_report_questions(session: AsyncSession, report_id: UUID) -> ReportQuestionsResponse:

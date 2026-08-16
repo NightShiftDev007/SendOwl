@@ -5,6 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
@@ -27,6 +28,9 @@ from app.populations.repository import (
     list_datasets,
     list_personas,
 )
+from app.world_graphs.contracts import GraphPersonaCohortOriginsResponse
+from app.world_graphs.errors import WorldGraphPersonaOriginPageOutOfRangeError
+from app.world_graphs.repository import list_graph_persona_cohort_origins
 
 POPULATIONS_UNAVAILABLE_DETAIL = (
     "Population data is unavailable because DATABASE_URL is not configured"
@@ -42,6 +46,8 @@ async def require_population_session(request: Request) -> AsyncIterator[AsyncSes
             detail=POPULATIONS_UNAVAILABLE_DETAIL,
         )
     async with connector.session() as session:
+        if request.method == "GET":
+            await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
         yield session
 
 
@@ -118,5 +124,43 @@ def create_populations_router() -> APIRouter:
             return await get_cohort(session, cohort_id)
         except PopulationCohortNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
+        "/cohorts/{cohort_id}/graph-origins",
+        response_model=GraphPersonaCohortOriginsResponse,
+    )
+    async def cohort_graph_origins(
+        request: Request,
+        cohort_id: UUID,
+        session: PopulationSession,
+        page: Annotated[int, Query(ge=1)] = 1,
+        page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> GraphPersonaCohortOriginsResponse:
+        """Return durable graph-node selection lineage for one immutable cohort."""
+        unknown = sorted(set(request.query_params) - {"page", "page_size"})
+        repeated = tuple(
+            field for field in ("page", "page_size") if len(request.query_params.getlist(field)) > 1
+        )
+        if unknown or repeated:
+            detail = (
+                f"unsupported graph origin query fields: {', '.join(unknown)}"
+                if unknown
+                else f"graph origin query fields must not repeat: {', '.join(repeated)}"
+            )
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+        try:
+            return await list_graph_persona_cohort_origins(
+                session,
+                cohort_id,
+                page,
+                page_size,
+            )
+        except PopulationCohortNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except WorldGraphPersonaOriginPageOutOfRangeError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
 
     return router

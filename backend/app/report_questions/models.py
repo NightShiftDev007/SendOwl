@@ -27,6 +27,12 @@ class ReportQuestionRecord(ApplicationBase):
     model_name: Mapped[str] = mapped_column(String(200), nullable=False)
     semantic_config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    parent_question_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("report_questions.id", ondelete="RESTRICT")
+    )
+    parent_question_sha256: Mapped[str | None] = mapped_column(String(64))
+    parent_answer_sha256: Mapped[str | None] = mapped_column(String(64))
+    conversation_depth: Mapped[int] = mapped_column(nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -52,8 +58,18 @@ class ReportQuestionRecord(ApplicationBase):
             name="ck_report_questions_status",
         ),
         CheckConstraint(
-            "prompt_schema_version = 'report-evidence-qa/v1'",
+            "prompt_schema_version IN ('report-evidence-qa/v1', 'report-evidence-qa/v2')",
             name="ck_report_questions_prompt_schema",
+        ),
+        CheckConstraint(
+            "(conversation_depth = 0 AND parent_question_id IS NULL "
+            "AND parent_question_sha256 IS NULL AND parent_answer_sha256 IS NULL "
+            "AND prompt_schema_version = 'report-evidence-qa/v1') OR "
+            "(conversation_depth BETWEEN 1 AND 4 AND parent_question_id IS NOT NULL "
+            "AND parent_question_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND parent_answer_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND prompt_schema_version = 'report-evidence-qa/v2')",
+            name="ck_report_questions_lineage",
         ),
         CheckConstraint(
             "(status = 'queued' AND started_at IS NULL AND completed_at IS NULL "

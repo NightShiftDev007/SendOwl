@@ -103,6 +103,8 @@ def calculate_survey_experiment_sha256(
     instrument_sha256: str,
     model_name: str,
     survey_config_sha256: str,
+    retry_of_experiment_sha256: str | None,
+    attempt_number: int,
 ) -> str:
     canonical = canonical_survey_experiment_json(
         scenario,
@@ -113,6 +115,19 @@ def calculate_survey_experiment_sha256(
         model_name,
         survey_config_sha256,
     )
+    if attempt_number > 1:
+        if retry_of_experiment_sha256 is None or attempt_number > 5:
+            raise ValueError("Survey retry requires a parent digest and attempt 2..5")
+        canonical = _canonical_json(
+            {
+                "schema": "matraix-survey-experiment-retry/v1",
+                "retry_of_experiment_sha256": retry_of_experiment_sha256,
+                "attempt_number": attempt_number,
+                "experiment": json.loads(canonical),
+            }
+        )
+    elif retry_of_experiment_sha256 is not None:
+        raise ValueError("root Survey experiment cannot have a retry parent")
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import type { SectionId } from "./domain";
@@ -12,6 +12,10 @@ import {
 import type { CapabilityDescriptor } from "./systemCapabilities";
 import { useMediaOverview } from "./useMediaOverview";
 import {
+  useMediaPropagation,
+  type MediaPropagationLoadState,
+} from "./useMediaPropagation";
+import {
   useSystemCapabilities,
   type SystemCapabilitiesLoadState,
 } from "./useSystemCapabilities";
@@ -19,6 +23,7 @@ import "./situationHome.css";
 
 export interface OverviewPageProps {
   readonly onNavigate: (sectionId: SectionId) => void;
+  readonly onOpenMediaTopic: (topicId: string) => void;
 }
 
 interface DecisionPathStep {
@@ -32,6 +37,14 @@ const MediaGlobe = lazy(async () => {
 
   return { default: module.MediaGlobe };
 });
+
+const MediaWorldMap = lazy(async () => {
+  const module = await import("./MediaWorldMap");
+
+  return { default: module.MediaWorldMap };
+});
+
+type WorldLens = "globe" | "map" | "propagation";
 
 const decisionPathSteps: readonly DecisionPathStep[] = [
   { code: "01", label: "Evidence", title: "媒体证据" },
@@ -187,7 +200,13 @@ function CoverageLedger({ overview }: { readonly overview: MediaOverview }): JSX
   );
 }
 
-function HotTopics({ overview }: { readonly overview: MediaOverview }): JSX.Element {
+function HotTopics({
+  overview,
+  onOpenTopic,
+}: {
+  readonly overview: MediaOverview;
+  readonly onOpenTopic: (topicId: string) => void;
+}): JSX.Element {
   const maximumCount = Math.max(
     1,
     overview.hot_topics.reduce(
@@ -207,20 +226,38 @@ function HotTopics({ overview }: { readonly overview: MediaOverview }): JSX.Elem
 
   return (
     <ol className="situation-home__topics-list">
-      {overview.hot_topics.map((topic, index) => (
-        <li key={topic.topic_id ?? "unclassified"}>
-          <span className="situation-home__topic-rank">
-            {String(index + 1).padStart(2, "0")}
-          </span>
-          <div>
-            <strong>{topic.topic}</strong>
-            <progress max={maximumCount} value={topic.article_count}>
-              {topic.article_count} / {maximumCount}
-            </progress>
-          </div>
-          <span>{formatMediaCount(topic.article_count)}</span>
-        </li>
-      ))}
+      {overview.hot_topics.map((topic, index) => {
+        const topicId = topic.topic_id;
+
+        return (
+          <li key={topicId ?? "unclassified"}>
+            <span className="situation-home__topic-rank">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            {topicId === null ? (
+              <div className="situation-home__topic-copy">
+                <strong>{topic.topic}</strong>
+                <progress max={maximumCount} value={topic.article_count}>
+                  {topic.article_count} / {maximumCount}
+                </progress>
+              </div>
+            ) : (
+              <button
+                className="situation-home__topic-copy situation-home__topic-link"
+                type="button"
+                aria-label={`打开议题演化：${topic.topic}`}
+                onClick={() => onOpenTopic(topicId)}
+              >
+                <strong>{topic.topic}</strong>
+                <progress max={maximumCount} value={topic.article_count}>
+                  {topic.article_count} / {maximumCount}
+                </progress>
+              </button>
+            )}
+            <span>{formatMediaCount(topic.article_count)}</span>
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -265,11 +302,16 @@ function SituationScene({
   overview,
   selectedCountry,
   onSelectCountry,
+  propagationState,
+  onOpenTopic,
 }: {
   readonly overview: MediaOverview;
   readonly selectedCountry: string | null;
   readonly onSelectCountry: (countryCode: string | null) => void;
+  readonly propagationState: MediaPropagationLoadState;
+  readonly onOpenTopic: (topicId: string) => void;
 }): JSX.Element {
+  const [worldLens, setWorldLens] = useState<WorldLens>("globe");
   const activeNode = selectedNode(overview, selectedCountry);
   const overviewIsEmpty =
     overview.source_count === 0 &&
@@ -281,20 +323,69 @@ function SituationScene({
 
   return (
     <div className="situation-home__scene">
-      <div className="situation-home__globe" aria-label="全球报道分布">
-        <Suspense
-          fallback={
-            <div className="media-globe-loading" role="status">
-              正在加载 3D 地球…
-            </div>
-          }
-        >
-          <MediaGlobe
-            nodes={overview.country_nodes}
-            selectedCountry={selectedCountry}
-            onSelect={onSelectCountry}
-          />
-        </Suspense>
+      <div className="situation-home__world-lens" aria-label="全球报道分布">
+        <div className="situation-home__lens-switch" role="group" aria-label="世界视图">
+          <button
+            type="button"
+            aria-pressed={worldLens === "globe"}
+            onClick={() => setWorldLens("globe")}
+          >
+            3D 地球
+          </button>
+          <button
+            type="button"
+            aria-pressed={worldLens === "map"}
+            onClick={() => setWorldLens("map")}
+          >
+            平面热力
+          </button>
+          <button
+            type="button"
+            aria-pressed={worldLens === "propagation"}
+            onClick={() => setWorldLens("propagation")}
+          >
+            传播链
+          </button>
+        </div>
+        <div className="situation-home__world-viewport">
+          <Suspense
+            fallback={
+              <div className="media-globe-loading" role="status">
+                正在加载世界视图…
+              </div>
+            }
+          >
+            {worldLens === "globe" ? (
+              <MediaGlobe
+                nodes={overview.country_nodes}
+                selectedCountry={selectedCountry}
+                onSelect={onSelectCountry}
+              />
+            ) : worldLens === "map" ? (
+              <MediaWorldMap
+                nodes={overview.country_nodes}
+                mode="heat"
+                propagationEvents={[]}
+                selectedCountry={selectedCountry}
+                onSelect={onSelectCountry}
+              />
+            ) : propagationState.status === "success" ? (
+              <MediaWorldMap
+                nodes={overview.country_nodes}
+                mode="propagation"
+                propagationEvents={propagationState.data.items}
+                selectedCountry={selectedCountry}
+                onSelect={onSelectCountry}
+              />
+            ) : (
+              <div className="media-globe-loading" role="status">
+                {propagationState.status === "loading"
+                  ? "正在读取真实传播链…"
+                  : `传播链读取失败：${propagationState.error.message}`}
+              </div>
+            )}
+          </Suspense>
+        </div>
       </div>
 
       <CoverageLedger overview={overview} />
@@ -307,7 +398,7 @@ function SituationScene({
           </div>
           <strong>{overview.hot_topics.length}</strong>
         </div>
-        <HotTopics overview={overview} />
+        <HotTopics overview={overview} onOpenTopic={onOpenTopic} />
       </aside>
 
       <div className="situation-home__country-focus" aria-live="polite">
@@ -408,8 +499,9 @@ function LatestEvidence({
   );
 }
 
-export function OverviewPage({ onNavigate }: OverviewPageProps): JSX.Element {
+export function OverviewPage({ onNavigate, onOpenMediaTopic }: OverviewPageProps): JSX.Element {
   const { state: mediaState, reload: reloadMedia } = useMediaOverview();
+  const propagationState = useMediaPropagation();
   const { state: capabilitiesState, reload: reloadCapabilities } = useSystemCapabilities();
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const capabilityTitle = useRef<HTMLHeadingElement>(null);
@@ -417,9 +509,9 @@ export function OverviewPage({ onNavigate }: OverviewPageProps): JSX.Element {
     capabilitiesState.status,
   );
 
-  const handleSelectCountry = (countryCode: string | null): void => {
+  const handleSelectCountry = useCallback((countryCode: string | null): void => {
     setSelectedCountry(countryCode);
-  };
+  }, []);
 
   useEffect(() => {
     if (
@@ -464,6 +556,8 @@ export function OverviewPage({ onNavigate }: OverviewPageProps): JSX.Element {
             overview={mediaState.data}
             selectedCountry={selectedCountry}
             onSelectCountry={handleSelectCountry}
+            propagationState={propagationState}
+            onOpenTopic={onOpenMediaTopic}
           />
         ) : null}
       </section>

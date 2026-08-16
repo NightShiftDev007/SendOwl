@@ -1,0 +1,184 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+
+import { ApiErrorPanel } from "./ApiErrorPanel";
+import { isAmbiguousPostResultError } from "./apiClient";
+import {
+  createNativeBatchLaunch,
+  type MatraixBatchRegistryDetail,
+  type MatraixNativeBatchLaunchItem,
+  type MatraixNativeBatchLaunchRequest,
+} from "./batchRegistryContracts";
+import { fetchChatReadiness } from "./chatEvaluationContracts";
+import { fetchSurveyReadiness } from "./surveyContracts";
+import { useChatReadiness, useChatTasks } from "./useChatEvaluations";
+import { useCohorts } from "./usePopulations";
+import { useScenarioDetail, useScenarios } from "./useScenarios";
+import { useSurveyReadiness } from "./useSurveyExperiments";
+
+type DraftKind = "survey" | "chat";
+type SubmissionState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "error"; readonly error: Error; readonly ambiguous: boolean };
+
+function itemKey(item: MatraixNativeBatchLaunchItem): string {
+  return item.kind === "survey"
+    ? `survey:${item.scenario_id}:${item.cohort_id}:${item.alternative_id}`
+    : `chat:${item.cohort_id}:${item.task_id}:${item.task_version}`;
+}
+
+function compactId(value: string): string {
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
+
+export function NativeBatchLaunchComposer({
+  onCreated,
+  onAmbiguous,
+}: {
+  readonly onCreated: (registry: MatraixBatchRegistryDetail) => void;
+  readonly onAmbiguous: () => void;
+}): JSX.Element {
+  const { state: scenarios, reload: reloadScenarios } = useScenarios();
+  const { state: cohorts, reload: reloadCohorts } = useCohorts();
+  const { state: surveyReadiness, reload: reloadSurveyReadiness } = useSurveyReadiness();
+  const { state: chatReadiness, reload: reloadChatReadiness } = useChatReadiness();
+  const { state: chatTasks, reload: reloadChatTasks } = useChatTasks();
+  const [title, setTitle] = useState<string>("");
+  const [kind, setKind] = useState<DraftKind>("survey");
+  const [scenarioId, setScenarioId] = useState<string | null>(null);
+  const [cohortId, setCohortId] = useState<string | null>(null);
+  const [alternativeId, setAlternativeId] = useState<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [items, setItems] = useState<readonly MatraixNativeBatchLaunchItem[]>([]);
+  const [confirmed, setConfirmed] = useState<boolean>(false);
+  const [submission, setSubmission] = useState<SubmissionState>({ status: "idle" });
+  const controllerRef = useRef<AbortController | null>(null);
+  const { state: scenarioDetail } = useScenarioDetail(kind === "survey" ? scenarioId : null);
+  const detail = scenarioDetail.status === "success" ? scenarioDetail.data : null;
+  const selectedCohort = cohorts.data?.items.find((cohort) => cohort.id === cohortId) ?? null;
+  const selectedTask = chatTasks.items.find((task) => task.task_id === taskId) ?? null;
+  const surveyReady = surveyReadiness.status === "success"
+    && surveyReadiness.data.survey_runtime_ready
+    && !surveyReadiness.data.configuration_conflict;
+  const chatReady = chatReadiness.status === "success"
+    && chatReadiness.data.chat_runtime_ready
+    && !chatReadiness.data.configuration_conflict;
+  const requiredKinds = useMemo(() => new Set(items.map((item) => item.kind)), [items]);
+  const runtimeReady = (!requiredKinds.has("survey") || surveyReady)
+    && (!requiredKinds.has("chat") || chatReady);
+  const submitting = submission.status === "submitting";
+  const canAdd = items.length < 20
+    && selectedCohort !== null
+    && selectedCohort.persona_count <= 8
+    && (kind === "survey"
+      ? surveyReady && detail !== null && alternativeId !== null
+      : chatReady && selectedTask !== null);
+  const canSubmit = title.trim().length > 0
+    && items.length > 0
+    && runtimeReady
+    && confirmed
+    && !submitting;
+
+  useEffect(() => () => controllerRef.current?.abort(), []);
+  useEffect(() => setAlternativeId(null), [scenarioId]);
+  useEffect(() => {
+    setConfirmed(false);
+    setSubmission({ status: "idle" });
+  }, [items]);
+
+  const addItem = (): void => {
+    if (!canAdd || selectedCohort === null) return;
+    const item: MatraixNativeBatchLaunchItem | null = kind === "survey"
+      ? scenarioId !== null && alternativeId !== null
+        ? { kind: "survey", scenario_id: scenarioId, cohort_id: selectedCohort.id, alternative_id: alternativeId }
+        : null
+      : selectedTask === null
+        ? null
+        : { kind: "chat", cohort_id: selectedCohort.id, task_id: selectedTask.task_id, task_version: selectedTask.version };
+    if (item === null || items.some((existing) => itemKey(existing) === itemKey(item))) return;
+    setItems((current) => [...current, item]);
+  };
+
+  const submit = (): void => {
+    if (!canSubmit || controllerRef.current !== null) return;
+    const request: MatraixNativeBatchLaunchRequest = { title: title.trim(), items: [...items] };
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setSubmission({ status: "submitting" });
+    const preflight: Promise<void>[] = [];
+    if (requiredKinds.has("survey")) {
+      preflight.push(fetchSurveyReadiness(controller.signal).then((readiness) => {
+        if (!readiness.survey_runtime_ready || readiness.configuration_conflict) {
+          throw new Error("Survey runtime 在提交前已不可用；POST 尚未发送。");
+        }
+      }));
+    }
+    if (requiredKinds.has("chat")) {
+      preflight.push(fetchChatReadiness(controller.signal).then((readiness) => {
+        const tasksReady = request.items.filter((item) => item.kind === "chat").every(
+          (item) => readiness.tasks.some((task) => task.task_id === item.task_id && task.version === item.task_version),
+        );
+        if (!readiness.chat_runtime_ready || readiness.configuration_conflict || !tasksReady) {
+          throw new Error("Chat runtime 或任务规格在提交前已变化；POST 尚未发送。");
+        }
+      }));
+    }
+    void Promise.all(preflight)
+      .then(() => createNativeBatchLaunch(request, controller.signal))
+      .then((result) => {
+        if (controller.signal.aborted || controllerRef.current !== controller) return;
+        setTitle("");
+        setItems([]);
+        setConfirmed(false);
+        setSubmission({ status: "idle" });
+        onCreated(result.registry);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (controllerRef.current !== controller) return;
+        const normalized = error instanceof Error ? error : new Error("创建原生批次失败：请求抛出了非标准错误。");
+        const ambiguous = isAmbiguousPostResultError(normalized);
+        if (ambiguous) {
+          setItems([]);
+          onAmbiguous();
+        }
+        setConfirmed(false);
+        setSubmission({ status: "error", error: normalized, ambiguous });
+      })
+      .finally(() => {
+        if (controllerRef.current === controller) controllerRef.current = null;
+      });
+  };
+
+  return (
+    <aside className="batch-registry-composer batch-native-composer" aria-labelledby="batch-native-title">
+      <header><span>ENQUEUE / ATOMIC</span><h3 id="batch-native-title">创建并登记原生批次</h3><p>按冻结顺序创建 Survey / Chat 父运行并封存 Registry；任一输入失败，整次请求回滚。</p></header>
+      <div className="batch-native-readiness" aria-label="批量运行就绪状态"><span data-ready={surveyReady}>Survey {surveyReady ? "READY" : "LOCKED"}</span><span data-ready={chatReady}>Chat {chatReady ? "READY" : "LOCKED"}</span></div>
+      {surveyReadiness.status === "error" ? <ApiErrorPanel title="无法核验 Survey runtime" error={surveyReadiness.error} isRetrying={surveyReadiness.isRetrying} onRetry={reloadSurveyReadiness} /> : null}
+      {chatReadiness.status === "error" ? <ApiErrorPanel title="无法核验 Chat runtime" error={chatReadiness.error} isRetrying={chatReadiness.isRetrying} onRetry={reloadChatReadiness} /> : null}
+      {scenarios.status === "error" ? <ApiErrorPanel title="无法读取 Scenario" error={scenarios.error} isRetrying={scenarios.isRetrying} onRetry={reloadScenarios} /> : null}
+      {cohorts.status === "error" ? <ApiErrorPanel title="无法读取 Cohort" error={cohorts.error} isRetrying={cohorts.isRetrying} onRetry={reloadCohorts} /> : null}
+      {chatTasks.status === "error" ? <ApiErrorPanel title="无法读取 Chat tasks" error={chatTasks.error} isRetrying={chatTasks.isRetrying} onRetry={reloadChatTasks} /> : null}
+      <label className="batch-registry-title" htmlFor="batch-native-title-input"><span>批次标题</span><input id="batch-native-title-input" name="batch_native_title" type="text" maxLength={200} value={title} disabled={submitting} onChange={(event) => setTitle(event.target.value)} /></label>
+      <div className="batch-native-kind" role="group" aria-label="新增运行类型"><button type="button" aria-pressed={kind === "survey"} disabled={submitting} onClick={() => setKind("survey")}>Survey</button><button type="button" aria-pressed={kind === "chat"} disabled={submitting} onClick={() => setKind("chat")}>Chat</button></div>
+      {kind === "survey" ? (
+        <div className="batch-native-fields">
+          <label htmlFor="batch-native-scenario"><span>Scenario</span><select id="batch-native-scenario" name="batch_native_scenario" value={scenarioId ?? ""} disabled={submitting} onChange={(event) => setScenarioId(event.target.value || null)}><option value="">明确选择 Scenario</option>{scenarios.data?.items.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.title}</option>)}</select></label>
+          <label htmlFor="batch-native-survey-cohort"><span>Cohort</span><select id="batch-native-survey-cohort" name="batch_native_survey_cohort" value={cohortId ?? ""} disabled={submitting} onChange={(event) => setCohortId(event.target.value || null)}><option value="">明确选择 1–8 Persona Cohort</option>{cohorts.data?.items.map((cohort) => <option key={cohort.id} value={cohort.id} disabled={cohort.persona_count > 8}>{cohort.title} · {cohort.persona_count}</option>)}</select></label>
+          <label htmlFor="batch-native-alternative"><span>Alternative</span><select id="batch-native-alternative" name="batch_native_alternative" value={alternativeId ?? ""} disabled={submitting || detail === null} onChange={(event) => setAlternativeId(event.target.value || null)}><option value="">明确选择备选方案</option>{detail?.alternatives.map((alternative) => <option key={alternative.id} value={alternative.id}>{alternative.name}</option>)}</select></label>
+        </div>
+      ) : (
+        <div className="batch-native-fields">
+          <label htmlFor="batch-native-chat-cohort"><span>Cohort</span><select id="batch-native-chat-cohort" name="batch_native_chat_cohort" value={cohortId ?? ""} disabled={submitting} onChange={(event) => setCohortId(event.target.value || null)}><option value="">明确选择 1–8 Persona Cohort</option>{cohorts.data?.items.map((cohort) => <option key={cohort.id} value={cohort.id} disabled={cohort.persona_count > 8}>{cohort.title} · {cohort.persona_count}</option>)}</select></label>
+          <label htmlFor="batch-native-task"><span>Chat task</span><select id="batch-native-task" name="batch_native_task" value={taskId ?? ""} disabled={submitting} onChange={(event) => setTaskId(event.target.value || null)}><option value="">明确选择 source sample</option>{chatTasks.items.map((task) => <option key={task.task_id} value={task.task_id}>{task.transport === "mcp_streamable_http" ? "MCP" : "REST"} · {task.title}</option>)}</select></label>
+        </div>
+      )}
+      <button className="batch-native-add" type="button" disabled={!canAdd || submitting} onClick={addItem}>加入批次计划</button>
+      <section className="batch-native-plan" aria-labelledby="batch-native-plan-title"><header><strong id="batch-native-plan-title">原子计划</strong><span>{items.length} / 20</span></header>{items.length === 0 ? <p>尚未加入运行；不会自动选择 Scenario、Cohort 或 task。</p> : <ol>{items.map((item, position) => <li key={itemKey(item)}><span>{String(position + 1).padStart(2, "0")} · {item.kind === "survey" ? "Survey" : "Chat"}</span><code>{item.kind === "survey" ? `${compactId(item.scenario_id)} / ${compactId(item.cohort_id)}` : `${item.task_id.split("/").at(-1)} / ${compactId(item.cohort_id)}`}</code><button type="button" disabled={submitting} onClick={() => setItems((current) => current.filter((entry) => itemKey(entry) !== itemKey(item)))}>移除</button></li>)}</ol>}</section>
+      <label className="batch-native-confirm"><input type="checkbox" checked={confirmed} disabled={items.length === 0 || !runtimeReady || submitting} onChange={(event) => setConfirmed(event.target.checked)} /><span>我确认这是 SendOwl 原生 Survey / Chat 入队，不包含 Harbor Docker、Web/OS、verifier reward 或 artifact export。</span></label>
+      {submission.status === "error" ? <div className="batch-registry-submit-error" role="alert"><strong>{submission.ambiguous ? "结果存在歧义，已清除计划" : "原生批次未创建"}</strong><p>{submission.error.message}</p><small>{submission.ambiguous ? "目录已刷新，请先核对是否已经封存；不会自动重发 POST。" : "数据库已回滚整次请求，可修正输入后重新明确提交。"}</small></div> : null}
+      <button className="batch-registry-submit" type="button" disabled={!canSubmit} onClick={submit}>{submitting ? "正在原子提交…" : "创建运行并封存 Registry"}</button>
+      <p className="batch-registry-boundary">Registry 仍是只读观测层；本入口只把现有 SendOwl-native Survey / Chat 运行创建动作合并成一个原子事务。</p>
+    </aside>
+  );
+}

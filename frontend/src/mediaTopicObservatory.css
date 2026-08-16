@@ -1,0 +1,500 @@
+.topic-observatory,
+.topic-observatory * {
+  box-sizing: border-box;
+}
+
+.topic-observatory {
+  min-width: 0;
+  color: var(--evidence-ink-soft);
+}
+
+.topic-observatory__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 18px;
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__header > div {
+  min-width: 0;
+}
+
+.topic-observatory__header span,
+.topic-observatory__section-heading span,
+.topic-observatory__boundary > span {
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.topic-observatory__header h3 {
+  margin: 7px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--evidence-ink);
+  font-size: 1.15rem;
+  font-weight: 610;
+  line-height: 1.4;
+}
+
+.topic-observatory__header p,
+.topic-observatory__section-heading > p {
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.61rem;
+}
+
+.topic-observatory__metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__metrics > div {
+  min-width: 0;
+  padding: 17px 16px 16px;
+  border-right: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__metrics > div:last-child {
+  border-right: 0;
+}
+
+.topic-observatory__metrics dt,
+.topic-observatory__country-row dt {
+  color: var(--evidence-muted);
+  font-size: 0.62rem;
+}
+
+.topic-observatory__metrics dd {
+  margin: 7px 0 2px;
+  overflow-wrap: anywhere;
+  color: var(--evidence-ink);
+  font-family: var(--font-mono);
+  font-size: 1.13rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.topic-observatory__metrics small {
+  color: var(--evidence-muted);
+  font-size: 0.58rem;
+  line-height: 1.45;
+}
+
+.topic-observatory__timeline,
+.topic-observatory__countries,
+.topic-observatory__boundary {
+  min-width: 0;
+  border-bottom: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__utterance-loading,
+.topic-observatory__utterances {
+  border-bottom: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__utterance-loading {
+  padding: 24px 26px;
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.topic-observatory__utterance-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.topic-observatory__utterance-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(260px, 1.5fr) minmax(190px, 1fr);
+  gap: 20px;
+  padding: 20px 26px;
+  border-top: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__utterance-meta,
+.topic-observatory__utterance-source {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.topic-observatory__utterance-meta strong,
+.topic-observatory__utterance-source a {
+  color: var(--evidence-ink);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.topic-observatory__utterance-meta span,
+.topic-observatory__utterance-meta time,
+.topic-observatory__utterance-source span,
+.topic-observatory__utterance-source code {
+  overflow-wrap: anywhere;
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+}
+
+.topic-observatory__utterance-row blockquote {
+  margin: 0;
+  color: var(--evidence-ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.75;
+}
+
+.topic-observatory__utterance-source a:hover {
+  color: var(--evidence-cyan);
+}
+
+.topic-observatory__utterance-boundary {
+  display: grid;
+  gap: 5px;
+  padding: 14px 26px 20px;
+  background: rgba(229, 165, 90, 0.04);
+}
+
+.topic-observatory__utterance-boundary p {
+  margin: 0;
+  color: var(--evidence-muted);
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+
+.topic-observatory__section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 18px;
+  padding: 21px 26px 12px;
+}
+
+.topic-observatory__section-heading h4,
+.topic-observatory__boundary h4 {
+  margin: 5px 0 0;
+  color: var(--evidence-ink);
+  font-size: 0.84rem;
+  font-weight: 640;
+}
+
+.topic-observatory__legend {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 15px;
+}
+
+.topic-observatory__legend span {
+  position: relative;
+  padding-left: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.topic-observatory__legend span::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 8px;
+  height: 2px;
+  background: var(--evidence-cyan);
+  content: "";
+  transform: translateY(-50%);
+}
+
+.topic-observatory__legend span[data-series="salience"]::before {
+  background: var(--evidence-amber);
+}
+
+.topic-observatory__chart {
+  width: 100%;
+  min-width: 0;
+  height: 342px;
+}
+
+.topic-observatory__empty {
+  display: grid;
+  align-content: center;
+  min-height: 260px;
+  padding: 28px 26px;
+}
+
+.topic-observatory__empty.compact {
+  min-height: 126px;
+}
+
+.topic-observatory__empty strong {
+  color: var(--evidence-ink);
+  font-size: 0.88rem;
+}
+
+.topic-observatory__empty p {
+  max-width: 520px;
+  margin: 7px 0 0;
+  color: var(--evidence-muted);
+  font-size: 0.72rem;
+  line-height: 1.65;
+}
+
+.topic-observatory__country-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__country-row {
+  display: grid;
+  grid-template-columns: 30px minmax(115px, 0.8fr) minmax(210px, 1.45fr) minmax(112px, auto);
+  align-items: center;
+  min-width: 0;
+  gap: 15px;
+  padding: 15px 26px;
+  border-bottom: 1px solid var(--evidence-line);
+}
+
+.topic-observatory__country-row:last-child {
+  border-bottom: 0;
+}
+
+.topic-observatory__country-position {
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+.topic-observatory__country-name {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.topic-observatory__country-name strong {
+  overflow: hidden;
+  color: var(--evidence-ink);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topic-observatory__country-name span,
+.topic-observatory__country-row time {
+  color: var(--evidence-muted);
+  font-family: var(--font-mono);
+  font-size: 0.57rem;
+}
+
+.topic-observatory__country-row dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-width: 0;
+  gap: 10px;
+  margin: 0;
+}
+
+.topic-observatory__country-row dl > div {
+  min-width: 0;
+}
+
+.topic-observatory__country-row dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--evidence-ink-soft);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.topic-observatory__country-row time {
+  text-align: right;
+}
+
+.topic-observatory__boundary {
+  padding: 23px 26px 27px;
+  border-bottom: 0;
+}
+
+.topic-observatory__boundary strong {
+  display: block;
+  max-width: 760px;
+  margin-top: 13px;
+  color: var(--evidence-amber);
+  font-size: 0.75rem;
+  font-weight: 620;
+  line-height: 1.65;
+}
+
+.topic-observatory__boundary ul {
+  display: grid;
+  gap: 7px;
+  max-width: 760px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--evidence-muted);
+  font-size: 0.69rem;
+  line-height: 1.6;
+}
+
+.topic-observatory__boundary li::marker {
+  color: var(--evidence-amber);
+}
+
+.topic-observatory__boundary p {
+  max-width: 760px;
+  margin: 12px 0 0;
+  color: var(--evidence-ink-soft);
+  font-size: 0.7rem;
+  line-height: 1.65;
+}
+
+.topic-observatory__loading {
+  display: grid;
+  gap: 18px;
+  min-height: 630px;
+  padding: 26px;
+}
+
+.topic-observatory__loading-title {
+  width: min(300px, 72%);
+  height: 46px;
+}
+
+.topic-observatory__loading-metrics {
+  width: 100%;
+  height: 92px;
+}
+
+.topic-observatory__loading-chart {
+  width: 100%;
+  height: 340px;
+}
+
+@media (max-width: 760px) {
+  .topic-observatory__header,
+  .topic-observatory__section-heading {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .topic-observatory__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .topic-observatory__metrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .topic-observatory__metrics > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--evidence-line);
+  }
+
+  .topic-observatory__country-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 10px 12px;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .topic-observatory__country-row dl {
+    grid-column: 2 / -1;
+  }
+
+  .topic-observatory__country-row time {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+
+  .topic-observatory__boundary {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .topic-observatory__utterance-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .topic-observatory__utterance-boundary {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topic-observatory__header,
+  .topic-observatory__section-heading {
+    display: grid;
+    align-items: start;
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .topic-observatory__header p,
+  .topic-observatory__section-heading > p {
+    white-space: normal;
+  }
+
+  .topic-observatory__legend {
+    justify-content: flex-start;
+  }
+
+  .topic-observatory__metrics > div {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .topic-observatory__metrics dd {
+    font-size: 1rem;
+  }
+
+  .topic-observatory__chart {
+    height: 320px;
+  }
+
+  .topic-observatory__country-row {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .topic-observatory__country-row dl {
+    gap: 6px;
+  }
+
+  .topic-observatory__boundary {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .topic-observatory__loading {
+    min-height: 560px;
+    padding: 20px 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topic-observatory *,
+  .topic-observatory *::before,
+  .topic-observatory *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

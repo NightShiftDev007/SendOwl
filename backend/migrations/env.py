@@ -12,8 +12,14 @@ from app.config import load_runtime_settings
 from app.database import ApplicationBase, normalize_async_database_url
 from app.decision_reports import models as decision_report_models
 from app.decision_threads import models as decision_thread_models
+from app.matraix_batch import models as matraix_batch_models
+from app.matraix_chat import models as matraix_chat_models
+from app.matraix_linux import models as matraix_linux_models
 from app.matraix_surveys import models as matraix_survey_models
+from app.matraix_web import models as matraix_web_models
 from app.media import models as media_models
+from app.media import sync_models as media_sync_models
+from app.persona_interviews import models as persona_interview_models
 from app.populations import models as population_models
 from app.report_questions import models as report_question_models
 from app.scenarios import models as scenario_models
@@ -24,10 +30,16 @@ from app.world_models import models as world_model_models
 
 del (
     media_models,
+    media_sync_models,
+    matraix_chat_models,
+    matraix_batch_models,
     matraix_survey_models,
+    matraix_web_models,
+    matraix_linux_models,
     decision_thread_models,
     decision_report_models,
     population_models,
+    persona_interview_models,
     report_question_models,
     scenario_models,
     semantic_experiment_models,

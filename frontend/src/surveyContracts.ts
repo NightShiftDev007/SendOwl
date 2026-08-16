@@ -120,9 +120,16 @@ const surveyExperimentSummaryObjectSchema = z.object({
   instrument_schema_version: instrumentSchemaVersionSchema,
   instrument_sha256: sha256DigestSchema,
   experiment_sha256: sha256DigestSchema,
+  retry_of_experiment_id: identifierSchema.nullable(),
+  retry_of_experiment_sha256: sha256DigestSchema.nullable(),
+  attempt_number: z.number().int().min(1).max(5),
 }).strict();
 
 export const surveyExperimentSummarySchema = surveyExperimentSummaryObjectSchema.superRefine((experiment, context) => {
+  const hasParent = experiment.retry_of_experiment_id !== null && experiment.retry_of_experiment_sha256 !== null;
+  if ((experiment.attempt_number === 1) === hasParent) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["attempt_number"], message: "Survey retry lineage must match attempt number" });
+  }
   if (experiment.trial_count !== experiment.cohort.persona_count) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["trial_count"], message: "Trial count must equal the frozen Cohort size" });
   }
@@ -292,4 +299,8 @@ export function fetchSurveyTrial(trialId: string, signal: AbortSignal): Promise<
 export function createSurveyExperiment(request: SurveyExperimentCreateRequest, signal: AbortSignal): Promise<SurveyExperimentDetail> {
   const body = surveyExperimentCreateRequestSchema.parse(request);
   return postJson(experimentsEndpoint, body, surveyExperimentDetailSchema, signal);
+}
+export function retrySurveyExperiment(experimentId: string, signal: AbortSignal): Promise<SurveyExperimentDetail> {
+  const id = identifierSchema.parse(experimentId);
+  return postJson(`${experimentsEndpoint}/${encodeURIComponent(id)}/retry`, {}, surveyExperimentDetailSchema, signal);
 }

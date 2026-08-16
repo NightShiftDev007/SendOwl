@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 
 from app.config import load_runtime_settings
 from app.main import create_app
-from app.report_questions.contracts import ReportAnswerCitation, ReportQuestion
+from app.report_questions.contracts import (
+    ReportAnswerCitation,
+    ReportQuestion,
+    ReportQuestionContext,
+)
 from app.report_questions.hashing import answer_sha256, question_sha256
 
 
@@ -19,10 +23,18 @@ def test_report_question_and_answer_digests_bind_evidence() -> None:
         start_offset=4,
         end_offset=18,
     )
-    first_question = question_sha256("a" * 64, "b" * 64, "What changed?")
-    second_question = question_sha256("a" * 64, "c" * 64, "What changed?")
+    first_question = question_sha256("a" * 64, "b" * 64, "What changed?", None, None)
+    second_question = question_sha256("a" * 64, "c" * 64, "What changed?", None, None)
+    follow_up = question_sha256(
+        "a" * 64,
+        "b" * 64,
+        "What about that?",
+        first_question,
+        "d" * 64,
+    )
 
     assert first_question != second_question
+    assert follow_up != first_question
     assert answer_sha256(first_question, "Bounded answer", (citation,)) != answer_sha256(
         first_question,
         "Different answer",
@@ -51,6 +63,10 @@ def test_succeeded_report_question_requires_exact_citations() -> None:
         model_name="qwen",
         semantic_config_sha256="d" * 64,
         prompt_schema_version="report-evidence-qa/v1",
+        parent_question_id=None,
+        parent_question_sha256=None,
+        parent_answer_sha256=None,
+        conversation_depth=0,
         status="succeeded",
         created_at=datetime.now(UTC),
         started_at=datetime.now(UTC),
@@ -63,6 +79,7 @@ def test_succeeded_report_question_requires_exact_citations() -> None:
     )
 
     assert result.citations == (citation,)
+    assert ReportQuestionContext(current_question_id=result.id, items=(result,)).items == (result,)
 
 
 def test_report_question_endpoints_return_explicit_503_without_database() -> None:
@@ -77,6 +94,7 @@ def test_report_question_endpoints_return_explicit_503_without_database() -> Non
         ),
         client.get(f"/api/v2/decision-reports/{report_id}/questions"),
         client.get(f"/api/v2/report-questions/{question_id}"),
+        client.get(f"/api/v2/report-questions/{question_id}/context"),
     )
 
     for response in responses:

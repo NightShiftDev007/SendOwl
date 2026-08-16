@@ -9,8 +9,14 @@ from fastapi import FastAPI
 from app.api.decision_reports import create_decision_reports_router
 from app.api.decision_threads import create_decision_threads_router
 from app.api.evidence_bundles import create_evidence_bundles_router
+from app.api.matraix_batch import create_matraix_batch_router
+from app.api.matraix_chat import create_matraix_chat_router
+from app.api.matraix_linux import create_matraix_linux_router
 from app.api.matraix_surveys import create_matraix_surveys_router
+from app.api.matraix_trial_archive import create_matraix_trial_archive_router
+from app.api.matraix_web import create_matraix_web_router
 from app.api.media import create_media_router
+from app.api.persona_interviews import create_persona_interviews_router
 from app.api.populations import create_populations_router
 from app.api.report_questions import create_report_questions_router
 from app.api.scenarios import create_scenarios_router
@@ -52,9 +58,15 @@ def create_app(settings: RuntimeSettings) -> FastAPI:
     application.include_router(create_decision_threads_router())
     application.include_router(create_decision_reports_router())
     application.include_router(create_report_questions_router())
+    application.include_router(create_persona_interviews_router())
     application.include_router(create_media_router())
     application.include_router(create_evidence_bundles_router())
+    application.include_router(create_matraix_batch_router())
+    application.include_router(create_matraix_chat_router())
     application.include_router(create_matraix_surveys_router())
+    application.include_router(create_matraix_trial_archive_router())
+    application.include_router(create_matraix_web_router())
+    application.include_router(create_matraix_linux_router())
     application.include_router(create_populations_router())
     application.include_router(create_world_models_router())
     application.include_router(create_world_graphs_router())

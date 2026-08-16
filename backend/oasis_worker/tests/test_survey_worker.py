@@ -153,6 +153,9 @@ def _trial() -> ClaimedSurveyTrial:
         survey_config_sha256=config_sha256,
         prompt_schema_version="matraix-survey-scenario-preference/v1",
         experiment_sha256="0" * 64,
+        retry_of_experiment_id=None,
+        retry_of_experiment_sha256=None,
+        attempt_number=1,
         created_at=datetime(2026, 8, 13, tzinfo=UTC),
     )
     experiment = experiment.model_copy(update={"experiment_sha256": experiment_sha256(experiment)})

@@ -22,6 +22,7 @@ import {
   usePopulationDatasets,
   usePopulationPersonas,
 } from "./usePopulations";
+import { useGraphPersonaCohortOrigins } from "./useGraphPersonaCohortOrigins";
 import "./populationContext.css";
 
 const personaPageSize = 10;
@@ -114,6 +115,7 @@ export function PopulationContextPanel({
   const [cohortTitle, setCohortTitle] = useState<string>("");
   const [isCohortTitleTouched, setIsCohortTitleTouched] = useState<boolean>(false);
   const [creationState, setCreationState] = useState<CohortCreationState>({ status: "idle" });
+  const [graphOriginPage, setGraphOriginPage] = useState<number>(1);
   const activeCreationController = useRef<AbortController | null>(null);
   const {
     state: personasState,
@@ -128,6 +130,10 @@ export function PopulationContextPanel({
     state: cohortDetailState,
     reload: reloadCohortDetail,
   } = useCohortDetail(selectedCohortId);
+  const {
+    state: graphOriginsState,
+    reload: reloadGraphOrigins,
+  } = useGraphPersonaCohortOrigins(selectedCohortId, graphOriginPage, 5);
   const datasets = datasetsState.data?.items ?? [];
   const selectedDataset = findDataset(datasets, selectedDatasetId);
   const personasResponse = personasState.status === "idle" ? null : personasState.data;
@@ -158,6 +164,10 @@ export function PopulationContextPanel({
       activeCreationController.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    setGraphOriginPage(1);
+  }, [selectedCohortId]);
 
   const changeDataset = (datasetId: string): void => {
     if (isCreating) {
@@ -726,6 +736,64 @@ export function PopulationContextPanel({
                 </dd>
               </div>
             </dl>
+            <section className="population-graph-origins" aria-label="图谱 Persona 选择来源">
+              <header>
+                <div>
+                  <span>GRAPH SELECTION LINEAGE</span>
+                  <strong>图谱筛选来源</strong>
+                </div>
+                {graphOriginsState.status === "success" ? (
+                  <small>{formatMediaCount(graphOriginsState.data.total)} 条封存来源</small>
+                ) : null}
+              </header>
+              {graphOriginsState.status === "loading" ? (
+                <p role="status">正在核验图谱、节点与成员顺序…</p>
+              ) : null}
+              {graphOriginsState.status === "error" ? (
+                <ApiErrorPanel
+                  title="无法读取图谱选择来源"
+                  error={graphOriginsState.error}
+                  isRetrying={graphOriginsState.isRetrying}
+                  onRetry={reloadGraphOrigins}
+                />
+              ) : null}
+              {graphOriginsState.status === "success" && graphOriginsState.data.total === 0 ? (
+                <p>这个 Cohort 由 Persona World 直接创建，没有声明图谱筛选来源。</p>
+              ) : null}
+              {graphOriginsState.status === "success" && graphOriginsState.data.items.length > 0 ? (
+                <ol>
+                  {graphOriginsState.data.items.map((origin) => (
+                    <li key={origin.id}>
+                      <span>{formatMediaTimestamp(origin.created_at)}</span>
+                      <strong>节点 {origin.node_id}</strong>
+                      <small>图谱 {abbreviatedDigest(origin.graph_sha256)} · 匹配器 v{origin.matcher_version}</small>
+                      <code title={origin.origin_sha256}>origin {origin.origin_sha256}</code>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {graphOriginsState.status === "success" && graphOriginsState.data.total > 5 ? (
+                <div className="population-graph-origin-pagination">
+                  <button
+                    type="button"
+                    disabled={graphOriginPage === 1}
+                    onClick={() => setGraphOriginPage((current) => Math.max(1, current - 1))}
+                  >
+                    上一页
+                  </button>
+                  <span>
+                    {graphOriginPage} / {Math.ceil(graphOriginsState.data.total / 5)}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={graphOriginPage * 5 >= graphOriginsState.data.total}
+                    onClick={() => setGraphOriginPage((current) => current + 1)}
+                  >
+                    下一页
+                  </button>
+                </div>
+              ) : null}
+            </section>
             <ol className="population-member-list">
               {selectedCohort.members.map((member) => (
                 <li key={member.persona.id}>

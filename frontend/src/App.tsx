@@ -9,12 +9,27 @@ import {
 import { DecisionReportsPage } from "./DecisionReportsPage";
 import { DecisionThreadsPage, createDecisionThreadHash } from "./DecisionThreadsPage";
 import { MediaPage } from "./MediaPage";
+import {
+  createMediaHash,
+  resolveMediaRoute,
+  type MediaRoute,
+} from "./mediaRoute";
 import { OasisPlatformSmokePage } from "./OasisPlatformSmokePage";
 import { OverviewPage } from "./OverviewPage";
 import { PersonaWorldPage } from "./PersonaWorldPage";
 import { ScenarioPage } from "./ScenarioPage";
 import { TaskGalleryPage } from "./TaskGalleryPage";
+import {
+  createTaskGalleryHash,
+  resolveTaskGalleryRoute,
+  type TaskGalleryRoute,
+} from "./taskGalleryRoute";
 import { WorldModelPage } from "./WorldModelPage";
+import {
+  createWorldHash,
+  resolveWorldRoute,
+  type WorldRoute,
+} from "./worldRoute";
 import {
   createRunStudioHash,
   resolveRunStudioRoute,
@@ -26,14 +41,31 @@ function renderActivePage(
   onNavigate: (sectionId: SectionId) => void,
   runStudioRoute: RunStudioRoute | null,
   onRunStudioRouteChange: (route: RunStudioRoute) => void,
+  mediaRoute: MediaRoute | null,
+  onMediaRouteChange: (route: MediaRoute) => void,
+  taskGalleryRoute: TaskGalleryRoute | null,
+  onTaskGalleryRouteChange: (route: TaskGalleryRoute) => void,
+  worldRoute: WorldRoute | null,
+  onWorldRouteChange: (route: WorldRoute) => void,
   resourceId: string | null,
 ): JSX.Element {
   if (activeSection === "overview") {
-    return <OverviewPage onNavigate={onNavigate} />;
+    return (
+      <OverviewPage
+        onNavigate={onNavigate}
+        onOpenMediaTopic={(topicId) => {
+          onMediaRouteChange({ topicId, sourceId: null, lens: "topic", country: null });
+        }}
+      />
+    );
   }
 
   if (activeSection === "media") {
-    return <MediaPage />;
+    if (mediaRoute === null) {
+      throw new Error("Media route is missing for the media workspace.");
+    }
+
+    return <MediaPage route={mediaRoute} onRouteChange={onMediaRouteChange} />;
   }
 
   if (activeSection === "threads") {
@@ -48,7 +80,10 @@ function renderActivePage(
   }
 
   if (activeSection === "world") {
-    return <WorldModelPage />;
+    if (worldRoute === null) {
+      throw new Error("World route is missing for the World workspace.");
+    }
+    return <WorldModelPage route={worldRoute} onRouteChange={onWorldRouteChange} />;
   }
 
   if (activeSection === "decisions") {
@@ -60,7 +95,15 @@ function renderActivePage(
   }
 
   if (activeSection === "tasks") {
-    return <TaskGalleryPage initialTaskId={resourceId} />;
+    if (taskGalleryRoute === null) {
+      throw new Error("Task Gallery route is missing for the tasks workspace.");
+    }
+    return (
+      <TaskGalleryPage
+        route={taskGalleryRoute}
+        onRouteChange={onTaskGalleryRouteChange}
+      />
+    );
   }
 
   if (activeSection === "runs") {
@@ -92,6 +135,9 @@ type HashRoute =
       readonly status: "resolved";
       readonly section: SectionId;
       readonly runStudioRoute: RunStudioRoute | null;
+      readonly mediaRoute: MediaRoute | null;
+      readonly taskGalleryRoute: TaskGalleryRoute | null;
+      readonly worldRoute: WorldRoute | null;
       readonly resourceId: string | null;
     }
   | { readonly status: "invalid"; readonly hash: string; readonly message: string };
@@ -102,6 +148,9 @@ export function resolveSectionFromHash(hash: string): HashRoute {
       status: "resolved",
       section: "overview",
       runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: null,
       resourceId: null,
     };
   }
@@ -132,7 +181,7 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     };
   }
 
-  if (query !== "" && !["runs", "threads", "reports", "tasks"].includes(section.id)) {
+  if (query !== "" && !["media", "runs", "threads", "reports", "tasks", "world"].includes(section.id)) {
     return {
       status: "invalid",
       hash,
@@ -155,24 +204,65 @@ export function resolveSectionFromHash(hash: string): HashRoute {
       status: "resolved",
       section: section.id,
       runStudioRoute: result.route,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: null,
+      resourceId: null,
+    };
+  }
+
+  if (section.id === "media") {
+    const result = resolveMediaRoute(query);
+
+    if (result.status === "invalid") {
+      return {
+        status: "invalid",
+        hash,
+        message: result.message,
+      };
+    }
+
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      mediaRoute: result.route,
+      taskGalleryRoute: null,
+      worldRoute: null,
       resourceId: null,
     };
   }
 
   if (section.id === "tasks") {
-    const parameters = new URLSearchParams(query);
-    if ([...parameters.keys()].some((name) => name !== "task")) {
-      return { status: "invalid", hash, message: "Task Gallery 包含不支持的查询参数。" };
+    const result = resolveTaskGalleryRoute(query);
+    if (result.status === "invalid") {
+      return { status: "invalid", hash, message: result.message };
     }
-    const taskValues = parameters.getAll("task");
-    if (taskValues.length > 1) {
-      return { status: "invalid", hash, message: "Task Gallery 的 task 参数不能重复。" };
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: result.route,
+      worldRoute: null,
+      resourceId: null,
+    };
+  }
+
+  if (section.id === "world") {
+    const result = resolveWorldRoute(query);
+    if (result.status === "invalid") {
+      return { status: "invalid", hash, message: result.message };
     }
-    const taskId = taskValues[0] ?? null;
-    if (taskId !== null && taskId !== "survey") {
-      return { status: "invalid", hash, message: `Task Gallery 中不存在任务“${taskId}”。` };
-    }
-    return { status: "resolved", section: section.id, runStudioRoute: null, resourceId: taskId };
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: result.route,
+      resourceId: null,
+    };
   }
 
   if (section.id === "threads" || section.id === "reports") {
@@ -198,6 +288,9 @@ export function resolveSectionFromHash(hash: string): HashRoute {
       status: "resolved",
       section: section.id,
       runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: null,
       resourceId,
     };
   }
@@ -206,6 +299,9 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     status: "resolved",
     section: section.id,
     runStudioRoute: null,
+    mediaRoute: null,
+    taskGalleryRoute: null,
+    worldRoute: null,
     resourceId: null,
   };
 }
@@ -240,7 +336,7 @@ function useHashRoute(): readonly [HashRoute, (sectionId: SectionId) => void] {
 
 function RouteErrorPage({ route }: { readonly route: Extract<HashRoute, { status: "invalid" }> }): JSX.Element {
   return (
-    <div className="workspace">
+    <div className="workspace route-error-page">
       <header className="workspace-header">
         <div>
           <span className="breadcrumb">SandOwl / Route error</span>
@@ -281,6 +377,15 @@ export function App(): JSX.Element {
   const updateRunStudioRoute = useCallback((nextRoute: RunStudioRoute): void => {
     window.location.hash = createRunStudioHash(nextRoute);
   }, []);
+  const updateMediaRoute = useCallback((nextRoute: MediaRoute): void => {
+    window.location.hash = createMediaHash(nextRoute);
+  }, []);
+  const updateTaskGalleryRoute = useCallback((nextRoute: TaskGalleryRoute): void => {
+    window.location.hash = createTaskGalleryHash(nextRoute);
+  }, []);
+  const updateWorldRoute = useCallback((nextRoute: WorldRoute): void => {
+    window.location.hash = createWorldHash(nextRoute);
+  }, []);
 
   if (route.status === "invalid") {
     return <RouteErrorPage route={route} />;
@@ -301,6 +406,12 @@ export function App(): JSX.Element {
         navigate,
         route.runStudioRoute,
         updateRunStudioRoute,
+        route.mediaRoute,
+        updateMediaRoute,
+        route.taskGalleryRoute,
+        updateTaskGalleryRoute,
+        route.worldRoute,
+        updateWorldRoute,
         route.resourceId,
       )}
     </AppShell>

@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -115,6 +115,7 @@ def test_daemon_settings_require_explicit_environment_and_normalize_async_url() 
     assert settings.worker_id == "compose-oasis-worker"
     assert settings.semantic_config is None
     assert settings.survey_config is None
+    assert settings.chat_config is None
 
 
 def test_daemon_settings_enable_semantic_runtime_only_with_complete_configuration() -> None:
@@ -136,7 +137,79 @@ def test_daemon_settings_enable_semantic_runtime_only_with_complete_configuratio
     assert settings.survey_config.model_name == "provider-model"
     assert settings.survey_config.prompt_schema_version == ("matraix-survey-scenario-preference/v1")
     assert settings.survey_config.config_sha256 != settings.semantic_config.config_sha256
+    assert settings.chat_config is None
     assert "secret-key" not in repr(settings)
+
+
+def test_daemon_settings_enable_chat_only_with_explicit_sut_endpoint() -> None:
+    settings = load_daemon_settings(
+        {
+            "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
+            "OASIS_ARTIFACT_ROOT": "/artifacts",
+            "OASIS_WORKER_ID": "worker",
+            "LLM_API_KEY": "secret-key",
+            "LLM_BASE_URL": "https://provider.example/v1",
+            "LLM_MODEL_NAME": "provider-model",
+            "CHATBOT_SUT_BASE_URL": "http://acme-support-sample:8000",
+            "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
+        }
+    )
+
+    assert settings.chat_config is not None
+    assert settings.chat_config.model_name == "provider-model"
+    assert settings.chat_config.sut_task_id == "sendowl/matraix-acme-rest-mcp-suite"
+    assert settings.chat_config.sut_task_version == "1.0.0"
+    assert settings.chat_config.sut_spec_sha256 == (
+        "0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"
+    )
+    assert "secret-key" not in repr(settings)
+    assert "acme-support-sample" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    ("sut_url", "match"),
+    [
+        ("", "both be configured"),
+        ("acme-support-sample:8000", "HTTP\\(S\\) URL"),
+        ("http://user:password@acme-support-sample:8000", "must not contain credentials"),
+    ],
+)
+def test_daemon_settings_reject_invalid_chat_sut_endpoint(
+    sut_url: str,
+    match: str,
+) -> None:
+    with pytest.raises(OasisWorkerError, match=match):
+        load_daemon_settings(
+            {
+                "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
+                "OASIS_ARTIFACT_ROOT": "/artifacts",
+                "OASIS_WORKER_ID": "worker",
+                "LLM_API_KEY": "secret-key",
+                "LLM_BASE_URL": "https://provider.example/v1",
+                "LLM_MODEL_NAME": "provider-model",
+                "CHATBOT_SUT_BASE_URL": sut_url,
+                "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
+            }
+        )
+
+
+def test_daemon_settings_keep_chat_disabled_when_compose_sut_has_no_provider() -> None:
+    settings = load_daemon_settings(
+        {
+            "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
+            "OASIS_ARTIFACT_ROOT": "/artifacts",
+            "OASIS_WORKER_ID": "worker",
+            "LLM_API_KEY": "",
+            "LLM_BASE_URL": "",
+            "LLM_MODEL_NAME": "",
+            "CHATBOT_SUT_BASE_URL": "http://acme-support-sample:8000",
+            "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
+        }
+    )
+
+    assert settings.semantic_config is None
+    assert settings.survey_config is None
+    assert settings.chat_config is None
 
 
 @pytest.mark.parametrize(
@@ -157,6 +230,8 @@ def test_daemon_settings_reject_partial_semantic_configuration(
         "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
         "OASIS_ARTIFACT_ROOT": "/artifacts",
         "OASIS_WORKER_ID": "worker",
+        "CHATBOT_SUT_BASE_URL": "http://acme-support-sample:8000",
+        "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
         **partial,
     }
 
@@ -178,6 +253,7 @@ def test_daemon_settings_treat_all_empty_compose_semantic_values_as_disabled() -
 
     assert settings.semantic_config is None
     assert settings.survey_config is None
+    assert settings.chat_config is None
 
 
 def test_daemon_settings_reject_missing_values_without_echoing_secrets() -> None:
@@ -254,7 +330,11 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
     monkeypatch.setattr(daemon, "semantic_queue_head", semantic_head)
     monkeypatch.setattr(daemon, "world_graph_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "report_question_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "persona_interview_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "survey_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "chat_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "web_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "linux_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "claim_semantic_trial", claim_semantic)
     connection = RecordingConnection()
 
@@ -265,6 +345,9 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
             worker_id="incompatible-worker",
             semantic_config=incompatible,
             survey_config=None,
+            chat_config=None,
+            web_config=None,
+            linux_config=None,
         ),
         connection,
     )
@@ -275,6 +358,9 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
             worker_id="compatible-worker",
             semantic_config=compatible,
             survey_config=None,
+            chat_config=None,
+            web_config=None,
+            linux_config=None,
         ),
         connection,
     )
@@ -333,11 +419,15 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
     )
     monkeypatch.setattr(daemon, "world_graph_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "report_question_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "persona_interview_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(
         daemon,
         "survey_queue_head",
         lambda _connection, _config: (survey_id, datetime(2026, 8, 13, 1, 0)),
     )
+    monkeypatch.setattr(daemon, "chat_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "web_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "linux_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "claim_survey_trial", claim_survey)
 
     result = daemon._claim_next_job(  # type: ignore[arg-type]
@@ -347,6 +437,9 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
             worker_id="shared-worker",
             semantic_config=semantic_config,
             survey_config=survey_config,
+            chat_config=None,
+            web_config=None,
+            linux_config=None,
         ),
         RecordingConnection(),
     )
@@ -413,3 +506,139 @@ def test_survey_failure_uses_safe_provider_codes_and_redacts_runtime_secrets() -
     assert "survey-secret-key" not in failure.message
     assert "private-survey-provider.example" not in failure.message
     assert len(failure.message) <= 500
+
+
+def test_chat_failure_redacts_provider_and_internal_sut_runtime_values() -> None:
+    from oasis_worker.chat_contracts import ChatRuntimeConfig
+    from oasis_worker.daemon import _semantic_failure
+    from oasis_worker.errors import OasisExecutionError
+
+    class AuthenticationError(Exception):
+        pass
+
+    config = ChatRuntimeConfig(
+        api_key="chat-secret-key",
+        provider_base_url="https://private-chat-provider.example/v1",
+        rest_sut_base_url="http://acme-support-sample:8000",
+        mcp_sut_url="http://acme-support-mcp-sample:8000/mcp",
+        model_name="provider-model",
+        config_sha256="c" * 64,
+        prompt_schema_version="matraix-chat-acme-support/v1",
+        sut_task_id="sendowl/matraix-acme-rest-mcp-suite",
+        sut_task_version="1.0.0",
+        sut_spec_sha256=("0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"),
+    )
+    error = OasisExecutionError(
+        "chat provider at https://private-chat-provider.example/v1 rejected chat-secret-key "
+        "while calling http://acme-support-sample:8000"
+    )
+    error.__cause__ = AuthenticationError("raw provider response")
+
+    failure = _semantic_failure(error, config)
+
+    assert failure.code == "provider_auth"
+    assert failure.message.startswith("Chat trial failed:")
+    assert "chat-secret-key" not in failure.message
+    assert "private-chat-provider.example" not in failure.message
+    assert "acme-support-sample" not in failure.message
+    assert len(failure.message) <= 500
+
+
+def test_heartbeat_chat_fields_match_0021_and_never_persist_runtime_secrets() -> None:
+    from oasis_worker.chat_contracts import (
+        CHAT_PROMPT_SCHEMA_VERSION,
+        CHAT_SUITE_ID,
+        CHAT_SUITE_SHA256,
+        CHAT_SUITE_VERSION,
+        ChatRuntimeConfig,
+    )
+    from oasis_worker.chat_hashing import chat_config_sha256
+    from oasis_worker.queue import update_heartbeat
+    from oasis_worker.semantic_contracts import SemanticRuntimeConfig
+
+    executions: list[tuple[str, tuple[object, ...]]] = []
+
+    class RecordingConnection:
+        def cursor(self) -> "RecordingConnection":
+            return self
+
+        def __enter__(self) -> "RecordingConnection":
+            return self
+
+        def __exit__(
+            self,
+            _exception_type: object,
+            _exception: object,
+            _traceback: object,
+        ) -> None:
+            return None
+
+        def execute(self, query: object, parameters: tuple[object, ...]) -> None:
+            executions.append((str(query), parameters))
+
+        def commit(self) -> None:
+            return None
+
+    semantic = SemanticRuntimeConfig(
+        api_key="provider-secret",
+        base_url="https://private-provider.example/v1",
+        model_name="provider-model",
+        config_sha256="a" * 64,
+        prompt_schema_version="matraix-semantic-profile/v1",
+    )
+    chat = ChatRuntimeConfig(
+        api_key=semantic.api_key,
+        provider_base_url=semantic.base_url,
+        rest_sut_base_url="http://acme-support-sample:8000",
+        mcp_sut_url="http://acme-support-mcp-sample:8000/mcp",
+        model_name=semantic.model_name,
+        config_sha256=chat_config_sha256(semantic.base_url, semantic.model_name),
+        prompt_schema_version=CHAT_PROMPT_SCHEMA_VERSION,
+        sut_task_id=CHAT_SUITE_ID,
+        sut_task_version=CHAT_SUITE_VERSION,
+        sut_spec_sha256=CHAT_SUITE_SHA256,
+    )
+    started_at = datetime(2026, 8, 13, tzinfo=UTC)
+
+    update_heartbeat(  # type: ignore[arg-type]
+        RecordingConnection(),
+        "worker-chat",
+        started_at,
+        True,
+        semantic,
+        None,
+        chat,
+        None,
+        None,
+    )
+    update_heartbeat(  # type: ignore[arg-type]
+        RecordingConnection(),
+        "worker-no-chat",
+        started_at,
+        True,
+        semantic,
+        None,
+        None,
+        None,
+        None,
+    )
+
+    configured_query, configured_parameters = executions[0]
+    assert configured_query.count("%s") == len(configured_parameters) == 35
+    assert configured_parameters[14:21] == (
+        True,
+        chat.model_name,
+        chat.config_sha256,
+        CHAT_PROMPT_SCHEMA_VERSION,
+        CHAT_SUITE_ID,
+        CHAT_SUITE_VERSION,
+        CHAT_SUITE_SHA256,
+    )
+    _, disabled_parameters = executions[1]
+    assert disabled_parameters[14:21] == (False, None, None, None, None, None, None)
+    assert disabled_parameters[21:27] == (False, None, None, None, None, None)
+    assert disabled_parameters[27:33] == (False, None, None, None, None, None)
+    rendered = repr(executions)
+    assert "provider-secret" not in rendered
+    assert "private-provider.example" not in rendered
+    assert "acme-support-sample" not in rendered

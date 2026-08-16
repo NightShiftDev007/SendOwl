@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from math import fsum
+from typing import NamedTuple
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -203,6 +204,9 @@ def _new_records(
     config_sha256: str,
     experiment_sha256: str,
     created_at: datetime,
+    retry_of_experiment_id: UUID | None,
+    retry_of_experiment_sha256: str | None,
+    attempt_number: int,
 ) -> tuple[MatraixSurveyExperimentRecord, tuple[MatraixSurveyTrialRecord, ...]]:
     experiment = MatraixSurveyExperimentRecord(
         id=uuid4(),
@@ -229,6 +233,9 @@ def _new_records(
         survey_config_sha256=config_sha256,
         prompt_schema_version=PROMPT_SCHEMA_VERSION,
         experiment_sha256=experiment_sha256,
+        retry_of_experiment_id=retry_of_experiment_id,
+        retry_of_experiment_sha256=retry_of_experiment_sha256,
+        attempt_number=attempt_number,
         created_at=created_at,
         input_sealed_at=None,
     )
@@ -299,7 +306,7 @@ def _alternative_from_record(record: MatraixSurveyExperimentRecord) -> SurveyVar
     )
 
 
-def _verified_experiment(
+def verify_survey_experiment_record(
     record: MatraixSurveyExperimentRecord,
 ) -> tuple[
     SurveyScenarioRef,
@@ -324,6 +331,8 @@ def _verified_experiment(
         record.instrument_sha256,
         record.model_name,
         record.survey_config_sha256,
+        record.retry_of_experiment_sha256,
+        record.attempt_number,
     )
     if expected != record.experiment_sha256:
         raise RuntimeError(
@@ -436,8 +445,11 @@ def _trial_from_record(
     )
 
 
-def _experiment_status(trials: tuple[MatraixSurveyTrial, ...]) -> SurveyStatus:
-    statuses = {trial.status for trial in trials}
+def _experiment_status_values(status_values: tuple[str, ...]) -> SurveyStatus:
+    statuses = set(status_values)
+    unknown = statuses - {"queued", "running", "succeeded", "failed"}
+    if unknown:
+        raise RuntimeError(f"Survey trials contain unknown statuses: {sorted(unknown)}")
     if statuses == {"queued"}:
         return "queued"
     if statuses & {"queued", "running"}:
@@ -445,6 +457,10 @@ def _experiment_status(trials: tuple[MatraixSurveyTrial, ...]) -> SurveyStatus:
     if statuses == {"succeeded"}:
         return "succeeded"
     return "failed"
+
+
+def _experiment_status(trials: tuple[MatraixSurveyTrial, ...]) -> SurveyStatus:
+    return _experiment_status_values(tuple(trial.status for trial in trials))
 
 
 def _aggregate(trials: tuple[MatraixSurveyTrial, ...]) -> SurveyAggregate:
@@ -482,7 +498,7 @@ def _summary(
     record: MatraixSurveyExperimentRecord,
     trials: tuple[MatraixSurveyTrial, ...],
 ) -> MatraixSurveyExperimentSummary:
-    scenario, cohort, baseline, alternative = _verified_experiment(record)
+    scenario, cohort, baseline, alternative = verify_survey_experiment_record(record)
     if len(trials) != record.persona_count:
         raise RuntimeError(f"Survey experiment {record.id} trial count does not match cohort")
     return MatraixSurveyExperimentSummary(
@@ -502,6 +518,9 @@ def _summary(
         instrument_schema_version=record.instrument_schema_version,
         instrument_sha256=record.instrument_sha256,
         experiment_sha256=record.experiment_sha256,
+        retry_of_experiment_id=record.retry_of_experiment_id,
+        retry_of_experiment_sha256=record.retry_of_experiment_sha256,
+        attempt_number=record.attempt_number,
     )
 
 
@@ -568,6 +587,101 @@ async def _load_trials(
     }
 
 
+class SurveyTrialSummaryRow(NamedTuple):
+    experiment_id: UUID
+    persona_position: int
+    persona_id: UUID
+    persona_external_id: str
+    persona_display_name: str
+    persona_profile_sha256: str
+    trial_sha256: str
+    status: str
+
+
+async def _load_trial_summaries(
+    session: AsyncSession,
+    experiments: tuple[MatraixSurveyExperimentRecord, ...],
+) -> dict[UUID, tuple[SurveyTrialSummaryRow, ...]]:
+    """Load only bounded trial identity/status rows, never Survey answers."""
+    if not experiments:
+        return {}
+    experiment_ids = tuple(record.id for record in experiments)
+    rows = tuple(
+        SurveyTrialSummaryRow(*row)
+        for row in (
+            await session.execute(
+                select(
+                    MatraixSurveyTrialRecord.experiment_id,
+                    MatraixSurveyTrialRecord.persona_position,
+                    MatraixSurveyTrialRecord.persona_id,
+                    MatraixSurveyTrialRecord.persona_external_id,
+                    MatraixSurveyTrialRecord.persona_display_name,
+                    MatraixSurveyTrialRecord.persona_profile_sha256,
+                    MatraixSurveyTrialRecord.trial_sha256,
+                    MatraixSurveyTrialRecord.status,
+                )
+                .where(MatraixSurveyTrialRecord.experiment_id.in_(experiment_ids))
+                .order_by(
+                    MatraixSurveyTrialRecord.experiment_id,
+                    MatraixSurveyTrialRecord.persona_position,
+                )
+            )
+        ).tuples()
+    )
+    grouped: dict[UUID, list[SurveyTrialSummaryRow]] = {
+        experiment_id: [] for experiment_id in experiment_ids
+    }
+    for row in rows:
+        grouped[row.experiment_id].append(row)
+    return {experiment_id: tuple(grouped[experiment_id]) for experiment_id in experiment_ids}
+
+
+def _summary_without_answers(
+    record: MatraixSurveyExperimentRecord,
+    rows: tuple[SurveyTrialSummaryRow, ...],
+) -> MatraixSurveyExperimentSummary:
+    scenario, cohort, baseline, alternative = verify_survey_experiment_record(record)
+    if len(rows) != record.persona_count:
+        raise RuntimeError(f"Survey experiment {record.id} trial count does not match cohort")
+    if tuple(row.persona_position for row in rows) != tuple(range(record.persona_count)):
+        raise RuntimeError(f"Survey experiment {record.id} trial positions are incomplete")
+    if len({row.persona_id for row in rows}) != len(rows):
+        raise RuntimeError(f"Survey experiment {record.id} contains duplicate Personas")
+    for row in rows:
+        persona = SurveyPersonaRef(
+            id=row.persona_id,
+            position=row.persona_position,
+            persona_id=row.persona_external_id,
+            display_name=row.persona_display_name,
+            profile_sha256=row.persona_profile_sha256,
+        )
+        expected_sha256 = calculate_survey_trial_sha256(record.experiment_sha256, persona)
+        if expected_sha256 != row.trial_sha256:
+            raise RuntimeError(f"Survey trial {row.trial_sha256} integrity mismatch")
+    statuses = tuple(row.status for row in rows)
+    return MatraixSurveyExperimentSummary(
+        id=record.id,
+        status=_experiment_status_values(statuses),
+        created_at=record.created_at,
+        scenario=scenario,
+        cohort=cohort,
+        baseline=baseline,
+        alternative=alternative,
+        trial_count=len(rows),
+        succeeded_trial_count=sum(status == "succeeded" for status in statuses),
+        failed_trial_count=sum(status == "failed" for status in statuses),
+        model_name=record.model_name,
+        survey_config_sha256=record.survey_config_sha256,
+        prompt_schema_version=record.prompt_schema_version,
+        instrument_schema_version=record.instrument_schema_version,
+        instrument_sha256=record.instrument_sha256,
+        experiment_sha256=record.experiment_sha256,
+        retry_of_experiment_id=record.retry_of_experiment_id,
+        retry_of_experiment_sha256=record.retry_of_experiment_sha256,
+        attempt_number=record.attempt_number,
+    )
+
+
 async def _detail(
     session: AsyncSession,
     record: MatraixSurveyExperimentRecord,
@@ -584,11 +698,11 @@ async def _detail(
     )
 
 
-async def create_matraix_survey_experiment(
+async def ensure_matraix_survey_experiment_record(
     session: AsyncSession,
     request: MatraixSurveyCreateRequest,
-) -> MatraixSurveyExperimentDetail:
-    """Validate, content-address, persist, and enqueue one survey per persona."""
+) -> MatraixSurveyExperimentRecord:
+    """Validate and stage one content-addressed Survey without committing."""
     scenario_detail = await get_scenario(session, request.scenario_id)
     cohort_detail = await get_cohort(session, request.cohort_id)
     if cohort_detail.persona_count > 8:
@@ -611,6 +725,8 @@ async def create_matraix_survey_experiment(
         instrument.instrument_sha256,
         model_name,
         config_sha256,
+        None,
+        1,
     )
     await _lock_experiment_content(session, experiment_sha256)
     existing = await session.scalar(
@@ -619,9 +735,7 @@ async def create_matraix_survey_experiment(
         )
     )
     if existing is not None:
-        detail = await _detail(session, existing)
-        await session.commit()
-        return detail
+        return existing
     created_at = datetime.now(UTC)
     experiment, trials = _new_records(
         scenario,
@@ -634,6 +748,97 @@ async def create_matraix_survey_experiment(
         config_sha256,
         experiment_sha256,
         created_at,
+        None,
+        None,
+        1,
+    )
+    session.add(experiment)
+    await session.flush((experiment,))
+    session.add_all(trials)
+    await session.flush(trials)
+    experiment.input_sealed_at = created_at
+    await session.flush((experiment,))
+    return experiment
+
+
+async def create_matraix_survey_experiment(
+    session: AsyncSession,
+    request: MatraixSurveyCreateRequest,
+) -> MatraixSurveyExperimentDetail:
+    """Validate, content-address, persist, and enqueue one survey per persona."""
+    record = await ensure_matraix_survey_experiment_record(session, request)
+    detail = await _detail(session, record)
+    await session.commit()
+    return detail
+
+
+async def retry_matraix_survey_experiment(
+    session: AsyncSession,
+    experiment_id: UUID,
+) -> MatraixSurveyExperimentDetail:
+    parent = await session.get(MatraixSurveyExperimentRecord, experiment_id)
+    if parent is None or parent.input_sealed_at is None:
+        raise MatraixSurveyExperimentNotFoundError(
+            f"MatrAIx Survey experiment {experiment_id} was not found"
+        )
+    existing = await session.scalar(
+        select(MatraixSurveyExperimentRecord).where(
+            MatraixSurveyExperimentRecord.retry_of_experiment_id == parent.id
+        )
+    )
+    if existing is not None:
+        return await _detail(session, existing)
+    rows = (await _load_trial_summaries(session, (parent,)))[parent.id]
+    statuses = tuple(row.status for row in rows)
+    if any(status in ("queued", "running") for status in statuses) or not any(
+        status == "failed" for status in statuses
+    ):
+        raise MatraixSurveySelectionError(
+            "only a terminal Survey experiment containing a failed trial can be retried"
+        )
+    if parent.attempt_number >= 5:
+        raise MatraixSurveySelectionError("Survey retry limit of 5 attempts was reached")
+    scenario, cohort, baseline, alternative = verify_survey_experiment_record(parent)
+    cohort_detail = await get_cohort(session, parent.cohort_id)
+    if _cohort_ref(cohort_detail) != cohort:
+        raise RuntimeError(f"Survey experiment {parent.id} Cohort integrity mismatch")
+    model_name, config_sha256 = await _live_survey_config(session)
+    digest = calculate_survey_experiment_sha256(
+        scenario,
+        cohort,
+        baseline,
+        alternative,
+        parent.instrument_sha256,
+        model_name,
+        config_sha256,
+        parent.experiment_sha256,
+        parent.attempt_number + 1,
+    )
+    await _lock_experiment_content(session, digest)
+    existing_after_lock = await session.scalar(
+        select(MatraixSurveyExperimentRecord).where(
+            MatraixSurveyExperimentRecord.retry_of_experiment_id == parent.id
+        )
+    )
+    if existing_after_lock is not None:
+        detail = await _detail(session, existing_after_lock)
+        await session.commit()
+        return detail
+    created_at = datetime.now(UTC)
+    experiment, trials = _new_records(
+        scenario,
+        cohort,
+        baseline,
+        alternative,
+        tuple(_persona_ref(member) for member in cohort_detail.members),
+        parent.instrument_sha256,
+        model_name,
+        config_sha256,
+        digest,
+        created_at,
+        parent.id,
+        parent.experiment_sha256,
+        parent.attempt_number + 1,
     )
     session.add(experiment)
     await session.flush((experiment,))
@@ -663,8 +868,8 @@ async def list_matraix_survey_experiments(
         .scalars()
         .all()
     )
-    trials = await _load_trials(session, records)
-    items = tuple(_summary(record, trials[record.id]) for record in records)
+    trials = await _load_trial_summaries(session, records)
+    items = tuple(_summary_without_answers(record, trials[record.id]) for record in records)
     return MatraixSurveyExperimentsResponse(items=items, total=len(items))
 
 
@@ -702,7 +907,7 @@ async def get_matraix_survey_trial(
     )
     if experiment is None:
         raise RuntimeError(f"Survey trial {trial.id} references a missing sealed experiment")
-    _verified_experiment(experiment)
+    verify_survey_experiment_record(experiment)
     answers = tuple(
         (
             await session.execute(
@@ -783,8 +988,10 @@ async def get_matraix_survey_readiness(session: AsyncSession) -> MatraixSurveyRe
 
 __all__ = [
     "create_matraix_survey_experiment",
+    "ensure_matraix_survey_experiment_record",
     "get_matraix_survey_experiment",
     "get_matraix_survey_readiness",
     "get_matraix_survey_trial",
     "list_matraix_survey_experiments",
+    "verify_survey_experiment_record",
 ]

@@ -3,9 +3,11 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.populations.contracts import CohortDatasetRef
+from app.populations.repository import ensure_cohort, get_cohort, load_persona_match_scan
 from app.semantic_experiments.hashing import PROMPT_SCHEMA_VERSION as SEMANTIC_PROMPT_SCHEMA_VERSION
 from app.simulations.constants import (
     CAMEL_ENGINE_VERSION,
@@ -13,29 +15,50 @@ from app.simulations.constants import (
     WORKER_HEARTBEAT_MAX_AGE_SECONDS,
 )
 from app.simulations.models import SimulationWorkerHeartbeatRecord
+from app.world_graphs.cohort_origins import (
+    GRAPH_PERSONA_MATCH_SEMANTICS,
+    GRAPH_PERSONA_MATCHER_VERSION,
+    calculate_graph_persona_cohort_origin_sha256,
+)
 from app.world_graphs.contracts import (
     GRAPH_PROMPT_SCHEMA_VERSION,
+    GraphPersonaCohortCreateRequest,
+    GraphPersonaCohortCreation,
+    GraphPersonaCohortOrigin,
+    GraphPersonaCohortOriginsResponse,
     SemanticWorldGraphDetail,
     SemanticWorldGraphEdge,
+    SemanticWorldGraphEdgeHistory,
     SemanticWorldGraphEvidenceTimeline,
     SemanticWorldGraphNode,
+    SemanticWorldGraphPersonaMatches,
+    SemanticWorldGraphSearchResponse,
     SemanticWorldGraphSlice,
     SemanticWorldGraphsResponse,
     WorldGraphEvidenceReference,
     WorldGraphSliceDirection,
 )
-from app.world_graphs.errors import WorldGraphNotFoundError, WorldGraphUnavailableError
+from app.world_graphs.errors import (
+    WorldGraphNotFoundError,
+    WorldGraphPersonaOriginPageOutOfRangeError,
+    WorldGraphPersonaSelectionError,
+    WorldGraphUnavailableError,
+)
 from app.world_graphs.hashing import (
     calculate_extraction_config_sha256,
     calculate_graph_input_sha256,
     calculate_semantic_graph_sha256,
 )
+from app.world_graphs.history import project_semantic_world_graph_edge_history
 from app.world_graphs.models import (
+    SemanticWorldGraphCohortOriginRecord,
     SemanticWorldGraphEdgeRecord,
     SemanticWorldGraphEvidenceRecord,
     SemanticWorldGraphNodeRecord,
     SemanticWorldGraphRecord,
 )
+from app.world_graphs.persona_matching import match_graph_node_to_personas
+from app.world_graphs.search import search_semantic_world_graph
 from app.world_graphs.slicing import slice_semantic_world_graph
 from app.world_graphs.timeline import project_semantic_world_graph_timeline
 from app.world_models.repository import get_world_snapshot
@@ -286,6 +309,249 @@ async def get_semantic_world_graph_timeline(
     graph = await get_semantic_world_graph(session, graph_id)
     snapshot = await get_world_snapshot(session, graph.world_model_id, graph.snapshot_id)
     return project_semantic_world_graph_timeline(graph, snapshot)
+
+
+async def search_world_graph(
+    session: AsyncSession,
+    graph_id: UUID,
+    query: str,
+    limit: int,
+) -> SemanticWorldGraphSearchResponse:
+    graph = await get_semantic_world_graph(session, graph_id)
+    return search_semantic_world_graph(graph, query, limit)
+
+
+async def get_semantic_world_graph_edge_history(
+    session: AsyncSession,
+    graph_id: UUID,
+    edge_id: UUID,
+) -> SemanticWorldGraphEdgeHistory:
+    current_record = await session.get(SemanticWorldGraphRecord, graph_id)
+    if current_record is None:
+        raise WorldGraphNotFoundError(f"semantic world graph {graph_id} was not found")
+    current_graph = await _load_graph_detail(session, current_record)
+    total_succeeded_graph_count = int(
+        (
+            await session.execute(
+                select(func.count(SemanticWorldGraphRecord.id)).where(
+                    SemanticWorldGraphRecord.world_model_id == current_record.world_model_id,
+                    SemanticWorldGraphRecord.status == "succeeded",
+                )
+            )
+        ).scalar_one()
+    )
+    recent_records = tuple(
+        (
+            await session.execute(
+                select(SemanticWorldGraphRecord)
+                .where(
+                    SemanticWorldGraphRecord.world_model_id == current_record.world_model_id,
+                    SemanticWorldGraphRecord.status == "succeeded",
+                    SemanticWorldGraphRecord.id != current_record.id,
+                )
+                .order_by(SemanticWorldGraphRecord.created_at.desc(), SemanticWorldGraphRecord.id)
+                .limit(11)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    records = (current_record, *recent_records)
+    graph_snapshots = []
+    for record in records:
+        graph = (
+            current_graph
+            if record.id == current_record.id
+            else await _load_graph_detail(session, record)
+        )
+        snapshot = await get_world_snapshot(session, graph.world_model_id, graph.snapshot_id)
+        graph_snapshots.append((graph, snapshot))
+    return project_semantic_world_graph_edge_history(
+        current_graph,
+        edge_id,
+        graph_snapshots,
+        total_succeeded_graph_count,
+    )
+
+
+async def get_semantic_world_graph_persona_matches(
+    session: AsyncSession,
+    graph_id: UUID,
+    node_id: UUID,
+    dataset_id: UUID,
+    limit: int,
+) -> SemanticWorldGraphPersonaMatches:
+    graph = await get_semantic_world_graph(session, graph_id)
+    dataset, persona_count, personas = await load_persona_match_scan(session, dataset_id, 200)
+    return match_graph_node_to_personas(
+        graph,
+        node_id,
+        dataset,
+        persona_count,
+        personas,
+        limit,
+    )
+
+
+def _graph_persona_cohort_origin(
+    record: SemanticWorldGraphCohortOriginRecord,
+    dataset: CohortDatasetRef,
+) -> GraphPersonaCohortOrigin:
+    selected_persona_ids = tuple(record.selected_persona_ids)
+    actual_digest = calculate_graph_persona_cohort_origin_sha256(
+        record.graph_id,
+        record.graph_sha256,
+        record.node_id,
+        record.dataset_id,
+        record.dataset_sha256,
+        record.cohort_id,
+        record.cohort_sha256,
+        selected_persona_ids,
+    )
+    if actual_digest != record.origin_sha256:
+        raise RuntimeError(f"graph Persona cohort origin {record.id} does not match origin_sha256")
+    if record.dataset_id != dataset.id or record.dataset_sha256 != dataset.dataset_sha256:
+        raise RuntimeError(f"graph Persona cohort origin {record.id} dataset is inconsistent")
+    return GraphPersonaCohortOrigin(
+        id=record.id,
+        graph_id=record.graph_id,
+        graph_sha256=record.graph_sha256,
+        node_id=record.node_id,
+        dataset=dataset,
+        cohort_id=record.cohort_id,
+        cohort_sha256=record.cohort_sha256,
+        match_semantics=record.match_semantics,
+        matcher_version=record.matcher_version,
+        selected_persona_ids=selected_persona_ids,
+        origin_sha256=record.origin_sha256,
+        created_at=record.created_at,
+    )
+
+
+async def create_graph_persona_cohort(
+    session: AsyncSession,
+    graph_id: UUID,
+    node_id: UUID,
+    request: GraphPersonaCohortCreateRequest,
+) -> GraphPersonaCohortCreation:
+    """Atomically seal a cohort and its graph-guided selection lineage."""
+    graph = await get_semantic_world_graph(session, graph_id)
+    dataset, persona_count, personas = await load_persona_match_scan(
+        session,
+        request.dataset_id,
+        200,
+    )
+    matches = match_graph_node_to_personas(
+        graph,
+        node_id,
+        dataset,
+        persona_count,
+        personas,
+        20,
+    )
+    candidate_ids = {match.persona.id for match in matches.matches}
+    rejected_ids = tuple(
+        persona_id for persona_id in request.persona_ids if persona_id not in candidate_ids
+    )
+    if rejected_ids:
+        raise WorldGraphPersonaSelectionError(
+            "cohort selection contains Personas outside the verified top-20 match result: "
+            + ", ".join(str(persona_id) for persona_id in rejected_ids)
+        )
+    cohort = await ensure_cohort(session, request)
+    if graph.graph_sha256 is None:
+        raise RuntimeError("succeeded graph is missing graph_sha256")
+    origin_sha256 = calculate_graph_persona_cohort_origin_sha256(
+        graph.id,
+        graph.graph_sha256,
+        node_id,
+        dataset.id,
+        dataset.dataset_sha256,
+        cohort.id,
+        cohort.cohort_sha256,
+        request.persona_ids,
+    )
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _advisory_lock_key(origin_sha256)},
+    )
+    record = await session.scalar(
+        select(SemanticWorldGraphCohortOriginRecord).where(
+            SemanticWorldGraphCohortOriginRecord.origin_sha256 == origin_sha256
+        )
+    )
+    if record is None:
+        record = SemanticWorldGraphCohortOriginRecord(
+            id=uuid4(),
+            graph_id=graph.id,
+            graph_sha256=graph.graph_sha256,
+            node_id=node_id,
+            dataset_id=dataset.id,
+            dataset_sha256=dataset.dataset_sha256,
+            cohort_id=cohort.id,
+            cohort_sha256=cohort.cohort_sha256,
+            match_semantics=GRAPH_PERSONA_MATCH_SEMANTICS,
+            matcher_version=GRAPH_PERSONA_MATCHER_VERSION,
+            selected_persona_ids=list(request.persona_ids),
+            origin_sha256=origin_sha256,
+            created_at=datetime.now(UTC),
+        )
+        session.add(record)
+        await session.flush((record,))
+    origin = _graph_persona_cohort_origin(record, dataset)
+    result = GraphPersonaCohortCreation(origin=origin, cohort=cohort)
+    await session.commit()
+    return result
+
+
+async def list_graph_persona_cohort_origins(
+    session: AsyncSession,
+    cohort_id: UUID,
+    page: int,
+    page_size: int,
+) -> GraphPersonaCohortOriginsResponse:
+    """Return one integrity-checked page of durable graph selection lineage."""
+    cohort = await get_cohort(session, cohort_id)
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(SemanticWorldGraphCohortOriginRecord)
+            .where(SemanticWorldGraphCohortOriginRecord.cohort_id == cohort_id)
+        )
+        or 0
+    )
+    offset = (page - 1) * page_size
+    if total > 0 and offset >= total:
+        raise WorldGraphPersonaOriginPageOutOfRangeError(
+            f"graph Persona origin page {page} is beyond cohort {cohort_id} total {total}"
+        )
+    records = tuple(
+        (
+            await session.execute(
+                select(SemanticWorldGraphCohortOriginRecord)
+                .where(SemanticWorldGraphCohortOriginRecord.cohort_id == cohort_id)
+                .order_by(
+                    SemanticWorldGraphCohortOriginRecord.created_at.desc(),
+                    SemanticWorldGraphCohortOriginRecord.id.asc(),
+                )
+                .offset(offset)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items = tuple(_graph_persona_cohort_origin(record, cohort.dataset) for record in records)
+    if any(
+        item.cohort_id != cohort.id or item.cohort_sha256 != cohort.cohort_sha256 for item in items
+    ):
+        raise RuntimeError(f"graph Persona origins for cohort {cohort_id} are inconsistent")
+    return GraphPersonaCohortOriginsResponse(
+        items=items,
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 async def list_snapshot_semantic_world_graphs(

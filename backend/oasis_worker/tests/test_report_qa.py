@@ -7,9 +7,16 @@ from oasis_worker.report_qa_hashing import answer_sha256, question_sha256
 
 
 def test_report_question_digest_matches_frozen_inputs() -> None:
-    assert question_sha256("a" * 64, "b" * 64, "What changed?") == (
+    assert question_sha256("a" * 64, "b" * 64, "What changed?", None, None) == (
         "1c2200fa77f9d0f51f16317c3d29a5ff464818b96af9659f1c8e9670ff678776"
     )
+    assert question_sha256(
+        "a" * 64,
+        "b" * 64,
+        "What changed?",
+        "c" * 64,
+        "d" * 64,
+    ) != question_sha256("a" * 64, "b" * 64, "What changed?", None, None)
 
 
 def test_report_answer_digest_changes_with_exact_quote() -> None:

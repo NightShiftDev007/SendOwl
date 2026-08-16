@@ -1,21 +1,62 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { lazy, Suspense, useMemo, useState, type FormEvent } from "react";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import { MediaArticleRow } from "./MediaArticleRow";
+import { MediaSourceDossier } from "./MediaSourceDossier";
+import { MediaSyncFreshness } from "./MediaSyncFreshness";
+import { MediaTopicDirectory } from "./MediaTopicDirectory";
 import type {
+  MediaArticle,
   MediaArticlesQuery,
   MediaArticlesResponse,
   MediaCountryFacet,
   MediaTopicFacet,
+  MediaTopicSummary,
 } from "./mediaContracts";
+import { createWorldHash } from "./worldRoute";
+import type { MediaSourceSummary } from "./mediaSourceContracts";
 import { formatCountryName, formatMediaCount } from "./mediaPresentation";
+import type { MediaLens, MediaRoute } from "./mediaRoute";
 import {
   useMediaArticles,
   type MediaArticlesLoadState,
 } from "./useMediaArticles";
 import "./mediaEvidence.css";
+import "./mediaSourceDossier.css";
 
 const articlesPerPage = 20;
+
+const MediaTopicObservatory = lazy(async () => {
+  const module = await import("./MediaTopicObservatory");
+
+  return { default: module.MediaTopicObservatory };
+});
+
+const MediaSourceHealthPanel = lazy(async () => {
+  const module = await import("./MediaSourceHealthPanel");
+
+  return { default: module.MediaSourceHealthPanel };
+});
+
+const lensPresentation: Readonly<
+  Record<MediaLens, { readonly eyebrow: string; readonly title: string; readonly status: string }>
+> = {
+  articles: {
+    eyebrow: "按发布时间读取",
+    title: "报道证据流",
+    status: "报道目录",
+  },
+  topic: {
+    eyebrow: "按观测窗口读取",
+    title: "议题演化",
+    status: "议题时间线",
+  },
+  sources: {
+    eyebrow: "按采集来源读取",
+    title: "来源证据档案",
+    status: "来源目录、采集状态与报道证据",
+  },
+};
 
 interface SelectedTopic {
   readonly id: string;
@@ -48,6 +89,7 @@ interface EvidenceInspectorProps {
   readonly selectedTopic: SelectedTopic | null;
   readonly topicFacets: readonly MediaTopicFacet[];
   readonly onCountrySelect: (country: string) => void;
+  readonly onDirectoryTopicSelect: (topic: MediaTopicSummary | null) => void;
   readonly onTopicSelect: (topic: MediaTopicFacet) => void;
 }
 
@@ -75,12 +117,55 @@ function ArticlesEmpty(): JSX.Element {
   );
 }
 
+function TopicEvolutionPrompt({
+  onOpenDirectory,
+}: {
+  readonly onOpenDirectory: () => void;
+}): JSX.Element {
+  return (
+    <div className="topic-evolution-prompt" role="region" aria-label="议题演化引导">
+      <span>Topic Observatory</span>
+      <strong>先选择一个有稳定 ID 的议题</strong>
+      <p>
+        从右侧完整议题目录明确选择后，这里会读取真实时间线，并用同一个 ID 筛选报道证据。未选择议题时不会请求或生成趋势数据。
+      </p>
+      <button className="button button-secondary" type="button" onClick={onOpenDirectory}>
+        浏览完整议题目录
+      </button>
+    </div>
+  );
+}
+
+function TopicObservatoryFallback(): JSX.Element {
+  return (
+    <div className="topic-observatory-lazy-loading" role="status" aria-live="polite">
+      <span className="sr-only">正在加载议题演化视图</span>
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+    </div>
+  );
+}
+
+function SourceHealthFallback(): JSX.Element {
+  return (
+    <div className="topic-observatory-lazy-loading" role="status" aria-live="polite">
+      <span className="sr-only">正在加载媒体源健康目录</span>
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+    </div>
+  );
+}
+
 function ArticleResults({
   response,
   isUpdating,
+  onSendToWorld,
 }: {
   readonly response: MediaArticlesResponse;
   readonly isUpdating: boolean;
+  readonly onSendToWorld: (article: MediaArticle) => void;
 }): JSX.Element {
   if (response.items.length === 0) {
     return <ArticlesEmpty />;
@@ -95,7 +180,7 @@ function ArticleResults({
       ) : null}
       <div className="article-list">
         {response.items.map((article) => (
-          <MediaArticleRow key={article.id} article={article} />
+          <MediaArticleRow key={article.id} article={article} onSendToWorld={onSendToWorld} />
         ))}
       </div>
     </div>
@@ -250,6 +335,7 @@ function EvidenceInspector({
   selectedTopic,
   topicFacets,
   onCountrySelect,
+  onDirectoryTopicSelect,
   onTopicSelect,
 }: EvidenceInspectorProps): JSX.Element {
   const visibleCountries = countryFacets.slice(0, 6);
@@ -334,6 +420,11 @@ function EvidenceInspector({
         )}
       </section>
 
+      <MediaTopicDirectory
+        selectedTopicId={selectedTopic?.id ?? null}
+        onSelect={onDirectoryTopicSelect}
+      />
+
       <section className="evidence-boundary" aria-labelledby="evidence-boundary-title">
         <h3 id="evidence-boundary-title">如何读取这些证据</h3>
         <ul>
@@ -346,29 +437,51 @@ function EvidenceInspector({
   );
 }
 
-export function MediaPage(): JSX.Element {
+function unresolvedTopicName(topicId: string): string {
+  return `议题 ${topicId.slice(0, 8)}…（待核验）`;
+}
+
+export function MediaPage({
+  route,
+  onRouteChange,
+}: {
+  readonly route: MediaRoute;
+  readonly onRouteChange: (route: MediaRoute) => void;
+}): JSX.Element {
   const [draftQuery, setDraftQuery] = useState<string>("");
   const [appliedQuery, setAppliedQuery] = useState<string | null>(null);
-  const [country, setCountry] = useState<string | null>(null);
-  const [selectedTopic, setSelectedTopic] = useState<SelectedTopic | null>(null);
+  const [knownTopicNames, setKnownTopicNames] = useState<Readonly<Record<string, string>>>({});
   const [page, setPage] = useState<number>(1);
+  const [sourceEvidencePage, setSourceEvidencePage] = useState<number>(1);
   const [filtersExpanded, setFiltersExpanded] = useState<boolean>(false);
   const query = useMemo<MediaArticlesQuery>(
     () => ({
       q: appliedQuery,
-      country,
-      topicId: selectedTopic?.id ?? null,
+      country: route.country,
+      topicId: route.topicId,
       page,
       pageSize: articlesPerPage,
     }),
-    [appliedQuery, country, page, selectedTopic],
+    [appliedQuery, page, route.country, route.topicId],
   );
   const { state, reload } = useMediaArticles(query);
   const response = currentData(state);
   const countryFacets = response?.facets.countries ?? [];
   const topicFacets = response?.facets.topics ?? [];
+  const selectedTopicFacet = route.topicId === null
+    ? null
+    : topicFacets.find((facet) => facet.topic_id === route.topicId) ?? null;
+  const selectedTopic = route.topicId === null
+    ? null
+    : {
+        id: route.topicId,
+        name: selectedTopicFacet?.topic
+          ?? knownTopicNames[route.topicId]
+          ?? unresolvedTopicName(route.topicId),
+      };
   const selectedCountryIsMissing =
-    country !== null && !countryFacets.some((facet) => facet.country_code === country);
+    route.country !== null
+    && !countryFacets.some((facet) => facet.country_code === route.country);
   const selectedTopicIsMissing =
     selectedTopic !== null &&
     !topicFacets.some((facet) => facet.topic_id === selectedTopic.id);
@@ -377,8 +490,15 @@ export function MediaPage(): JSX.Element {
     : Math.max(1, Math.ceil(response.total / response.page_size));
   const isUpdating = state.status === "loading" && response !== null;
   const activeFilterCount = Number(appliedQuery !== null)
-    + Number(country !== null)
+    + Number(route.country !== null)
     + Number(selectedTopic !== null);
+  const activeLens = lensPresentation[route.lens];
+
+  const rememberTopicName = (topicId: string, topicName: string): void => {
+    setKnownTopicNames((currentNames) => currentNames[topicId] === topicName
+      ? currentNames
+      : { ...currentNames, [topicId]: topicName });
+  };
 
   const submitSearch = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -394,24 +514,26 @@ export function MediaPage(): JSX.Element {
   const clearFilters = (): void => {
     setDraftQuery("");
     setAppliedQuery(null);
-    setCountry(null);
-    setSelectedTopic(null);
+    onRouteChange({ ...route, topicId: null, country: null });
     setPage(1);
   };
 
   const changeCountry = (nextCountry: string | null): void => {
-    setCountry(nextCountry);
+    onRouteChange({ ...route, country: nextCountry });
     setPage(1);
   };
 
   const selectCountryFacet = (nextCountry: string): void => {
-    setCountry(country === nextCountry ? null : nextCountry);
+    onRouteChange({
+      ...route,
+      country: route.country === nextCountry ? null : nextCountry,
+    });
     setPage(1);
   };
 
   const changeTopic = (topicId: string): void => {
     if (topicId === "") {
-      setSelectedTopic(null);
+      onRouteChange({ ...route, topicId: null });
       setPage(1);
       return;
     }
@@ -421,7 +543,8 @@ export function MediaPage(): JSX.Element {
       throw new Error(`Selected topic_id ${topicId} is absent from validated facets`);
     }
 
-    setSelectedTopic({ id: topicId, name: facet.topic });
+    rememberTopicName(topicId, facet.topic);
+    onRouteChange({ ...route, topicId });
     setPage(1);
   };
 
@@ -430,17 +553,57 @@ export function MediaPage(): JSX.Element {
       throw new Error(`Topic facet ${facet.topic} cannot be selected because it has no stable topic_id`);
     }
 
-    setSelectedTopic(
-      selectedTopic?.id === facet.topic_id
-        ? null
-        : { id: facet.topic_id, name: facet.topic },
-    );
+    rememberTopicName(facet.topic_id, facet.topic);
+    onRouteChange({
+      ...route,
+      topicId: selectedTopic?.id === facet.topic_id ? null : facet.topic_id,
+    });
     setPage(1);
+  };
+
+  const selectDirectoryTopic = (topic: MediaTopicSummary | null): void => {
+    if (topic === null) {
+      onRouteChange({ ...route, topicId: null, sourceId: null, lens: "topic" });
+    } else {
+      rememberTopicName(topic.id, topic.topic);
+      onRouteChange({
+        topicId: topic.id,
+        sourceId: null,
+        lens: "topic",
+        country: route.country,
+      });
+    }
+    setPage(1);
+  };
+
+  const openTopicDirectory = (): void => {
+    const directory = document.getElementById("media-topic-directory");
+    if (!(directory instanceof HTMLElement)) {
+      throw new Error("Media topic directory is not mounted.");
+    }
+    directory.focus({ preventScroll: true });
+    directory.scrollIntoView({ block: "start" });
+  };
+
+  const selectSource = (source: MediaSourceSummary): void => {
+    onRouteChange({ topicId: null, sourceId: source.id, lens: "sources", country: null });
+    setSourceEvidencePage(1);
+  };
+
+  const sendArticleToWorld = (article: MediaArticle): void => {
+    window.location.hash = createWorldHash({
+      worldModelId: null,
+      snapshotId: null,
+      evidenceId: article.id,
+    });
   };
 
   return (
     <div className="media-page evidence-lens">
-      <header className="evidence-lens-header" aria-labelledby="media-page-title">
+      <header
+        className="evidence-lens-header evidence-lens-header--with-sync"
+        aria-labelledby="media-page-title"
+      >
         <div className="evidence-lens-stage">
           <span>Decision Workspace · 媒体证据</span>
           <strong>现实证据</strong>
@@ -453,12 +616,13 @@ export function MediaPage(): JSX.Element {
           <strong>边界</strong>
           <p>这里是报道索引与原文入口，不是对事件真伪、现实影响或未来走势的自动结论。</p>
         </div>
+        <MediaSyncFreshness />
       </header>
 
       <div className="evidence-lens-workbench">
         <EvidenceQueryRail
           activeFilterCount={activeFilterCount}
-          country={country}
+          country={route.country}
           countryFacets={countryFacets}
           draftQuery={draftQuery}
           filtersExpanded={filtersExpanded}
@@ -474,64 +638,137 @@ export function MediaPage(): JSX.Element {
           onTopicChange={changeTopic}
         />
 
-        <section className="evidence-stream" aria-labelledby="article-results-title">
+        <section className="evidence-stream" aria-labelledby="evidence-stream-title">
           <div className="evidence-stream-heading">
             <div>
-              <span>按发布时间读取</span>
-              <h2 id="article-results-title">报道证据流</h2>
+              <span>{activeLens.eyebrow}</span>
+              <h2 id="evidence-stream-title">{activeLens.title}</h2>
             </div>
-            <p aria-live="polite">
-              {response === null
-                ? "等待接口返回"
-                : `${formatMediaCount(response.total)} 篇 · 第 ${response.page} / ${totalPages} 页`}
-            </p>
+            <div className="evidence-stream-controls">
+              <div className="evidence-center-lenses" role="group" aria-label="中心观察镜头">
+                <button
+                  type="button"
+                  aria-pressed={route.lens === "articles"}
+                  onClick={() => onRouteChange({ ...route, sourceId: null, lens: "articles" })}
+                >
+                  报道证据流
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={route.lens === "topic"}
+                  onClick={() => onRouteChange({ ...route, sourceId: null, lens: "topic" })}
+                >
+                  议题演化
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={route.lens === "sources"}
+                  onClick={() => onRouteChange({
+                    topicId: null,
+                    sourceId: route.lens === "sources" ? route.sourceId : null,
+                    lens: "sources",
+                    country: null,
+                  })}
+                >
+                  来源档案
+                </button>
+              </div>
+              <p aria-live="polite">
+                {route.lens === "articles"
+                  ? response === null
+                    ? "等待接口返回"
+                    : `${formatMediaCount(response.total)} 篇 · 第 ${response.page} / ${totalPages} 页`
+                  : route.lens === "topic" && selectedTopic === null
+                    ? "需要稳定议题 ID"
+                    : route.lens === "topic" && selectedTopic !== null
+                      ? `${selectedTopic.name} · ${route.country === null ? "跨国家聚合" : formatCountryName(route.country)}`
+                      : activeLens.status}
+              </p>
+            </div>
           </div>
 
-          {state.status === "error" ? (
-            <ApiErrorPanel
-              title="无法读取媒体报道"
-              error={state.error}
-              isRetrying={state.isRetrying}
-              onRetry={reload}
-            />
-          ) : null}
+          {route.lens === "articles" ? (
+            <div id="article-evidence-view">
+              {state.status === "error" ? (
+                <ApiErrorPanel
+                  title="无法读取媒体报道"
+                  error={state.error}
+                  isRetrying={state.isRetrying}
+                  onRetry={reload}
+                />
+              ) : null}
 
-          {state.status === "loading" && response === null ? <ArticlesSkeleton /> : null}
-          {response === null ? null : (
-            <ArticleResults response={response} isUpdating={isUpdating} />
+              {state.status === "loading" && response === null ? <ArticlesSkeleton /> : null}
+              {response === null ? null : (
+                <ArticleResults
+                  response={response}
+                  isUpdating={isUpdating}
+                  onSendToWorld={sendArticleToWorld}
+                />
+              )}
+
+              <nav className="pagination" aria-label="媒体报道分页">
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  disabled={page <= 1 || state.status === "loading"}
+                  onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+                >
+                  上一页
+                </button>
+                <span aria-live="polite">
+                  第 {response?.page ?? page} / {totalPages} 页
+                </span>
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  disabled={page >= totalPages || state.status === "loading" || response === null}
+                  onClick={() => setPage((currentPage) => currentPage + 1)}
+                >
+                  下一页
+                </button>
+              </nav>
+            </div>
+          ) : route.lens === "topic" ? (
+            <div id="topic-evolution-view">
+              {selectedTopic === null ? (
+                <TopicEvolutionPrompt onOpenDirectory={openTopicDirectory} />
+              ) : (
+                <Suspense fallback={<TopicObservatoryFallback />}>
+                  <MediaTopicObservatory
+                    topicId={selectedTopic.id}
+                    topicName={selectedTopic.name}
+                    country={route.country}
+                  />
+                </Suspense>
+              )}
+            </div>
+          ) : (
+            <div id="media-source-health-view">
+              <Suspense fallback={<SourceHealthFallback />}>
+                <MediaSourceDossier
+                  sourceId={route.sourceId}
+                  page={sourceEvidencePage}
+                  onPageChange={setSourceEvidencePage}
+                />
+                <MediaSourceHealthPanel
+                  selectedSourceId={route.sourceId}
+                  onSelectSource={selectSource}
+                />
+              </Suspense>
+            </div>
           )}
-
-          <nav className="pagination" aria-label="媒体报道分页">
-            <button
-              className="button button-secondary"
-              type="button"
-              disabled={page <= 1 || state.status === "loading"}
-              onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
-            >
-              上一页
-            </button>
-            <span aria-live="polite">
-              第 {response?.page ?? page} / {totalPages} 页
-            </span>
-            <button
-              className="button button-secondary"
-              type="button"
-              disabled={page >= totalPages || state.status === "loading" || response === null}
-              onClick={() => setPage((currentPage) => currentPage + 1)}
-            >
-              下一页
-            </button>
-          </nav>
         </section>
 
         <EvidenceInspector
           appliedQuery={appliedQuery}
-          country={country}
+          country={route.country}
           countryFacets={countryFacets}
           response={response}
           selectedTopic={selectedTopic}
           topicFacets={topicFacets}
           onCountrySelect={selectCountryFacet}
+          onDirectoryTopicSelect={selectDirectoryTopic}
           onTopicSelect={selectTopicFacet}
         />
       </div>

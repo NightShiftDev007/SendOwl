@@ -26,7 +26,7 @@ Media / Policy Reality
   → Comparable Metrics / Explanation / Report
 ```
 
-当前已接通三条模型执行路径：不读取 Cohort 的 OASIS platform smoke、将封存 Cohort 与 Scenario baseline/alternatives 组成矩阵的有界语义实验，以及将封存 Scenario/Cohort 交给千问逐 Persona 完成固定三题的 MatrAIx Survey。Persona World、Playground、Survey 与持久章节式 Findings 共享这些真实资源；Survey 只返回精确 choice count、Likert 统计和逐 Persona 原始理由，不等于真人研究或决策推荐。完整 MatrAIx 通用 Trial/Harbor 与 MiroFish ReportAgent/角色访谈仍未迁移，政策数据领域也仍未实现。
+当前已接通七条模型/任务执行路径：不读取 Cohort 的 OASIS platform smoke、将封存 Cohort 与 Scenario baseline/alternatives 组成矩阵的有界语义实验、将封存 Scenario/Cohort 交给千问逐 Persona 完成固定三题的 MatrAIx Survey、让封存 Cohort 逐 Persona 与固定 Acme source sample 完成真实多轮 Chatbot Evaluation、让 1～4 人封存 Cohort 通过隔离 Playwright 执行固定 quote-choice Web source sample、让显式选择的冻结 Persona 通过非特权 Runner 完成固定 note-to-CSV Linux 产物任务，以及把封存 Report/Cohort/Persona 交给千问生成章节引用受限的合成 Persona 访谈。访谈支持单人任务和一次封存 2～8 个独立回答的原子会话。Persona World、Playground、Survey、Chat、Web、Linux 产物任务、Persona 访谈与持久章节式 Findings 共享这些真实资源；Trial Archive 提供有界只读目录，Batch Registry 可不可变登记 Survey/Chat/Web/Linux sealed parent，并可在单一数据库事务中创建既有 SendOwl-native Survey/Chat 父运行后立即登记，失败时整体回滚。Web/Linux 不进入 native launch；Linux Evaluation 仅内容寻址封存一个真实固定 Linux Trial，不把 Cohort 冒充父运行。固定 Web 执行器不是任意网址或 Harbor，Linux Runner 也不执行任意 shell、桌面或 Computer Use；Batch Registry 不引入 Harbor Docker/OS、verifier 或通用 artifact 执行语义。这些合成试验均不等于真人研究或决策推荐。完整 MatrAIx Harbor launch/verifier/artifact 执行面、桌面 OS/Computer Use、MiroFish 自主 ReAct ReportAgent 与运行中 Agent IPC 仍未迁移，政策数据领域也仍未实现。
 
 现实观测、人工确认、实验假设和模拟输出是四种不同的事实类型。任何下游资源都必须保留来源、时间、版本和内容摘要，不能把实验输入或模拟产物回写成现实证据。
 
@@ -50,6 +50,7 @@ FastAPI backend ───── PostgreSQL
 - API 使用 Python 3.12；受 OASIS 0.2.5 约束的 worker 使用 Python 3.11。
 - worker 是同仓库的执行角色，不是额外项目或代码仓库。
 - Compose 先执行 Alembic migration，再启动 API、worker 和前端。
+- Compose `test` profile 使用不映射端口、tmpfs 持久层的独立 PostgreSQL；测试镜像迁移该库后才注入 `TEST_POSTGRES_DATABASE_URL`，不复用应用数据库或数据卷。
 - `/health` 表示进程存活；`/readyz` 检查必要数据库连接；platform readiness 还核验 worker 心跳及固定版本。
 - semantic readiness 另外要求近期 worker 同时标记 platform/semantic runtime ready，且所有可用 worker 只暴露一个一致的 model/config/prompt 身份；配置冲突时禁止新实验入队。
 
@@ -64,7 +65,7 @@ FastAPI backend ───── PostgreSQL
 | `populations` | MatrAIx 数据集、Persona 档案与有序不可变 Cohort | MatrAIx + V2 整合层 |
 | `simulations` | MatrAIx/OASIS 契约、平台运行及统一结果边界 | MatrAIx + OASIS |
 | `semantic_experiments` | Cohort/Scenario 矩阵、语义 trial、观测事件与配对计数 | MatrAIx + OASIS + V2 整合层 |
-| `reports` | 真实 comparison、配对计数、限制和运行来源已接通；章节解释与导出待迁移 | 原 ADC + MatrAIx + V2 整合层 |
+| `reports` | 固定四章节 Findings、真实 comparison、配对计数、限制、运行来源、Markdown 导出、证据追问链和 Persona 访谈 | 原 ADC + MatrAIx + MiroFish 交互模式 + V2 整合层 |
 
 adapter 只负责将稳定领域契约转换为外部引擎协议。业务 API 不暴露四个来源项目各自的路由、进程状态或文件存储模型。
 
@@ -177,7 +178,7 @@ Run Studio 使用以下 API：
 
 ## 数据库谱系
 
-Core 分支使用 `20260812_core_0001` 至 `20260813_core_0016` 的独立 Alembic revision 链，并使用独立 Compose project/volume。`20260812_core_0010` 增加 semantic experiment/variant/trial/event 表和 worker 语义配置心跳字段；`20260812_core_0011` 增加 evidence-backed semantic world graph 队列、节点、关系与引用表；`20260812_core_0012` 增加只追加的 Decision Thread 与资源修订绑定；`20260812_core_0013` 增加内容寻址、固定四章节且封存后不可修改的 Decision Report；`20260813_core_0014` 增加证据约束的报告问答队列，`20260813_core_0015` 无损加固问题内容寻址、快照/图配置绑定和回答长度边界，`20260813_core_0016` 增加 Survey 实验、逐 Persona trial、typed answers 与独立 worker readiness。这样已运行企业版 `20260812_0008` 的数据库不会被误认为符合 Core schema。
+Core 分支使用 `20260812_core_0001` 至 `20260816_core_0034` 的独立 Alembic revision 链，并使用独立 Compose project/volume。`20260812_core_0010` 增加 semantic experiment/variant/trial/event 表和 worker 语义配置心跳字段；`20260812_core_0011` 增加 evidence-backed semantic world graph 队列、节点、关系与引用表；`20260812_core_0012` 增加只追加的 Decision Thread 与资源修订绑定；`20260812_core_0013` 增加内容寻址、固定四章节且封存后不可修改的 Decision Report；`20260813_core_0014` 增加证据约束的报告问答队列，`20260813_core_0015` 无损加固问题内容寻址、快照/图配置绑定和回答长度边界，`20260813_core_0016` 增加 Survey 实验、逐 Persona trial、typed answers 与独立 worker readiness，`20260813_core_0017` 增加绑定 Report/Cohort/Persona 哈希的合成 Persona 访谈队列，`20260813_core_0018` 增加封存 2～8 个有序子访谈的原子多人会话，`20260813_core_0019` 增加首页传播链投影，`20260813_core_0020` 增加周期媒体快照刷新状态与逐表计数，`20260813_core_0021` 增加固定 MatrAIx Chat task、逐 Persona 多轮 trial、append-only transcript、typed feedback/result 与独立 worker readiness，`20260813_core_0022` 增加把已封存 Survey/Chat 父运行按有序成员内容寻址的不可变 Batch Registry，`20260813_core_0023` 增加最多五轮、父问题与父回答摘要绑定的报告追问链，`20260813_core_0024` 在保留 REST 内容地址的同时增加固定 Acme MCP source sample 与双通道运行时身份，`20260813_core_0025` 保留规范化传播 follower 身份，`20260813_core_0026` 和 `0027` 增加 Chat/Survey 不可变重试谱系，`20260813_core_0028` 增加首发证据观察，`20260814_core_0029` 增加图谱节点人工筛选 Persona 后与 Cohort 一起封存的不可变来源链，`20260815_core_0030` 增加固定 Playwright Web Evaluation，`20260815_core_0031` 增加媒体文章源端存在性对账，`20260815_core_0032` 增加固定 Linux artifact trial 与隔离 runner provenance，`20260816_core_0033` 将 sealed Web Evaluation 纳入 registry-only 候选和不可变成员，`20260816_core_0034` 增加单 Trial Linux Evaluation 父资源并将其纳入 registry-only 候选和不可变成员，同时保持 native launch 仅限 Survey/Chat。这样已运行企业版 `20260812_0008` 的数据库不会被误认为符合 Core schema。
 
 此分支不提供企业版数据到 Core schema 的无损迁移；两者是并行产品边界。需要导入媒体数据时，应建立 Core 数据库并重新运行 AgendaScope importer。
 
@@ -207,17 +208,17 @@ Zep Cloud 不再是目标架构的必选依赖。默认实现使用现有 Postgr
 | 范围 | 状态 |
 |---|---|
 | Foundation | React/FastAPI、严格契约、PostgreSQL/Redis、Alembic、健康检查与单栈已接通 |
-| AgendaScope | 媒体导入、来源/文章/议题查询和真实地域地球已接通 |
+| AgendaScope | 媒体导入、来源/文章/议题查询、来源证据档案、原文可核验的首发观察和真实地域地球已接通 |
 | World | 通用证据选择、修订冲突保护、不可变快照、版本与正文读取已接通 |
 | Scenario | 基线/备选、内容寻址、去重和封存已接通 |
 | MatrAIx Population | Dataset / Persona 严格导入、内容寻址、Cohort 选择与封存已接通 |
 | OASIS Platform | Reddit 平台、SQLite、手工动作、队列、worker 心跳和运行档案已接通 |
 | Semantic Experiment | 有界 Cohort/Scenario 矩阵、真实 LLM 动作、类型化事件和观测计数配对比较已接通 |
 | MiroFish World Graph | PostgreSQL 直接证据图、千问 evidence-backed 语义实体关系、有向 World Slice 与证据发布时间线已接通；事实有效期、混合检索待实现，Zep 仅为可选 Provider |
-| MatrAIx Trial / Harbor | Survey 已接通；通用 Trial、Harbor、trajectory 与更多任务型聚合仍待迁移 |
+| MatrAIx Trial / Harbor | Survey、固定 Acme REST/MCP Chatbot Evaluation、固定 Playwright Web quote-choice、固定 note-to-CSV Linux artifact runner、Chat 最多五次且保留父失败记录的不可变 attempt 谱系、四类 Trial 共用且不读取重型产物的只读 Trial Archive，以及可登记 Survey/Chat/Web/Linux sealed parent、仅对 Survey/Chat 提供原子 native 入队的 `registry_only` 不可变 Batch Registry 已接通；Linux parent 是单个真实 Trial 的不可变封存，不是 Cohort 或 Harbor Job；Harbor job launch/verifier/通用 artifacts/受权导出、桌面 OS/Computer Use trajectory 与更多执行器仍待迁移 |
 | Decision / Thread | 持久任务、只追加修订以及 World→Scenario→Cohort→Run→Report 跨资源深链已接通；协作权限与审计待实现 |
-| 判断闭环 | 持久章节式 Findings、Markdown 导出、来源哈希与第一条证据约束报告追问已接通；完整 ReportAgent、角色访谈、历史回测与人工判断待迁移 |
-| AgendaScope 持续摄取 | CDC、删除传播、连续调度和导入任务档案待实现 |
+| 判断闭环 | 持久章节式 Findings、Markdown 导出、来源哈希、最多五轮的证据约束报告追问链、固定证据叙事镜头、单人及 2～8 人原子合成访谈已接通；完整自主 ReAct ReportAgent、运行中 Agent IPC、历史回测与人工判断待迁移 |
+| AgendaScope 持续摄取 | 默认关闭的周期快照刷新、并发锁、导入任务状态、规范化 follower 传播关系及文章源端缺失标记已接通；缺失文章只从当前 API 隐藏并保留冻结证据，未回填关系的历史事件显式使用 legacy projection；真正 CDC 与非文章对象删除对账待实现 |
 | Policy | 政策来源、文件、效力/时间和与世界快照的证据契约待实现 |
 | 生产运行治理 | 认证/RBAC/审计、取消与重试、水平扩展、产物下载与保留策略待实现 |
 

@@ -87,6 +87,45 @@ REPORT_QUESTIONS_HARDENING_MIGRATION_FILE = (
     VERSIONS_DIRECTORY / "20260813_core_0015_harden_report_questions.py"
 )
 MATRAIX_SURVEYS_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0016_matraix_surveys.py"
+PERSONA_INTERVIEW_SESSIONS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0018_persona_interview_sessions.py"
+)
+MEDIA_PROPAGATION_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0019_media_propagation.py"
+MEDIA_SYNC_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0020_media_sync_runs.py"
+MATRAIX_CHAT_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0021_matraix_chat.py"
+MATRAIX_BATCH_REGISTRY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0022_matraix_batch_registry.py"
+)
+REPORT_QUESTION_THREADS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0023_report_question_threads.py"
+)
+MATRAIX_CHAT_MCP_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0024_matraix_chat_mcp.py"
+STRUCTURED_MEDIA_PROPAGATION_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0025_structured_media_propagation.py"
+)
+CHAT_RETRY_LINEAGE_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260813_core_0026_chat_retry_lineage.py"
+SURVEY_RETRY_LINEAGE_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0027_survey_retry_lineage.py"
+)
+MEDIA_FIRST_UTTERANCES_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260813_core_0028_media_first_utterances.py"
+)
+GRAPH_PERSONA_COHORT_ORIGINS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260814_core_0029_graph_persona_cohort_origins.py"
+)
+MATRAIX_WEB_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260815_core_0030_matraix_web.py"
+MEDIA_ARTICLE_SOURCE_PRESENCE_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260815_core_0031_media_article_source_presence.py"
+)
+MATRAIX_LINUX_ARTIFACT_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260815_core_0032_matraix_linux_artifact.py"
+)
+MATRAIX_BATCH_REGISTRY_WEB_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0033_batch_registry_web.py"
+)
+MATRAIX_LINUX_EVALUATION_REGISTRY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0034_linux_evaluation_registry.py"
+)
 TEST_POSTGRES_DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 
 
@@ -100,12 +139,30 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
     configuration = Config(str(BACKEND_DIRECTORY / "alembic.ini"))
     scripts = ScriptDirectory.from_config(configuration)
 
-    assert scripts.get_heads() == ["20260813_core_0016"]
+    assert scripts.get_heads() == ["20260816_core_0034"]
     assert {revision.revision for revision in scripts.walk_revisions()} == {
         *(f"20260812_core_{position:04d}" for position in range(1, 14)),
         "20260813_core_0014",
         "20260813_core_0015",
         "20260813_core_0016",
+        "20260813_core_0017",
+        "20260813_core_0018",
+        "20260813_core_0019",
+        "20260813_core_0020",
+        "20260813_core_0021",
+        "20260813_core_0022",
+        "20260813_core_0023",
+        "20260813_core_0024",
+        "20260813_core_0025",
+        "20260813_core_0026",
+        "20260813_core_0027",
+        "20260813_core_0028",
+        "20260814_core_0029",
+        "20260815_core_0030",
+        "20260815_core_0031",
+        "20260815_core_0032",
+        "20260816_core_0033",
+        "20260816_core_0034",
     }
 
 
@@ -118,6 +175,54 @@ def test_enterprise_head_is_explicitly_unknown_to_the_core_lineage() -> None:
         match="Can't locate revision identified by '20260812_0008'",
     ):
         scripts.get_revision("20260812_0008")
+
+
+def test_graph_persona_cohort_origin_migration_is_immutable_and_content_addressed() -> None:
+    source = GRAPH_PERSONA_COHORT_ORIGINS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0028"' in source
+    assert '"semantic_world_graph_cohort_origins"' in source
+    assert "graph-persona-cohort-origin/v1" in source
+    assert "graph Persona cohort origin_sha256 mismatch" in source
+    assert "graph Persona cohort origins are immutable" in source
+    assert "BEFORE TRUNCATE" in source
+
+
+def test_matraix_web_migration_owns_bounded_append_only_browser_observations() -> None:
+    source = MATRAIX_WEB_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260814_core_0029"' in source
+    for table_name in (
+        "matraix_web_evaluations",
+        "matraix_web_trials",
+        "matraix_web_pages",
+        "matraix_web_quotes",
+    ):
+        assert f'"{table_name}"' in source
+    for column_name in (
+        "web_runtime_ready",
+        "web_model_name",
+        "web_config_sha256",
+        "web_prompt_schema_version",
+        "web_executor_schema_version",
+        "web_executor_spec_sha256",
+    ):
+        assert f'"{column_name}"' in source
+    assert "canonical_matraix_web_trace_sha" in source
+    assert "selected quote was not present in recorded observations" in source
+    assert "MatrAIx Web observations are append-only" in source
+    assert "MatrAIx Web TRUNCATE is forbidden" in source
+
+
+def test_media_article_source_presence_preserves_frozen_evidence_rows() -> None:
+    source = MEDIA_ARTICLE_SOURCE_PRESENCE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260815_core_0030"' in source
+    assert '"source_present"' in source
+    assert '"source_last_observed_at"' in source
+    assert '"source_absent_at"' in source
+    assert "source_absent_at >= source_last_observed_at" in source
+    assert "drop_table" not in source
 
 
 def test_decision_report_migration_seals_fixed_outline_and_content_hash() -> None:
@@ -148,6 +253,13 @@ def test_report_question_migration_owns_an_immutable_cited_answer_queue() -> Non
     assert "selected_graph.world_model_id <> selected_scenario.world_model_id" in hardening_source
     assert "BETWEEN 1 AND 800" in hardening_source
 
+    thread_source = REPORT_QUESTION_THREADS_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260813_core_0022"' in thread_source
+    assert "parent_question_id" in thread_source
+    assert "conversation_depth BETWEEN 1 AND 4" in thread_source
+    assert "report-evidence-qa/v2" in thread_source
+    assert "report question parent lineage mismatch" in thread_source
+
 
 def test_matraix_survey_migration_owns_typed_append_only_results() -> None:
     source = MATRAIX_SURVEYS_MIGRATION_FILE.read_text(encoding="utf-8")
@@ -163,6 +275,124 @@ def test_matraix_survey_migration_owns_typed_append_only_results() -> None:
     assert "queued -> running -> terminal" in source
     assert "Survey answers are append-only" in source
     assert "Survey TRUNCATE is forbidden" in source
+
+
+def test_persona_interview_session_migration_seals_atomic_member_sets() -> None:
+    source = PERSONA_INTERVIEW_SESSIONS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0017"' in source
+    assert '"persona_interview_sessions"' in source
+    assert '"persona_interview_session_members"' in source
+    assert "persona-report-interview-session/v1" in source
+    assert "members or digest are incomplete" in source
+    assert "session members are append-only" in source
+    assert "session TRUNCATE is forbidden" in source
+
+
+def test_media_propagation_migration_owns_observed_country_edges() -> None:
+    source = MEDIA_PROPAGATION_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0018"' in source
+    assert '"media_propagation_events"' in source
+    assert '"media_propagation_edges"' in source
+    assert '"lag_hours"' in source
+    assert '"first_article_id"' in source
+
+
+def test_structured_media_propagation_preserves_follower_provenance() -> None:
+    source = STRUCTURED_MEDIA_PROPAGATION_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0024"' in source
+    assert '"source_follower_id"' in source
+    assert '"follower_source_id"' in source
+    assert '"observation_source"' in source
+    assert "structured_followers" in source
+    assert "uq_media_propagation_event_country" in source
+
+
+def test_chat_retry_lineage_is_immutable_and_bounded() -> None:
+    source = CHAT_RETRY_LINEAGE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0025"' in source
+    assert "retry_of_evaluation_id" in source
+    assert "retry_of_evaluation_sha256" in source
+    assert "attempt_number BETWEEN 2 AND 5" in source
+    assert "matraix-chat-evaluation-retry/v1" in source
+    assert "terminal parent with a failed trial" in source
+    assert "cannot downgrade while Chat retry attempts exist" in source
+
+
+def test_survey_retry_lineage_is_immutable_and_bounded() -> None:
+    source = SURVEY_RETRY_LINEAGE_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260813_core_0026"' in source
+    assert "retry_of_experiment_sha256" in source
+    assert "attempt_number BETWEEN 2 AND 5" in source
+    assert "terminal parent with a failed trial" in source
+    assert "cannot downgrade while Survey retry attempts exist" in source
+
+
+def test_media_first_utterances_migration_is_evidence_bound() -> None:
+    source = MEDIA_FIRST_UTTERANCES_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0027"' in source
+    assert '"media_first_utterances"' in source
+    assert "evidence_quote" in source
+    assert "confidence='high'" in source
+    assert "first_utterances" in source
+
+
+def test_media_sync_migration_owns_strict_refresh_observability() -> None:
+    source = MEDIA_SYNC_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0019"' in source
+    assert '"media_sync_runs"' in source
+    assert '"media_sync_run_tables"' in source
+    assert "skipped_concurrent" in source
+    assert "read_count = inserted_count + updated_count + skipped_count" in source
+
+
+def test_matraix_chat_migration_owns_immutable_typed_artifacts() -> None:
+    source = MATRAIX_CHAT_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0020"' in source
+    assert '"matraix_chat_evaluations"' in source
+    assert '"matraix_chat_trials"' in source
+    assert '"matraix_chat_messages"' in source
+    assert '"matraix_chat_feedback"' in source
+    assert '"chat_runtime_ready"' in source
+    assert "matraix_chat_sha256_nul" in source
+    assert "Chat messages are append-only" in source
+    assert "failed Chat trial must not retain feedback" in source
+    assert "Chat trial permits only queued -> running -> terminal" in source
+    assert "Chat TRUNCATE is forbidden" in source
+
+
+def test_matraix_batch_registry_migration_seals_ordered_source_parents() -> None:
+    source = MATRAIX_BATCH_REGISTRY_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260813_core_0021"' in source
+    assert '"matraix_batch_registries"' in source
+    assert '"matraix_batch_registry_items"' in source
+    assert "matraix-batch-registry/v1" in source
+    assert "requires 1..20 contiguous items" in source
+    assert "does not match a sealed source parent" in source
+    assert "hash does not match frozen inputs" in source
+    assert "sealed MatrAIx batch registry items are immutable" in source
+    assert "MatrAIx batch registry TRUNCATE is forbidden" in source
+
+    web_source = MATRAIX_BATCH_REGISTRY_WEB_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260815_core_0032"' in web_source
+    assert "kind IN ('survey','chat','web')" in web_source
+    assert "FROM matraix_web_evaluations source" in web_source
+    assert "cannot downgrade while Web batch registry items exist" in web_source
+
+    linux_source = MATRAIX_LINUX_EVALUATION_REGISTRY_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260816_core_0033"' in linux_source
+    assert '"matraix_linux_evaluations"' in linux_source
+    assert "matraix-linux-evaluation/v1" in linux_source
+    assert "kind IN ('survey','chat','web','linux')" in linux_source
+    assert "FROM matraix_linux_evaluations source" in linux_source
+    assert "cannot downgrade while Linux batch registry items exist" in linux_source
 
 
 def test_core_lineage_never_reuses_enterprise_revision_ids_or_schema() -> None:
@@ -839,7 +1069,7 @@ async def _exercise_postgresql_content_address_guards(database_url: str) -> None
                 current_revision = await connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-                assert current_revision == "20260812_core_0011"
+                assert current_revision == "20260816_core_0034"
 
                 created_at = datetime.now(UTC)
                 world_model_id = uuid4()
@@ -2335,11 +2565,55 @@ def test_semantic_http_endpoints_execute_against_postgresql() -> None:
 def test_compose_uses_a_stable_isolated_core_namespace() -> None:
     source = (REPOSITORY_DIRECTORY / "compose.yaml").read_text(encoding="utf-8")
 
-    assert source.startswith("name: ai-decision-center-core\n")
+    assert source.startswith("name: sendowl\n")
     for volume_name in (
-        "ai-decision-center-core-postgres-data",
-        "ai-decision-center-core-redis-data",
-        "ai-decision-center-core-oasis-artifacts",
+        "sendowl-postgres-data",
+        "sendowl-redis-data",
+        "sendowl-oasis-artifacts",
+        "sendowl-web-artifacts",
+        "sendowl-linux-artifacts",
     ):
         assert f"name: {volume_name}" in source
-    assert source.count("image: ai-decision-center-core-") == 4
+    assert source.count("image: sendowl-") == 10
+    assert "ai-decision-center-core" not in source
+
+
+def test_postgresql_test_profile_is_isolated_from_application_data() -> None:
+    compose_source = (REPOSITORY_DIRECTORY / "compose.yaml").read_text(encoding="utf-8")
+    test_services = compose_source.split("  postgres-test:", maxsplit=1)[1].split(
+        "\n  redis:", maxsplit=1
+    )[0]
+    dockerfile = (REPOSITORY_DIRECTORY / "backend" / "Dockerfile").read_text(encoding="utf-8")
+    package = (REPOSITORY_DIRECTORY / "package.json").read_text(encoding="utf-8")
+    runner = (REPOSITORY_DIRECTORY / "scripts" / "test-backend-postgresql.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert test_services.count("profiles:\n      - test") == 2
+    assert "- /var/lib/postgresql/data" in test_services
+    assert "ports:" not in test_services
+    assert "postgres_data" not in test_services
+    assert "target: test" in test_services
+    assert "@postgres-test:5432/sendowl_test" in test_services
+    assert "tests/run_postgresql.sh" in test_services
+    assert "FROM base AS test" in dockerfile
+    assert "FROM base AS production" in dockerfile
+    assert 'CMD ["/bin/sh", "tests/run_postgresql.sh"]' in dockerfile
+    assert '"test:backend:postgres": "sh scripts/test-backend-postgresql.sh"' in package
+    assert "stop postgres-test" in runner
+
+
+def test_sendowl_local_defaults_do_not_reuse_legacy_demo_ports_or_database() -> None:
+    environment = (REPOSITORY_DIRECTORY / ".env.example").read_text(encoding="utf-8")
+    package = (REPOSITORY_DIRECTORY / "package.json").read_text(encoding="utf-8")
+    vite = (REPOSITORY_DIRECTORY / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+
+    assert "FRONTEND_PORT=3200" in environment
+    assert "BACKEND_PORT=8210" in environment
+    assert "POSTGRES_DB=sendowl" in environment
+    assert "POSTGRES_USER=sendowl" in environment
+    assert "SENDOWL_ENV_FILE" in package
+    assert "--port 8310 --reload" in package
+    assert "port: 3300" in vite
+    assert 'target: "http://127.0.0.1:8310"' in vite
+    assert "ADC_ENV_FILE" not in package

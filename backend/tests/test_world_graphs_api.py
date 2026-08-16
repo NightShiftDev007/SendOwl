@@ -11,6 +11,7 @@ from app.main import create_app
 from app.world_graphs.contracts import (
     SemanticWorldGraphDetail,
     SemanticWorldGraphNode,
+    SemanticWorldGraphSearchResponse,
     SemanticWorldGraphSlice,
     WorldGraphEvidenceReference,
 )
@@ -63,6 +64,20 @@ def test_world_graph_endpoints_are_explicitly_unavailable_without_database() -> 
             },
         ),
         client.get(f"/api/v2/world-graphs/{graph_id}/evidence-timeline"),
+        client.get(f"/api/v2/world-graphs/{graph_id}/search", params={"q": "policy"}),
+        client.get(f"/api/v2/world-graphs/{graph_id}/edges/{uuid4()}/history"),
+        client.get(
+            f"/api/v2/world-graphs/{graph_id}/nodes/{uuid4()}/persona-matches",
+            params={"dataset_id": uuid4()},
+        ),
+        client.post(
+            f"/api/v2/world-graphs/{graph_id}/nodes/{uuid4()}/cohorts",
+            json={
+                "title": "Graph-guided cohort",
+                "dataset_id": str(uuid4()),
+                "persona_ids": [str(uuid4())],
+            },
+        ),
     )
 
     assert {response.status_code for response in responses} == {503}
@@ -182,3 +197,51 @@ def test_world_graph_slice_forwards_strict_query(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert SemanticWorldGraphSlice.model_validate_json(response.content) == expected
+
+
+def test_world_graph_search_normalizes_and_rejects_ambiguous_query(monkeypatch) -> None:
+    application = create_app(load_runtime_settings({}))
+    graph_id = uuid4()
+    expected = SemanticWorldGraphSearchResponse(
+        graph_id=graph_id,
+        graph_sha256="e" * 64,
+        query="clean port",
+        search_semantics="casefolded_lexical_substring",
+        total_match_count=0,
+        truncated=False,
+        results=(),
+        limitations=(
+            "Search is deterministic case-folded substring matching, not vector retrieval.",
+            "Every result remains bound to exact graph evidence.",
+        ),
+    )
+
+    async def override_session() -> AsyncIterator[object]:
+        yield object()
+
+    async def graph_search(
+        session: object,
+        requested_graph: UUID,
+        query: str,
+        limit: int,
+    ) -> SemanticWorldGraphSearchResponse:
+        assert session is not None
+        assert requested_graph == graph_id
+        assert (query, limit) == ("clean port", 7)
+        return expected
+
+    application.dependency_overrides[require_world_graph_session] = override_session
+    monkeypatch.setattr(world_graphs_api, "search_world_graph", graph_search)
+    client = TestClient(application)
+    response = client.get(
+        f"/api/v2/world-graphs/{graph_id}/search",
+        params={"q": "  clean port  ", "limit": 7},
+    )
+    assert response.status_code == 200
+    assert SemanticWorldGraphSearchResponse.model_validate_json(response.content) == expected
+    assert client.get(f"/api/v2/world-graphs/{graph_id}/search?q=a&limit=7").status_code == 422
+    assert client.get(f"/api/v2/world-graphs/{graph_id}/search?q=policy&q=event").status_code == 422
+    assert (
+        client.get(f"/api/v2/world-graphs/{graph_id}/search?q=policy&unknown=value").status_code
+        == 422
+    )

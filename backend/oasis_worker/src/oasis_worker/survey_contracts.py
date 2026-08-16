@@ -114,12 +114,20 @@ class SurveyExperiment(StrictModel):
     survey_config_sha256: Sha256
     prompt_schema_version: Literal["matraix-survey-scenario-preference/v1"]
     experiment_sha256: Sha256
+    retry_of_experiment_id: UUID | None
+    retry_of_experiment_sha256: Sha256 | None
+    attempt_number: Annotated[int, Field(ge=1, le=5)]
     created_at: datetime
 
     @model_validator(mode="after")
     def require_distinct_variants(self) -> Self:
         if self.baseline_id == self.alternative_id:
             raise ValueError("survey baseline and alternative must be distinct")
+        has_parent = (
+            self.retry_of_experiment_id is not None and self.retry_of_experiment_sha256 is not None
+        )
+        if (self.attempt_number == 1) == has_parent:
+            raise ValueError("survey retry lineage does not match attempt number")
         return self
 
 

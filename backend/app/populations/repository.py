@@ -251,6 +251,32 @@ async def list_personas(
     )
 
 
+async def load_persona_match_scan(
+    session: AsyncSession,
+    dataset_id: UUID,
+    scan_limit: int,
+) -> tuple[CohortDatasetRef, int, tuple[PersonaSummary, ...]]:
+    """Load one bounded, integrity-checked Persona prefix for cross-domain candidate matching."""
+    dataset = await _get_sealed_dataset(session, dataset_id)
+    records = tuple(
+        (
+            await session.execute(
+                select(PersonaRecord)
+                .where(PersonaRecord.dataset_id == dataset_id)
+                .order_by(PersonaRecord.position, PersonaRecord.id)
+                .limit(scan_limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return (
+        _cohort_dataset_ref(dataset),
+        dataset.persona_count,
+        tuple(_persona_summary(record) for record in records),
+    )
+
+
 def _cohort_advisory_lock_key(cohort_sha256: str) -> int:
     """Map one content address to PostgreSQL's signed 64-bit lock space."""
     unsigned_key = int(cohort_sha256[:16], 16)
@@ -356,11 +382,11 @@ async def _load_cohort_details(
     )
 
 
-async def create_cohort(
+async def ensure_cohort(
     session: AsyncSession,
     request: CohortCreateRequest,
 ) -> CohortDetail:
-    """Atomically validate, content-address, persist, and seal one cohort."""
+    """Validate and seal one cohort inside the caller-owned transaction."""
     dataset = await _get_sealed_dataset(session, request.dataset_id)
     personas = await _selected_personas(session, dataset.id, request.persona_ids)
     cohort_sha256 = calculate_cohort_sha256(
@@ -373,9 +399,7 @@ async def create_cohort(
         select(CohortRecord).where(CohortRecord.cohort_sha256 == cohort_sha256)
     )
     if existing is not None:
-        detail = (await _load_cohort_details(session, (existing,)))[0]
-        await session.commit()
-        return detail
+        return (await _load_cohort_details(session, (existing,)))[0]
 
     created_at = datetime.now(UTC)
     cohort = CohortRecord(
@@ -402,12 +426,20 @@ async def create_cohort(
     await session.flush(members)
     cohort.sealed_at = created_at
     await session.flush((cohort,))
-    result = _cohort_detail(
+    return _cohort_detail(
         cohort,
         dataset,
         members,
         {persona.id: persona for persona in personas},
     )
+
+
+async def create_cohort(
+    session: AsyncSession,
+    request: CohortCreateRequest,
+) -> CohortDetail:
+    """Atomically validate, content-address, persist, and seal one cohort."""
+    result = await ensure_cohort(session, request)
     await session.commit()
     return result
 

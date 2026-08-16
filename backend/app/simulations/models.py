@@ -202,6 +202,37 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
     survey_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     survey_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     survey_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chat_runtime_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
+    chat_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    chat_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chat_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chat_sut_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    chat_sut_task_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    chat_sut_spec_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    web_runtime_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
+    web_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    web_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    web_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    web_executor_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    web_executor_spec_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linux_runtime_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
+    linux_model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    linux_config_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linux_prompt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linux_runner_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linux_runner_spec_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -238,6 +269,50 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             "AND survey_config_sha256 IS NULL "
             "AND survey_prompt_schema_version IS NULL)",
             name="ck_simulation_worker_survey_config",
+        ),
+        CheckConstraint(
+            "(chat_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready AND "
+            "length(btrim(chat_model_name)) BETWEEN 1 AND 200 "
+            "AND chat_model_name !~ E'[\\r\\n]' "
+            "AND chat_config_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND chat_prompt_schema_version = 'matraix-chat-acme-support/v1' "
+            "AND chat_sut_task_id = 'sendowl/matraix-acme-rest-mcp-suite' "
+            "AND chat_sut_task_version = '1.0.0' "
+            "AND chat_sut_spec_sha256 = "
+            "'0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a') OR "
+            "(NOT chat_runtime_ready AND chat_model_name IS NULL "
+            "AND chat_config_sha256 IS NULL AND chat_prompt_schema_version IS NULL "
+            "AND chat_sut_task_id IS NULL AND chat_sut_task_version IS NULL "
+            "AND chat_sut_spec_sha256 IS NULL)",
+            name="ck_simulation_worker_chat_config",
+        ),
+        CheckConstraint(
+            "(web_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready "
+            "AND length(btrim(web_model_name)) BETWEEN 1 AND 200 "
+            "AND web_model_name !~ E'[\\r\\n]' "
+            "AND web_config_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND web_prompt_schema_version='matraix-web-quotes-choice/v1' "
+            "AND web_executor_schema_version='matraix-web-browser-executor/v1' "
+            "AND web_executor_spec_sha256="
+            "'36402fa66241124551503d9998cdef6d73e3b08ee05abca6b6d05a99709a9dc7') OR "
+            "(NOT web_runtime_ready AND web_model_name IS NULL "
+            "AND web_config_sha256 IS NULL AND web_prompt_schema_version IS NULL "
+            "AND web_executor_schema_version IS NULL AND web_executor_spec_sha256 IS NULL)",
+            name="ck_simulation_worker_web_config",
+        ),
+        CheckConstraint(
+            "(linux_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready "
+            "AND length(btrim(linux_model_name)) BETWEEN 1 AND 200 "
+            "AND linux_model_name !~ E'[\\r\\n]' "
+            "AND linux_config_sha256 ~ '^[a-f0-9]{64}$' "
+            "AND linux_prompt_schema_version='matraix-linux-note-to-csv/v1' "
+            "AND linux_runner_schema_version='matraix-linux-artifact-runner/v1' "
+            "AND linux_runner_spec_sha256="
+            "'ec2a5c1dd6ae8daa9163f3d5749654ef8fcb53f750bcf6614f9a9883f0e01354') OR "
+            "(NOT linux_runtime_ready AND linux_model_name IS NULL "
+            "AND linux_config_sha256 IS NULL AND linux_prompt_schema_version IS NULL "
+            "AND linux_runner_schema_version IS NULL AND linux_runner_spec_sha256 IS NULL)",
+            name="ck_simulation_worker_linux_config",
         ),
         Index("ix_simulation_worker_heartbeats_last_seen", "last_seen_at"),
     )

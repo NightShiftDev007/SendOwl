@@ -1,0 +1,288 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import {
+  fetchChatEvaluation,
+  fetchChatEvaluations,
+  fetchChatReadiness,
+  fetchChatTasks,
+  fetchChatTrialTrajectory,
+  type ChatEvaluationDetail,
+  type ChatEvaluationSummary,
+  type ChatReadiness,
+  type ChatTrial,
+  type ChatTrialAtifProjection,
+  type MatraixChatTask,
+} from "./chatEvaluationContracts";
+
+export type ChatReadinessLoadState =
+  | { readonly status: "loading"; readonly data: ChatReadiness | null }
+  | { readonly status: "success"; readonly data: ChatReadiness }
+  | {
+      readonly status: "error";
+      readonly error: Error;
+      readonly isRetrying: boolean;
+      readonly data: ChatReadiness | null;
+    };
+
+export type ChatTasksLoadState =
+  | { readonly status: "loading"; readonly items: readonly MatraixChatTask[] }
+  | { readonly status: "success"; readonly items: readonly MatraixChatTask[] }
+  | {
+      readonly status: "error";
+      readonly error: Error;
+      readonly isRetrying: boolean;
+      readonly items: readonly MatraixChatTask[];
+    };
+
+export type ChatEvaluationsLoadState =
+  | { readonly status: "loading"; readonly items: readonly ChatEvaluationSummary[] }
+  | { readonly status: "success"; readonly items: readonly ChatEvaluationSummary[] }
+  | {
+      readonly status: "error";
+      readonly error: Error;
+      readonly isRetrying: boolean;
+      readonly items: readonly ChatEvaluationSummary[];
+    };
+
+export type ChatEvaluationDetailLoadState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading"; readonly data: ChatEvaluationDetail | null }
+  | { readonly status: "success"; readonly data: ChatEvaluationDetail }
+  | {
+      readonly status: "error";
+      readonly error: Error;
+      readonly isRetrying: boolean;
+      readonly data: ChatEvaluationDetail | null;
+    };
+
+export type ChatTrialTrajectoryLoadState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | { readonly status: "success"; readonly data: ChatTrialAtifProjection }
+  | { readonly status: "error"; readonly error: Error; readonly isRetrying: boolean };
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function normalizeError(error: unknown, operation: string): Error {
+  return error instanceof Error
+    ? error
+    : new Error(`${operation}失败：请求抛出了非标准错误。请检查后端日志。`);
+}
+
+export function useChatReadiness(): {
+  readonly state: ChatReadinessLoadState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatReadinessLoadState>({
+    status: "loading",
+    data: null,
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    setState((current) => ({
+      status: "loading",
+      data: current.data,
+    }));
+
+    void fetchChatReadiness(controller.signal)
+      .then((data) => {
+        setState({ status: "success", data });
+      })
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState((current) => ({
+          status: "error",
+          error: normalizeError(error, "核验 Chat runtime"),
+          isRetrying: false,
+          data: current.data,
+        }));
+      });
+
+    const intervalId = window.setInterval(() => {
+      setRequestVersion((current) => current + 1);
+    }, 10_000);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [requestVersion]);
+
+  return {
+    state,
+    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
+  };
+}
+
+export function useChatTasks(): {
+  readonly state: ChatTasksLoadState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatTasksLoadState>({
+    status: "loading",
+    items: [],
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState((current) => ({ status: "loading", items: current.items }));
+    void fetchChatTasks(controller.signal)
+      .then((response) => setState({ status: "success", items: response.items }))
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState((current) => ({
+          status: "error",
+          error: normalizeError(error, "读取 Chat 任务目录"),
+          isRetrying: false,
+          items: current.items,
+        }));
+      });
+    return () => controller.abort();
+  }, [requestVersion]);
+
+  return {
+    state,
+    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
+  };
+}
+
+export function useChatEvaluations(): {
+  readonly state: ChatEvaluationsLoadState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatEvaluationsLoadState>({
+    status: "loading",
+    items: [],
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState((current) => ({ status: "loading", items: current.items }));
+    void fetchChatEvaluations(controller.signal)
+      .then((response) => setState({ status: "success", items: response.items }))
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState((current) => ({
+          status: "error",
+          error: normalizeError(error, "读取 Chat Evaluation 目录"),
+          isRetrying: false,
+          items: current.items,
+        }));
+      });
+    return () => controller.abort();
+  }, [requestVersion]);
+
+  return {
+    state,
+    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
+  };
+}
+
+export function useChatEvaluation(
+  evaluationId: string | null,
+): {
+  readonly state: ChatEvaluationDetailLoadState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatEvaluationDetailLoadState>({ status: "idle" });
+  const previousId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (evaluationId === null) {
+      previousId.current = null;
+      setState({ status: "idle" });
+      return;
+    }
+
+    const isNewEvaluation = previousId.current !== evaluationId;
+    previousId.current = evaluationId;
+    const controller = new AbortController();
+    let pollId: number | null = null;
+
+    setState((current) => ({
+      status: "loading",
+      data: isNewEvaluation || current.status === "idle" ? null : current.data,
+    }));
+
+    void fetchChatEvaluation(evaluationId, controller.signal)
+      .then((data) => {
+        setState({ status: "success", data });
+        if (data.status === "queued" || data.status === "running") {
+          pollId = window.setTimeout(() => {
+            setRequestVersion((current) => current + 1);
+          }, 2_000);
+        }
+      })
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState((current) => ({
+          status: "error",
+          error: normalizeError(error, "读取 Chat Evaluation"),
+          isRetrying: false,
+          data: current.status === "idle" ? null : current.data,
+        }));
+      });
+
+    return () => {
+      controller.abort();
+      if (pollId !== null) window.clearTimeout(pollId);
+    };
+  }, [evaluationId, requestVersion]);
+
+  return {
+    state,
+    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
+  };
+}
+
+export function useChatTrialTrajectory(
+  trial: ChatTrial | null,
+): {
+  readonly state: ChatTrialTrajectoryLoadState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<ChatTrialTrajectoryLoadState>({ status: "idle" });
+  const lastMessage = trial?.transcript.at(-1) ?? null;
+  const revision = trial === null || lastMessage === null
+    ? null
+    : `${trial.id}:${trial.transcript.length}:${lastMessage.recorded_at}:${trial.result?.transcript_sha256 ?? "partial"}`;
+
+  useEffect(() => {
+    if (trial === null || revision === null) {
+      setState({ status: "idle" });
+      return;
+    }
+    const selectedTrial = trial;
+    const controller = new AbortController();
+    setState({ status: "loading" });
+    void fetchChatTrialTrajectory(
+      selectedTrial.id,
+      selectedTrial.trial_sha256,
+      controller.signal,
+    )
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (isAbortError(error)) return;
+        setState({
+          status: "error",
+          error: normalizeError(error, "读取 ATIF trajectory"),
+          isRetrying: false,
+        });
+      });
+    return () => controller.abort();
+  }, [revision, requestVersion]);
+
+  return {
+    state,
+    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
+  };
+}

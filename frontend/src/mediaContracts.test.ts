@@ -4,7 +4,10 @@ import {
   createMediaArticlesEndpoint,
   createMediaTopicsEndpoint,
   mediaArticlesResponseSchema,
+  mediaFirstUtterancesResponseSchema,
   mediaOverviewSchema,
+  mediaPropagationEdgeSchema,
+  mediaPropagationResponseSchema,
   mediaTopicsResponseSchema,
 } from "./mediaContracts";
 
@@ -72,6 +75,43 @@ describe("media overview contract", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("media first-utterance evidence contract", () => {
+  const response = {
+    topic_id: "7a60965f-12b4-46be-b78b-61b39922059c",
+    topic: "产业政策",
+    total: 1,
+    generated_at: "2026-08-13T05:00:00Z",
+    limitations: ["Model-assisted evidence discovery, not an authoritative first claim."],
+    items: [
+      {
+        id: "e00ac0cf-7831-4e9c-837c-e77098ed57be",
+        entity_id: "13458539-bdaf-4904-8186-b85a88b0db19",
+        entity_name: "Example Minister",
+        entity_type: "person",
+        country_code: "CN",
+        occurred_at: "2026-08-12T03:00:00Z",
+        evidence_quote: "This exact quote is present in the source article.",
+        confidence: "high",
+        model_name: "qwen-example",
+        prompt_version: "first-utterance/v1",
+        source_created_at: "2026-08-12T03:01:00Z",
+        article: validArticle,
+      },
+    ],
+  };
+
+  it("accepts evidence-bound observations without reasoning fields", () => {
+    expect(mediaFirstUtterancesResponseSchema.safeParse(response).success).toBe(true);
+  });
+
+  it("rejects model reasoning and unsupported confidence", () => {
+    const item = { ...response.items[0], reasoning: "hidden chain", confidence: "medium" };
+    expect(
+      mediaFirstUtterancesResponseSchema.safeParse({ ...response, items: [item] }).success,
+    ).toBe(false);
   });
 });
 
@@ -180,5 +220,61 @@ describe("media topics contract", () => {
       page: "2",
       page_size: "50",
     });
+  });
+});
+
+describe("media propagation contract", () => {
+  it("accepts only typed observed country edges", () => {
+    const result = mediaPropagationResponseSchema.safeParse({
+      generated_at: "2026-08-13T05:00:00Z",
+      total: 1,
+      items: [
+        {
+          id: "02e985f8-82f9-4e89-aa26-34539874dfde",
+          topic_id: "7a60965f-12b4-46be-b78b-61b39922059c",
+          topic: "跨境议题传播",
+          status: "confirmed",
+          confidence: "confirmed",
+          origin_country_code: "CN",
+          origin_source_name: "Example News",
+          origin_at: "2026-08-13T01:00:00Z",
+          origin_confidence: "high",
+          detection_method: "media_time_fallback",
+          edges: [
+            {
+              position: 0,
+              from_country_code: "CN",
+              to_country_code: "US",
+              lag_hours: 2.5,
+              first_media_name: "Follower Media",
+              first_article_id: null,
+              first_published_at: "2026-08-13T03:30:00Z",
+              source_follower_id: "6fdbe5ad-5d85-4988-9dde-d2db144c110e",
+              follower_source_id: "ac4ec737-88e8-4ebf-9d8a-f9f9a52fe919",
+              observation_source: "structured_followers",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects structured edges without follower provenance", () => {
+    const result = mediaPropagationEdgeSchema.safeParse({
+      position: 0,
+      from_country_code: "CN",
+      to_country_code: "US",
+      lag_hours: 1,
+      first_media_name: "Follower Media",
+      first_article_id: null,
+      first_published_at: "2026-08-13T03:30:00Z",
+      source_follower_id: null,
+      follower_source_id: null,
+      observation_source: "structured_followers",
+    });
+
+    expect(result.success).toBe(false);
   });
 });

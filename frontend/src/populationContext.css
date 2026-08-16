@@ -526,6 +526,93 @@
   color: var(--run-green);
 }
 
+.population-graph-origins {
+  padding: 14px 16px;
+  background: var(--run-bg);
+  border-bottom: 1px solid var(--run-line);
+}
+
+.population-graph-origins > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.population-graph-origins > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.population-graph-origins > header span,
+.population-graph-origins > header small {
+  color: var(--run-faint);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.population-graph-origins > header strong {
+  color: var(--run-ink);
+  font-size: 0.75rem;
+}
+
+.population-graph-origins > p {
+  margin: 10px 0 0;
+  color: var(--run-muted);
+  font-size: 0.6875rem;
+  line-height: 1.55;
+}
+
+.population-graph-origins > ol {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.population-graph-origins > ol li {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  background: var(--run-surface);
+  border: 1px solid var(--run-line-soft);
+}
+
+.population-graph-origins li span,
+.population-graph-origins li small,
+.population-graph-origins li code {
+  overflow-wrap: anywhere;
+  color: var(--run-muted);
+  font-size: 0.625rem;
+  line-height: 1.45;
+}
+
+.population-graph-origins li strong {
+  overflow-wrap: anywhere;
+  color: var(--run-ink);
+  font-size: 0.6875rem;
+}
+
+.population-graph-origin-pagination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.population-graph-origin-pagination button {
+  min-height: 36px;
+}
+
+.population-graph-origin-pagination span {
+  color: var(--run-muted);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-align: center;
+}
+
 .population-member-list > li {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);

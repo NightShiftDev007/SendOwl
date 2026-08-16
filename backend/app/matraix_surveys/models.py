@@ -54,6 +54,12 @@ class MatraixSurveyExperimentRecord(ApplicationBase):
     survey_config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     experiment_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    retry_of_experiment_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("matraix_survey_experiments.id", ondelete="RESTRICT"),
+    )
+    retry_of_experiment_sha256: Mapped[str | None] = mapped_column(String(64))
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     input_sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -72,6 +78,13 @@ class MatraixSurveyExperimentRecord(ApplicationBase):
         CheckConstraint("instrument_sha256 ~ '^[a-f0-9]{64}$'", name="ck_survey_instrument_sha"),
         CheckConstraint("survey_config_sha256 ~ '^[a-f0-9]{64}$'", name="ck_survey_config_sha"),
         CheckConstraint("experiment_sha256 ~ '^[a-f0-9]{64}$'", name="ck_survey_experiment_sha"),
+        CheckConstraint(
+            "(attempt_number=1 AND retry_of_experiment_id IS NULL "
+            "AND retry_of_experiment_sha256 IS NULL) OR "
+            "(attempt_number BETWEEN 2 AND 5 AND retry_of_experiment_id IS NOT NULL "
+            "AND retry_of_experiment_sha256 ~ '^[a-f0-9]{64}$')",
+            name="ck_survey_attempt_lineage",
+        ),
         CheckConstraint("persona_count BETWEEN 1 AND 8", name="ck_survey_persona_count"),
         CheckConstraint("baseline_position = 0", name="ck_survey_baseline_position"),
         CheckConstraint(
@@ -94,6 +107,7 @@ class MatraixSurveyExperimentRecord(ApplicationBase):
             name="ck_survey_experiment_sealed_time",
         ),
         UniqueConstraint("experiment_sha256", name="uq_survey_experiment_sha"),
+        UniqueConstraint("retry_of_experiment_id", name="uq_survey_retry_parent"),
         Index("ix_survey_experiments_created", "created_at"),
     )
 

@@ -1,5 +1,6 @@
 """Media query validation and unique-article projection contracts."""
 
+import inspect
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -14,8 +15,14 @@ from app.api.media import (
     create_media_router,
     normalize_media_search_query,
     require_media_session,
+    require_media_source_evidence_session,
 )
-from app.media.contracts import MediaArticleSummary, MediaTopicsResponse
+from app.media.contracts import (
+    MediaArticleSummary,
+    MediaSourceEvidenceResponse,
+    MediaTopicsResponse,
+)
+from app.media.errors import MediaSourceEvidencePageOutOfRangeError, MediaSourceNotFoundError
 from app.media.models import MediaArticleRecord
 from app.media.repository import (
     UNCLASSIFIED_TOPIC,
@@ -36,6 +43,7 @@ def _validation_client() -> TestClient:
         yield object()
 
     application.dependency_overrides[require_media_session] = unused_session
+    application.dependency_overrides[require_media_source_evidence_session] = unused_session
     return TestClient(application)
 
 
@@ -137,6 +145,58 @@ def test_topics_response_requires_explicit_pagination_metadata() -> None:
         MediaTopicsResponse.model_validate({"items": ()}, strict=True)
 
 
+def test_source_evidence_response_reuses_article_summary_without_full_content() -> None:
+    source_id = uuid4()
+    article = MediaArticleSummary.model_validate(_valid_article_values(), strict=True)
+    response = MediaSourceEvidenceResponse.model_validate(
+        {
+            "source": {
+                "id": source_id,
+                "name": "Example News",
+                "country_code": "CN",
+                "homepage_url": "https://example.com",
+                "media_type": "online",
+                "language": "zh",
+                "status": "active",
+                "last_success_at": datetime.now(UTC),
+            },
+            "article_total": 1,
+            "first_published_at": article.published_at,
+            "latest_published_at": article.published_at,
+            "items": (article,),
+            "page": 1,
+            "page_size": 20,
+            "total": 1,
+            "observed_at": datetime.now(UTC),
+        },
+        strict=True,
+    )
+
+    assert response.items == (article,)
+    assert "content" not in response.model_dump(mode="json")["items"][0]
+
+
+def test_source_evidence_projection_is_source_local_unique_and_newest_first() -> None:
+    source_id = uuid4()
+    representative_topic = representative_topic_subquery()
+    statement = (
+        article_projection(representative_topic)
+        .where(MediaArticleRecord.source_id == source_id)
+        .order_by(MediaArticleRecord.published_at.desc(), MediaArticleRecord.id.desc())
+    )
+    sql = str(
+        statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    assert "media_articles.source_id" in sql
+    assert "media_articles.is_duplicate is false" in sql
+    assert "media_articles.published_at desc" in sql
+    assert "media_articles.id desc" in sql
+
+
 @pytest.mark.parametrize(
     ("query", "expected_detail"),
     (
@@ -172,3 +232,95 @@ def test_media_query_boundary_returns_422_for_invalid_identity_or_pagination(pat
     response = _validation_client().get(path)
 
     assert response.status_code == 422
+
+
+def test_source_evidence_query_boundary_rejects_ambiguous_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_id = uuid4()
+    calls: list[tuple[int, int]] = []
+
+    async def fake_source_evidence(
+        session: object,
+        received_source_id: object,
+        page: int,
+        page_size: int,
+    ) -> MediaSourceEvidenceResponse:
+        assert session is not None and received_source_id == source_id
+        calls.append((page, page_size))
+        return MediaSourceEvidenceResponse.model_validate(
+            {
+                "source": {
+                    "id": source_id,
+                    "name": "Example News",
+                    "country_code": "CN",
+                    "homepage_url": "https://example.com",
+                    "media_type": "online",
+                    "language": "zh",
+                    "status": "active",
+                    "last_success_at": None,
+                },
+                "article_total": 0,
+                "first_published_at": None,
+                "latest_published_at": None,
+                "items": (),
+                "page": page,
+                "page_size": page_size,
+                "total": 0,
+                "observed_at": datetime.now(UTC),
+            },
+            strict=True,
+        )
+
+    monkeypatch.setattr("app.api.media.get_source_evidence", fake_source_evidence)
+    client = _validation_client()
+
+    response = client.get(f"/api/v2/media/sources/{source_id}/evidence?page=2&page_size=7")
+    assert response.status_code == 200
+    assert calls == [(2, 7)]
+    repeated_page = client.get(f"/api/v2/media/sources/{source_id}/evidence?page=1&page=2")
+    unknown_field = client.get(f"/api/v2/media/sources/{source_id}/evidence?topic_id={uuid4()}")
+    assert repeated_page.status_code == 422
+    assert unknown_field.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status"),
+    (
+        (MediaSourceNotFoundError, 404),
+        (MediaSourceEvidencePageOutOfRangeError, 422),
+    ),
+)
+def test_source_evidence_translates_repository_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[LookupError] | type[ValueError],
+    expected_status: int,
+) -> None:
+    source_id = uuid4()
+
+    async def failing_source_evidence(
+        session: object,
+        received_source_id: object,
+        page: int,
+        page_size: int,
+    ) -> MediaSourceEvidenceResponse:
+        assert (
+            session is not None
+            and received_source_id == source_id
+            and page == 1
+            and page_size == 20
+        )
+        raise error_type("source evidence error")
+
+    monkeypatch.setattr("app.api.media.get_source_evidence", failing_source_evidence)
+    response = _validation_client().get(f"/api/v2/media/sources/{source_id}/evidence")
+
+    assert response.status_code == expected_status
+
+
+def test_source_evidence_read_starts_repeatable_read_snapshot_before_repository_query() -> None:
+    source = inspect.getsource(require_media_source_evidence_session)
+
+    assert source.index("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY") < source.index(
+        "yield session"
+    )

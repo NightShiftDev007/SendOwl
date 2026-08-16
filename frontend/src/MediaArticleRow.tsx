@@ -6,6 +6,7 @@ import {
 
 export interface MediaArticleRowProps {
   readonly article: MediaArticle;
+  readonly onSendToWorld?: (article: MediaArticle) => void;
 }
 
 export function MediaArticleSummaryContent({ article }: MediaArticleRowProps): JSX.Element {
@@ -39,10 +40,19 @@ export function MediaArticleSummaryContent({ article }: MediaArticleRowProps): J
   );
 }
 
-export function MediaArticleRow({ article }: MediaArticleRowProps): JSX.Element {
+export function MediaArticleRow({ article, onSendToWorld }: MediaArticleRowProps): JSX.Element {
   return (
     <article className="media-article-row">
       <MediaArticleSummaryContent article={article} />
+      {onSendToWorld === undefined ? null : (
+        <button
+          className="article-world-handoff"
+          type="button"
+          onClick={() => onSendToWorld(article)}
+        >
+          带入 World 版本室
+        </button>
+      )}
     </article>
   );
 }

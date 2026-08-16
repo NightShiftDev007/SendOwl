@@ -506,6 +506,50 @@
   color: var(--decision-muted);
 }
 
+.decision-world-surface .world-version-history,
+.decision-world-surface .world-snapshot-appender,
+.decision-world-surface .world-frozen-evidence,
+.decision-world-surface .world-snapshot-ledger,
+.decision-world-surface .world-snapshot-ledger > div,
+.decision-world-surface .world-snapshot-hash {
+  border-color: var(--decision-line);
+}
+
+.decision-world-surface .world-snapshot-ledger,
+.decision-world-surface .world-version-history li {
+  color: var(--decision-ink);
+  background: transparent;
+}
+
+.decision-world-surface .world-version-history li[data-current="true"] {
+  background: rgba(91, 213, 212, 0.055);
+  border-color: rgba(91, 213, 212, 0.38);
+}
+
+.decision-world-surface .world-version-history li > button:hover {
+  background: rgba(91, 213, 212, 0.035);
+}
+
+.decision-world-surface .world-snapshot-appender-heading h4,
+.decision-world-surface .world-snapshot-append-confirmation strong {
+  color: var(--decision-ink);
+}
+
+.decision-world-surface .world-snapshot-appender-heading span,
+.decision-world-surface .world-snapshot-appender-heading p,
+.decision-world-surface .world-snapshot-appender-heading > strong,
+.decision-world-surface .world-snapshot-append-empty,
+.decision-world-surface .world-snapshot-append-confirmation small,
+.decision-world-surface .world-snapshot-append-message small {
+  color: var(--decision-muted);
+}
+
+.decision-world-surface .world-snapshot-append-empty,
+.decision-world-surface .world-snapshot-append-confirmation {
+  background: transparent;
+  border-color: var(--decision-line);
+}
+
 /* Decision experiment cockpit */
 .decision-scenario-surface .scenario-builder,
 .decision-scenario-surface .scenario-registry {
@@ -992,5 +1036,39 @@
 
   .decision-scenario-surface .scenario-hash-ledger > div {
     grid-template-columns: 1fr;
+  }
+}
+.world-evidence-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 18px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(126, 215, 192, 0.25);
+  background: rgba(7, 30, 25, 0.82);
+  color: #cbe8df;
+}
+
+.world-evidence-handoff div {
+  display: grid;
+  gap: 4px;
+}
+
+.world-evidence-handoff span,
+.world-evidence-handoff p {
+  margin: 0;
+  color: #86aa9f;
+  font-size: 0.72rem;
+}
+
+.world-evidence-handoff > p[role="alert"] {
+  color: #ffb1a8;
+}
+
+@media (max-width: 700px) {
+  .world-evidence-handoff {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

@@ -9,20 +9,26 @@ import {
   type DecisionReportMetric,
 } from "./decisionReportContracts";
 import { formatMediaTimestamp } from "./mediaPresentation";
+import { PersonaInterviewPanel } from "./PersonaInterviewPanel";
 import { createRunStudioHash } from "./runStudioRoute";
 import {
   createReportQuestion,
+  fetchReportQuestionContext,
   type ReportQuestion,
+  type ReportQuestionContext,
 } from "./reportQuestionContracts";
 import type {
   SemanticExperimentComparison,
   SemanticExperimentDetail,
   SemanticExperimentSummary,
 } from "./semanticExperimentContracts";
+import { fetchSemanticReadiness } from "./semanticExperimentContracts";
 import {
   useSemanticComparison,
   useSemanticExperimentDetail,
   useSemanticExperiments,
+  useSemanticReadiness,
+  type SemanticReadinessLoadState,
 } from "./useSemanticExperiments";
 import { useDecisionReports } from "./useDecisionReports";
 import { useReportQuestions } from "./useReportQuestions";
@@ -34,6 +40,19 @@ const metricLabels = {
   reaction_count: "反应",
   do_nothing_count: "未采取动作",
 } as const;
+
+const narrativePrompts = [
+  {
+    id: "evidence-thread",
+    label: "证据脉络",
+    question: "请用不超过400个中文字符，把这份报告整理为“已观察到的证据脉络”和“尚不能证明的事项”两部分。每个事实都必须由本轮候选原文引用支持，不预测、不补全因果、不推荐胜者。",
+  },
+  {
+    id: "comparison-boundary",
+    label: "对照与边界",
+    question: "请用不超过400个中文字符，解释报告中基线与备选方案的可复算观测差异，以及这些观测不能推出的现实结论。每个事实都必须引用本轮冻结证据，不推断立场、因果或最佳方案。",
+  },
+] as const;
 
 function abbreviatedDigest(digest: string): string {
   return `${digest.slice(0, 10)}…${digest.slice(-8)}`;
@@ -221,9 +240,11 @@ function ComparisonBoard({
 function ReportProvenance({
   experiment,
   report,
+  readinessState,
 }: {
   readonly experiment: SemanticExperimentDetail;
   readonly report: DecisionReport | null;
+  readonly readinessState: SemanticReadinessLoadState;
 }): JSX.Element {
   const trials = experiment.variants.flatMap((variant) => variant.trials);
   const succeeded = trials.filter((trial) => trial.status === "succeeded").length;
@@ -264,12 +285,24 @@ function ReportProvenance({
       >
         返回 Playground 核验 Trial →
       </a>
-      {report !== null ? <ReportQuestionPanel report={report} /> : null}
+      {report !== null ? <ReportQuestionPanel report={report} readinessState={readinessState} /> : null}
+      {report !== null ? (
+        <PersonaInterviewPanel
+          report={report}
+          runtimeReady={readinessState.data?.semantic_runtime_ready === true}
+        />
+      ) : null}
     </aside>
   );
 }
 
-function ReportQuestionResult({ item }: { readonly item: ReportQuestion }): JSX.Element {
+function ReportQuestionResult({
+  item,
+  onFollowUp,
+}: {
+  readonly item: ReportQuestion;
+  readonly onFollowUp: (item: ReportQuestion) => void;
+}): JSX.Element {
   return (
     <article className="report-question-result" data-status={item.status}>
       <header>
@@ -277,6 +310,7 @@ function ReportQuestionResult({ item }: { readonly item: ReportQuestion }): JSX.
         <time dateTime={item.created_at}>{formatMediaTimestamp(item.created_at)}</time>
       </header>
       <h4>{item.question}</h4>
+      {item.conversation_depth > 0 ? <small>线程第 {item.conversation_depth + 1} 轮</small> : null}
       {item.status === "queued" || item.status === "running" ? (
         <p role="status">模型正在报告与证据图的有界范围内核验回答…</p>
       ) : null}
@@ -306,21 +340,67 @@ function ReportQuestionResult({ item }: { readonly item: ReportQuestion }): JSX.
               <div><dt>Model</dt><dd>{item.model_name}</dd></div>
             </dl>
           </details>
+          {item.conversation_depth < 4 ? (
+            <button className="button button-secondary" type="button" onClick={() => onFollowUp(item)}>
+              继续追问
+            </button>
+          ) : null}
         </>
       ) : null}
     </article>
   );
 }
 
-function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): JSX.Element {
+function ReportQuestionPanel({
+  report,
+  readinessState,
+}: {
+  readonly report: DecisionReport;
+  readonly readinessState: SemanticReadinessLoadState;
+}): JSX.Element {
   const [question, setQuestion] = useState<string>("");
   const [submissionError, setSubmissionError] = useState<Error | null>(null);
   const activeController = useRef<AbortController | null>(null);
+  const contextController = useRef<AbortController | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [parent, setParent] = useState<ReportQuestion | null>(null);
+  const [context, setContext] = useState<ReportQuestionContext | null>(null);
+  const [contextError, setContextError] = useState<Error | null>(null);
   const { state, reload } = useReportQuestions(report.id);
   const normalizedQuestion = question.trim();
+  const runtimeReady = readinessState.data?.semantic_runtime_ready === true;
 
-  useEffect(() => () => activeController.current?.abort(), []);
+  useEffect(() => {
+    setParent(null);
+    setContext(null);
+    setContextError(null);
+  }, [report.id]);
+
+  useEffect(() => () => {
+    activeController.current?.abort();
+    contextController.current?.abort();
+  }, []);
+
+  const selectParent = (item: ReportQuestion): void => {
+    contextController.current?.abort();
+    const controller = new AbortController();
+    contextController.current = controller;
+    setParent(item);
+    setContext(null);
+    setContextError(null);
+    void fetchReportQuestionContext(item.id, controller.signal)
+      .then(setContext)
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setContextError(error instanceof Error ? error : new Error("读取追问线程失败。"));
+        }
+      })
+      .finally(() => {
+        if (contextController.current === controller) {
+          contextController.current = null;
+        }
+      });
+  };
 
   const submitQuestion = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -335,9 +415,22 @@ function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): J
     activeController.current = controller;
     setIsSubmitting(true);
     setSubmissionError(null);
-    void createReportQuestion(report.id, normalizedQuestion, controller.signal)
+    void fetchSemanticReadiness(controller.signal)
+      .then((readiness) => {
+        if (!readiness.semantic_runtime_ready) {
+          throw new Error("语义 Worker 尚未通过模型启动探测；报告追问 POST 尚未发送。");
+        }
+        return createReportQuestion(
+          report.id,
+          normalizedQuestion,
+          parent?.id ?? null,
+          controller.signal,
+        );
+      })
       .then(() => {
         setQuestion("");
+        setParent(null);
+        setContext(null);
         reload();
       })
       .catch((error: unknown) => {
@@ -366,8 +459,49 @@ function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): J
         <span>EVIDENCE Q&amp;A / QWEN</span>
         <h3 id="report-question-title">追问这份报告</h3>
         <p>回答只能使用同一现实快照的语义图与精确原文引用；证据不足时必须明确说不知道。</p>
+        <strong data-ready={runtimeReady}>
+          {runtimeReady ? "Qwen Worker 可提交" : "Qwen Worker 配置阻塞"}
+        </strong>
       </header>
       <form onSubmit={submitQuestion}>
+        <fieldset className="report-narrative-presets" disabled={isSubmitting || !runtimeReady}>
+          <legend>MIROFISH NARRATIVE PATTERN / EVIDENCE-BOUND</legend>
+          <p>选择一个固定叙事镜头，再由你确认提交。这里只复用报告追问队列，不启动自主 ReAct、Zep 检索或未来预测。</p>
+          <div>
+            {narrativePrompts.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                aria-pressed={normalizedQuestion === preset.question}
+                onClick={() => {
+                  setParent(null);
+                  setContext(null);
+                  setContextError(null);
+                  setQuestion(preset.question);
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        {parent !== null ? (
+          <div className="report-question-parent" role="status">
+            <div>
+              <span>FOLLOW-UP / TURN {parent.conversation_depth + 2}</span>
+              <strong>{parent.question}</strong>
+            </div>
+            <button type="button" onClick={() => { setParent(null); setContext(null); setContextError(null); }}>
+              取消线程
+            </button>
+          </div>
+        ) : null}
+        {context !== null ? (
+          <ol className="report-question-context" aria-label="当前追问线程">
+            {context.items.map((item) => <li key={item.id}>{item.question}</li>)}
+          </ol>
+        ) : null}
+        {contextError !== null ? <div className="report-question-failure" role="alert">{contextError.message}</div> : null}
         <label htmlFor="report-question-input">问题</label>
         <textarea
           id="report-question-input"
@@ -376,7 +510,7 @@ function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): J
           minLength={2}
           maxLength={1000}
           value={question}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !runtimeReady}
           onChange={(event) => setQuestion(event.target.value)}
           placeholder="例如：哪些原始证据支持这项观察？报告没有证明什么？"
         />
@@ -385,7 +519,7 @@ function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): J
           <button
             type="submit"
             className="button button-primary"
-            disabled={normalizedQuestion.length < 2 || isSubmitting}
+            disabled={normalizedQuestion.length < 2 || isSubmitting || !runtimeReady}
           >
             {isSubmitting ? "正在入队…" : "基于证据回答"}
           </button>
@@ -406,7 +540,7 @@ function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): J
         {(state.data?.items ?? []).length === 0 ? (
           <p className="report-question-empty">还没有追问。这里不会自动生成没有证据的问题。</p>
         ) : (state.data?.items ?? []).map((item) => (
-          <ReportQuestionResult key={item.id} item={item} />
+          <ReportQuestionResult key={item.id} item={item} onFollowUp={selectParent} />
         ))}
       </div>
     </section>
@@ -423,6 +557,7 @@ export function DecisionReportsPage({
     setSelectedExperimentId(initialExperimentId);
   }, [initialExperimentId]);
   const { state: experimentsState, reload: reloadExperiments } = useSemanticExperiments();
+  const { state: readinessState } = useSemanticReadiness();
   const { state: reportsState, reload: reloadReports } = useDecisionReports();
   const reportsByExperiment = useMemo(
     () => new Map((reportsState.data?.items ?? []).map((report) => [report.experiment_id, report])),
@@ -488,9 +623,9 @@ export function DecisionReportsPage({
           <h2>把实验差异写回证据链，而不是生成一个“最佳方案”</h2>
           <p>这里只汇总已观察的 OASIS 计数、按相同 seed 配对的差异、运行来源与限制。它不是现实预测，也不提供伪精确的胜负结论。</p>
         </div>
-        <div className="decision-reports-boundary" role="note">
+      <div className="decision-reports-boundary" role="note">
           <strong>当前报告能力</strong>
-          <p>章节式 Findings、内容寻址、持久封存、Markdown 导出和带原文引用的报告追问已接通。</p>
+          <p>章节式 Findings、内容寻址、持久封存、Markdown 导出、连续追问和 MiroFish 风格的证据叙事镜头已接通。</p>
         </div>
       </header>
 
@@ -527,7 +662,13 @@ export function DecisionReportsPage({
           ) : null}
         </main>
 
-        {detail !== null ? <ReportProvenance experiment={detail} report={persistedReport} /> : <aside className="decision-report-provenance decision-report-provenance-empty"><strong>等待报告选择</strong><p>选中后显示场景、Cohort、模型、配置和 Experiment 哈希。</p></aside>}
+        {detail !== null ? (
+          <ReportProvenance
+            experiment={detail}
+            report={persistedReport}
+            readinessState={readinessState}
+          />
+        ) : <aside className="decision-report-provenance decision-report-provenance-empty"><strong>等待报告选择</strong><p>选中后显示场景、Cohort、模型、配置和 Experiment 哈希。</p></aside>}
       </div>
     </div>
   );

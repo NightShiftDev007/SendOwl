@@ -1,4 +1,4 @@
-name: ai-decision-center-core
+name: sendowl
 
 services:
   postgres:
@@ -18,6 +18,53 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  postgres-test:
+    profiles:
+      - test
+    image: postgres:16.8-alpine3.21
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${TEST_POSTGRES_DB:-sendowl_test}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:-sendowl_test}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-local-test-postgres-password-change-me}
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - PGPASSWORD="$$POSTGRES_PASSWORD" psql --host=127.0.0.1 --username="$$POSTGRES_USER" --dbname="$$POSTGRES_DB" --no-password --tuples-only --command='SELECT 1' | grep -q 1
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+
+  backend-postgres-test:
+    profiles:
+      - test
+    image: sendowl-backend-test:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: test
+    restart: "no"
+    environment:
+      APP_ENV: test
+      DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sendowl_test:local-test-postgres-password-change-me@postgres-test:5432/sendowl_test}
+      TEST_POSTGRES_DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sendowl_test:local-test-postgres-password-change-me@postgres-test:5432/sendowl_test}
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - tests/run_postgresql.sh
+    read_only: true
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
 
@@ -46,10 +93,11 @@ services:
       - no-new-privileges:true
 
   migrate:
-    image: ai-decision-center-core-backend:2.0.0-dev
+    image: sendowl-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: production
     restart: "no"
     environment:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
@@ -68,10 +116,11 @@ services:
       - no-new-privileges:true
 
   backend:
-    image: ai-decision-center-core-backend:2.0.0-dev
+    image: sendowl-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: production
     restart: unless-stopped
     init: true
     environment:
@@ -85,6 +134,9 @@ services:
         condition: service_healthy
     ports:
       - ${HOST_BIND:?HOST_BIND is required}:${BACKEND_PORT:?BACKEND_PORT is required}:8000
+    volumes:
+      - web_artifacts:/web-artifacts:ro
+      - linux_artifacts:/linux-artifacts:ro
     healthcheck:
       test:
         - CMD
@@ -101,8 +153,115 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  acme-support-sample:
+    image: sendowl-acme-support-sample:1.0.0
+    build:
+      context: ./backend/acme_support_sample
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  acme-support-mcp-sample:
+    image: sendowl-acme-support-mcp-sample:1.0.0
+    build:
+      context: ./backend/acme_support_mcp_sample
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 8s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  matraix-web-browser:
+    image: sendowl-matraix-web-browser:1.0.0
+    build:
+      context: ./backend/web_browser_executor
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8000"
+    volumes:
+      - web_artifacts:/web-artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    shm_size: 1gb
+    security_opt:
+      - no-new-privileges:true
+
+  matraix-linux-runner:
+    image: sendowl-matraix-linux-runner:1.0.0
+    build:
+      context: ./backend/linux_artifact_runner
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8000"
+    volumes:
+      - linux_artifacts:/linux-artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - linux_runner
+    security_opt:
+      - no-new-privileges:true
+
   oasis-worker:
-    image: ai-decision-center-core-oasis-worker:2.0.0-dev
+    image: sendowl-oasis-worker:2.0.0-dev
     build:
       context: ./backend
       dockerfile: OasisWorker.Dockerfile
@@ -111,11 +270,23 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OASIS_ARTIFACT_ROOT: /artifacts
-      OASIS_WORKER_ID: compose-oasis-worker
+      OASIS_WORKER_ID: sendowl-compose-oasis-worker
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
+      CHATBOT_SUT_BASE_URL: http://acme-support-sample:8000
+      CHATBOT_MCP_SUT_URL: http://acme-support-mcp-sample:8000/mcp
+      MATRAIX_WEB_BROWSER_URL: http://matraix-web-browser:8000
+      MATRAIX_LINUX_RUNNER_URL: http://matraix-linux-runner:8000
     depends_on:
+      acme-support-sample:
+        condition: service_healthy
+      acme-support-mcp-sample:
+        condition: service_healthy
+      matraix-web-browser:
+        condition: service_healthy
+      matraix-linux-runner:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     command:
@@ -123,6 +294,41 @@ services:
     working_dir: /tmp
     volumes:
       - oasis_artifacts:/artifacts
+    networks:
+      - default
+      - linux_runner
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  media-sync-worker:
+    profiles:
+      - media-sync
+    image: sendowl-backend:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: "no"
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      AGENDASCOPE_DATABASE_URL: ${AGENDASCOPE_DATABASE_URL:-}
+      AGENDASCOPE_EXPECTED_DATABASE_NAME: ${AGENDASCOPE_EXPECTED_DATABASE_NAME:-}
+      AGENDASCOPE_EXPECTED_SCHEMA_REVISION: ${AGENDASCOPE_EXPECTED_SCHEMA_REVISION:-}
+      MEDIA_SYNC_INTERVAL_SECONDS: ${MEDIA_SYNC_INTERVAL_SECONDS:-}
+      MEDIA_SYNC_WORKER_ID: ${MEDIA_SYNC_WORKER_ID:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - python
+      - -m
+      - app.media.sync_worker
+    healthcheck:
+      disable: true
     read_only: true
     tmpfs:
       - /tmp
@@ -130,7 +336,7 @@ services:
       - no-new-privileges:true
 
   frontend:
-    image: ai-decision-center-core-frontend:2.0.0-dev
+    image: sendowl-frontend:2.0.0-dev
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -163,8 +369,16 @@ services:
 
 volumes:
   postgres_data:
-    name: ai-decision-center-core-postgres-data
+    name: sendowl-postgres-data
   redis_data:
-    name: ai-decision-center-core-redis-data
+    name: sendowl-redis-data
   oasis_artifacts:
-    name: ai-decision-center-core-oasis-artifacts
+    name: sendowl-oasis-artifacts
+  web_artifacts:
+    name: sendowl-web-artifacts
+  linux_artifacts:
+    name: sendowl-linux-artifacts
+
+networks:
+  linux_runner:
+    internal: true

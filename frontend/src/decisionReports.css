@@ -485,6 +485,9 @@
   margin: 0;
 }
 
+.report-question-panel > header strong[data-ready="true"] { color: #7be0bd; }
+.report-question-panel > header strong[data-ready="false"] { color: #ffb1a8; }
+
 .report-question-panel > header p,
 .report-question-empty,
 .report-question-result > p {
@@ -497,6 +500,70 @@
   display: grid;
   gap: 8px;
 }
+
+.report-narrative-presets {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  margin: 0 0 6px;
+  border: 1px solid rgba(97, 199, 211, 0.24);
+  background: rgba(16, 48, 58, 0.26);
+}
+
+.report-narrative-presets legend {
+  padding: 0 5px;
+  color: var(--report-cyan);
+  font: 600 0.59rem/1.4 "JetBrains Mono", monospace;
+  letter-spacing: 0.07em;
+}
+
+.report-narrative-presets p {
+  margin: 0;
+  color: var(--report-muted);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.report-narrative-presets > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.report-narrative-presets button {
+  min-height: 38px;
+  padding: 7px 9px;
+  color: var(--report-ink);
+  border: 1px solid var(--report-line);
+  background: rgba(5, 13, 19, 0.72);
+}
+
+.report-narrative-presets button[aria-pressed="true"] {
+  color: var(--report-cyan);
+  border-color: var(--report-line-strong);
+  box-shadow: inset 2px 0 var(--report-cyan);
+}
+
+.report-narrative-presets:disabled {
+  opacity: 0.58;
+}
+
+.report-question-parent {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  background: rgba(31, 199, 219, 0.08);
+  border: 1px solid rgba(87, 189, 203, 0.28);
+}
+
+.report-question-parent div { display: grid; gap: 5px; min-width: 0; }
+.report-question-parent span { color: var(--report-cyan); font: 600 0.6rem/1.4 "JetBrains Mono", monospace; }
+.report-question-parent strong { color: var(--report-ink); font-size: 0.76rem; overflow-wrap: anywhere; }
+.report-question-parent button { flex: 0 0 auto; color: var(--report-muted); background: transparent; border: 0; cursor: pointer; font-size: 0.68rem; }
+.report-question-context { display: grid; gap: 5px; margin: 0; padding: 0 0 0 20px; color: var(--report-muted); font-size: 0.68rem; line-height: 1.5; }
 
 .report-question-panel label {
   color: var(--report-muted);
@@ -667,6 +734,10 @@
     order: 2;
     border-top: 1px solid var(--report-line);
     border-right: 0;
+  }
+
+  .report-narrative-presets > div {
+    grid-template-columns: 1fr;
   }
 
   .decision-report-provenance {

@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -182,4 +183,61 @@ class SemanticWorldGraphEvidenceRecord(ApplicationBase):
             name="ck_semantic_graph_evidence_offsets",
         ),
         Index("ix_semantic_graph_evidence_article", "article_id"),
+    )
+
+
+class SemanticWorldGraphCohortOriginRecord(ApplicationBase):
+    """Immutable lineage from one graph-node match to a sealed cohort."""
+
+    __tablename__ = "semantic_world_graph_cohort_origins"
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    graph_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    graph_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    node_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    dataset_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    dataset_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    cohort_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    cohort_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    match_semantics: Mapped[str] = mapped_column(String(80), nullable=False)
+    matcher_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    selected_persona_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PostgreSQLUUID(as_uuid=True)),
+        nullable=False,
+    )
+    origin_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(("graph_id",), ("semantic_world_graphs.id",)),
+        ForeignKeyConstraint(
+            ("graph_id", "node_id"),
+            ("semantic_world_graph_nodes.graph_id", "semantic_world_graph_nodes.id"),
+        ),
+        ForeignKeyConstraint(("dataset_id",), ("persona_datasets.id",)),
+        ForeignKeyConstraint(
+            ("cohort_id", "dataset_id"),
+            ("cohorts.id", "cohorts.dataset_id"),
+        ),
+        CheckConstraint(
+            "graph_sha256 ~ '^[a-f0-9]{64}$' AND "
+            "dataset_sha256 ~ '^[a-f0-9]{64}$' AND "
+            "cohort_sha256 ~ '^[a-f0-9]{64}$' AND "
+            "origin_sha256 ~ '^[a-f0-9]{64}$'",
+            name="ck_semantic_graph_cohort_origin_hashes",
+        ),
+        CheckConstraint(
+            "match_semantics='exact_token_overlap_non_low_information_attributes'",
+            name="ck_semantic_graph_cohort_origin_semantics",
+        ),
+        CheckConstraint(
+            "matcher_version='1.0.0'",
+            name="ck_semantic_graph_cohort_origin_matcher",
+        ),
+        CheckConstraint(
+            "cardinality(selected_persona_ids) BETWEEN 1 AND 8",
+            name="ck_semantic_graph_cohort_origin_personas",
+        ),
+        UniqueConstraint("origin_sha256", name="uq_semantic_graph_cohort_origin_sha"),
+        Index("ix_semantic_graph_cohort_origin_cohort", "cohort_id", "created_at"),
     )

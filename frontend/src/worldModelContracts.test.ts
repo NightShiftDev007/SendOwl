@@ -1,17 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mediaArticleSchema } from "./mediaContracts";
 import {
+  appendWorldSnapshot,
+  buildWorldSnapshotCreateRequest,
   buildWorldModelCreateRequest,
+  createGraphPersonaCohort,
   createWorldModelDetailEndpoint,
+  createWorldSnapshotEndpoint,
   evidenceWorldGraphSchema,
+  graphPersonaCohortCreateRequestSchema,
+  graphPersonaCohortCreationSchema,
+  graphPersonaCohortOriginsResponseSchema,
+  semanticWorldGraphEdgeHistorySchema,
+  fetchWorldSnapshot,
+  fetchGraphPersonaCohortOrigins,
   semanticWorldGraphEvidenceTimelineSchema,
+  semanticWorldGraphPersonaMatchesSchema,
+  semanticWorldGraphSearchResponseSchema,
   semanticWorldGraphSliceSchema,
   semanticWorldGraphSchema,
   worldModelCreateRequestSchema,
   worldModelDetailSchema,
   worldModelSummarySchema,
+  worldSnapshotCreateRequestSchema,
 } from "./worldModelContracts";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const worldModelId = "16f59066-b4e9-4d71-8c51-7742f85943f2";
 const snapshotId = "33f6aee5-2912-4429-85ab-601dbfe41c19";
@@ -19,6 +36,11 @@ const articleId = "4fe5517f-6dd4-4376-8337-d94f50acc074";
 const snapshotDigest = "a".repeat(64);
 const contentDigest = "b".repeat(64);
 const evidenceRevisionDigest = "c".repeat(64);
+const graphId = "c9403eb9-ec21-5d70-bccf-f417bf8f285d";
+const nodeId = "0f61c240-fcd8-574d-946d-a9f20a6fe083";
+const datasetId = "16f59066-b4e9-4d71-8c51-7742f85943f2";
+const personaId = "02e09ee8-88e8-4831-9427-f891255219ef";
+const cohortId = "6f22ff11-76ae-4a32-bc4b-7acd80efe19a";
 
 const currentArticle = mediaArticleSchema.parse({
   id: articleId,
@@ -93,6 +115,13 @@ describe("world model contracts", () => {
       }],
       verification: "human_confirmed",
     });
+    expect(buildWorldSnapshotCreateRequest([currentArticle])).toEqual({
+      evidence: [{
+        article_id: articleId,
+        evidence_revision_sha256: evidenceRevisionDigest,
+      }],
+      verification: "human_confirmed",
+    });
   });
 
   it("rejects duplicate evidence identities and removed company fields", () => {
@@ -105,6 +134,19 @@ describe("world model contracts", () => {
       worldModelCreateRequestSchema.safeParse({
         title: "季度经营媒体现实基线",
         evidence: [selection, selection],
+        verification: "human_confirmed",
+      }).success,
+    ).toBe(false);
+    expect(
+      worldSnapshotCreateRequestSchema.safeParse({
+        evidence: [selection, selection],
+        verification: "human_confirmed",
+      }).success,
+    ).toBe(false);
+    expect(
+      worldSnapshotCreateRequestSchema.safeParse({
+        title: "追加版本不允许改名",
+        evidence: [selection],
         verification: "human_confirmed",
       }).success,
     ).toBe(false);
@@ -147,6 +189,137 @@ describe("world model contracts", () => {
     ).toBe(false);
   });
 
+  it("validates and posts one graph-guided Cohort with immutable lineage", async () => {
+    const request = {
+      title: "港口政策观察候选组",
+      dataset_id: datasetId,
+      persona_ids: [personaId],
+    };
+    const cohort = {
+      id: cohortId,
+      title: request.title,
+      dataset: {
+        id: datasetId,
+        slug: "matraix-zh-v1",
+        dataset_sha256: "d".repeat(64),
+      },
+      persona_count: 1,
+      cohort_sha256: "e".repeat(64),
+      created_at: "2026-08-12T09:00:00Z",
+      members: [{
+        position: 0,
+        persona: {
+          id: personaId,
+          dataset_id: datasetId,
+          persona_id: "persona.cn.0001",
+          display_name: "陈晓雯",
+          source: "matraix.public",
+          profile_sha256: "f".repeat(64),
+          attributes: [{ name: "region", value: "华东" }],
+        },
+      }],
+    };
+    const response = {
+      origin: {
+        id: "c82e1f42-b4a3-4564-a255-e4752fd46216",
+        graph_id: graphId,
+        graph_sha256: "1".repeat(64),
+        node_id: nodeId,
+        dataset: cohort.dataset,
+        cohort_id: cohortId,
+        cohort_sha256: cohort.cohort_sha256,
+        match_semantics: "exact_token_overlap_non_low_information_attributes",
+        matcher_version: "1.0.0",
+        selected_persona_ids: [personaId],
+        origin_sha256: "2".repeat(64),
+        created_at: "2026-08-12T09:00:00Z",
+      },
+      cohort,
+    };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(graphPersonaCohortCreateRequestSchema.safeParse(request).success).toBe(true);
+    expect(graphPersonaCohortCreationSchema.safeParse(response).success).toBe(true);
+    await expect(
+      createGraphPersonaCohort(graphId, nodeId, request, new AbortController().signal),
+    ).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `/api/v2/world-graphs/${graphId}/nodes/${nodeId}/cohorts`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    expect(
+      graphPersonaCohortCreationSchema.safeParse({
+        ...response,
+        origin: { ...response.origin, selected_persona_ids: [] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects graph-guided Cohort selections larger than the verified candidate bound", () => {
+    expect(
+      graphPersonaCohortCreateRequestSchema.safeParse({
+        title: "过大候选组",
+        dataset_id: datasetId,
+        persona_ids: Array.from(
+          { length: 9 },
+          (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        ),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("reads a bounded graph-origin page and rejects cross-Cohort lineage", async () => {
+    const origin = {
+      id: "c82e1f42-b4a3-4564-a255-e4752fd46216",
+      graph_id: graphId,
+      graph_sha256: "1".repeat(64),
+      node_id: nodeId,
+      dataset: {
+        id: datasetId,
+        slug: "matraix-zh-v1",
+        dataset_sha256: "d".repeat(64),
+      },
+      cohort_id: cohortId,
+      cohort_sha256: "e".repeat(64),
+      match_semantics: "exact_token_overlap_non_low_information_attributes",
+      matcher_version: "1.0.0",
+      selected_persona_ids: [personaId],
+      origin_sha256: "2".repeat(64),
+      created_at: "2026-08-12T09:00:00Z",
+    };
+    const response = { items: [origin], page: 1, page_size: 5, total: 1 };
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    expect(graphPersonaCohortOriginsResponseSchema.safeParse(response).success).toBe(true);
+    await expect(
+      fetchGraphPersonaCohortOrigins(cohortId, 1, 5, new AbortController().signal),
+    ).resolves.toEqual(response);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `/api/v2/populations/cohorts/${cohortId}/graph-origins?page=1&page_size=5`,
+    );
+    expect(
+      graphPersonaCohortOriginsResponseSchema.safeParse({
+        ...response,
+        items: [{ ...origin, cohort_id: worldModelId }, origin],
+        total: 2,
+      }).success,
+    ).toBe(false);
+  });
+
   it("requires the latest detail to match history and be the highest version", () => {
     expect(
       worldModelDetailSchema.safeParse({
@@ -169,6 +342,50 @@ describe("world model contracts", () => {
     expect(createWorldModelDetailEndpoint("world/中国")).toBe(
       "/api/v2/world-models/world%2F%E4%B8%AD%E5%9B%BD",
     );
+    expect(createWorldSnapshotEndpoint("world/中国", "snapshot/第二版")).toBe(
+      "/api/v2/world-models/world%2F%E4%B8%AD%E5%9B%BD/snapshots/snapshot%2F%E7%AC%AC%E4%BA%8C%E7%89%88",
+    );
+    expect(createWorldSnapshotEndpoint("world/中国", null)).toBe(
+      "/api/v2/world-models/world%2F%E4%B8%AD%E5%9B%BD/snapshots",
+    );
+  });
+
+  it("appends one exact revision selection with a single non-retried POST", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(validWorldModelDetail.latest_snapshot), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const request = buildWorldSnapshotCreateRequest([currentArticle]);
+
+    await expect(
+      appendWorldSnapshot(worldModelId, request, new AbortController().signal),
+    ).resolves.toEqual(validWorldModelDetail.latest_snapshot);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `/api/v2/world-models/${worldModelId}/snapshots`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  });
+
+  it("rejects a historical snapshot payload from another requested identity", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ...validWorldModelDetail.latest_snapshot,
+        id: "a27d8829-3cfb-4128-8791-cf4525e66741",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      fetchWorldSnapshot(worldModelId, snapshotId, new AbortController().signal),
+    ).rejects.toThrow("snapshot must match the requested snapshot identifier");
   });
 
   it("accepts only a connected self-hosted evidence graph", () => {
@@ -292,6 +509,122 @@ describe("world model contracts", () => {
     expect(semanticWorldGraphEvidenceTimelineSchema.safeParse({
       ...timeline,
       temporal_semantics: "fact_validity",
+    }).success).toBe(false);
+
+    const edgeId = "45adf86e-bbc4-478b-8d5d-b927e5f0a4bd";
+    const edgeHistory = {
+      graph_id: succeeded.id,
+      graph_sha256: succeeded.graph_sha256,
+      edge_id: edgeId,
+      observation_semantics: "cross_snapshot_exact_signature_not_fact_validity",
+      signature: {
+        source_entity_type: "organization",
+        source_name: "Example Council",
+        relation_type: "announced",
+        target_entity_type: "policy",
+        target_name: "Green Policy",
+        fact: "Example Council announced Green Policy.",
+      },
+      inspected_graph_count: 1,
+      total_succeeded_graph_count: 1,
+      truncated: false,
+      items: [{
+        position: 0,
+        graph_id: succeeded.id,
+        graph_sha256: succeeded.graph_sha256,
+        graph_created_at: succeeded.created_at,
+        graph_completed_at: succeeded.completed_at,
+        snapshot_id: succeeded.snapshot_id,
+        snapshot_sha256: succeeded.snapshot_sha256,
+        snapshot_version: 1,
+        edge_id: edgeId,
+        evidence_article_ids: [articleId],
+        evidence_published_from: "2026-08-12T04:30:00Z",
+        evidence_published_through: "2026-08-12T04:30:00Z",
+      }],
+      limitations: [
+        "Exact signatures only.",
+        "Publication is not validity.",
+        "Missing is not invalidation.",
+      ],
+    };
+    expect(semanticWorldGraphEdgeHistorySchema.safeParse(edgeHistory).success).toBe(true);
+    expect(semanticWorldGraphEdgeHistorySchema.safeParse({
+      ...edgeHistory,
+      observation_semantics: "fact_validity",
+    }).success).toBe(false);
+
+    const datasetId = "c9ee349c-20d3-40b4-b23f-a82c661dd2cd";
+    const personaId = "586e5f5e-9500-4f17-b350-c89feab54d55";
+    const personaMatches = {
+      graph_id: succeeded.id,
+      graph_sha256: succeeded.graph_sha256,
+      node_id: nodeId,
+      dataset: {
+        id: datasetId,
+        slug: "matraix-persona-dev-sample",
+        dataset_sha256: "2".repeat(64),
+      },
+      match_semantics: "exact_token_overlap_non_low_information_attributes",
+      query_terms: ["绿色政策"],
+      inspected_persona_count: 1,
+      dataset_persona_count: 1,
+      scan_truncated: false,
+      total_match_count_in_scan: 1,
+      matches: [{
+        position: 0,
+        score: 1,
+        matched_terms: ["绿色政策"],
+        matched_attributes: [{ name: "policy_interest", value: "绿色政策" }],
+        persona: {
+          id: personaId,
+          dataset_id: datasetId,
+          persona_id: "persona-policy-1",
+          display_name: "政策关注 Persona",
+          source: "matraix",
+          profile_sha256: "3".repeat(64),
+          attributes: [{ name: "policy_interest", value: "绿色政策" }],
+        },
+      }],
+      limitations: [
+        "Exact tokens only.",
+        "Candidates do not imply stance.",
+        "The scan is bounded.",
+      ],
+    };
+    expect(semanticWorldGraphPersonaMatchesSchema.safeParse(personaMatches).success).toBe(true);
+    expect(semanticWorldGraphPersonaMatchesSchema.safeParse({
+      ...personaMatches,
+      matches: [{ ...personaMatches.matches[0], score: 2 }],
+    }).success).toBe(false);
+    expect(semanticWorldGraphPersonaMatchesSchema.safeParse({
+      ...personaMatches,
+      dataset: { ...personaMatches.dataset, id: worldModelId },
+    }).success).toBe(false);
+
+    const search = {
+      graph_id: succeeded.id,
+      graph_sha256: succeeded.graph_sha256,
+      query: "绿色政策",
+      search_semantics: "casefolded_lexical_substring",
+      total_match_count: 1,
+      truncated: false,
+      results: [{
+        kind: "node",
+        rank: 0,
+        matched_fields: ["name", "summary"],
+        node: succeeded.nodes[0],
+      }],
+      limitations: [
+        "Search is deterministic lexical matching.",
+        "Results retain exact evidence quotes.",
+      ],
+    };
+    expect(semanticWorldGraphSearchResponseSchema.safeParse(search).success).toBe(true);
+    expect(semanticWorldGraphSearchResponseSchema.safeParse({
+      ...search,
+      total_match_count: 2,
+      truncated: false,
     }).success).toBe(false);
   });
 });

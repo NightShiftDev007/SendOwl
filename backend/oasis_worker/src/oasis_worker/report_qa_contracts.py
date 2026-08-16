@@ -18,6 +18,11 @@ class ReportQACandidate(StrictModel):
     end_offset: Annotated[int, Field(ge=1)]
 
 
+class ReportQAConversationTurn(StrictModel):
+    question: Annotated[str, StringConstraints(min_length=2, max_length=1000, strict=True)]
+    answer_markdown: Annotated[str, StringConstraints(min_length=1, max_length=800, strict=True)]
+
+
 class ClaimedReportQuestion(StrictModel):
     id: UUID
     report_id: UUID
@@ -29,10 +34,14 @@ class ClaimedReportQuestion(StrictModel):
     model_name: Annotated[RequiredText, Field(max_length=200)]
     semantic_config_sha256: Sha256
     prompt_schema_version: Annotated[RequiredText, Field(max_length=64)]
+    parent_question_sha256: Sha256 | None
+    parent_answer_sha256: Sha256 | None
+    conversation_depth: Annotated[int, Field(ge=0, le=4)]
     created_at: datetime
     report_title: Annotated[RequiredText, Field(max_length=300)]
     report_sections: Annotated[tuple[RequiredText, ...], Field(min_length=4, max_length=4)]
     candidates: Annotated[tuple[ReportQACandidate, ...], Field(min_length=1, max_length=20)]
+    conversation_context: Annotated[tuple[ReportQAConversationTurn, ...], Field(max_length=4)]
 
 
 class ExtractedReportAnswer(StrictModel):

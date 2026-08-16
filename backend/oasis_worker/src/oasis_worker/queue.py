@@ -11,6 +11,8 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 from pydantic import ValidationError
 
+from oasis_worker.chat_contracts import ChatRuntimeConfig
+from oasis_worker.linux_contracts import LinuxRuntimeConfig
 from oasis_worker.queue_contracts import (
     ClaimedRun,
     NormalizedFailure,
@@ -19,6 +21,7 @@ from oasis_worker.queue_contracts import (
 )
 from oasis_worker.semantic_contracts import SemanticRuntimeConfig
 from oasis_worker.survey_contracts import SurveyRuntimeConfig
+from oasis_worker.web_contracts import WebRuntimeConfig
 
 ENGINE = "camel-oasis"
 ENGINE_VERSION = "0.2.5"
@@ -61,6 +64,9 @@ def update_heartbeat(
     ready: bool,
     semantic_config: SemanticRuntimeConfig | None,
     survey_config: SurveyRuntimeConfig | None,
+    chat_config: ChatRuntimeConfig | None,
+    web_config: WebRuntimeConfig | None,
+    linux_config: LinuxRuntimeConfig | None,
 ) -> None:
     now = datetime.now(UTC)
     with connection.cursor() as cursor:
@@ -72,8 +78,22 @@ def update_heartbeat(
                 semantic_config_sha256, semantic_prompt_schema_version,
                 survey_runtime_ready, survey_model_name, survey_config_sha256,
                 survey_prompt_schema_version,
+                chat_runtime_ready, chat_model_name, chat_config_sha256,
+                chat_prompt_schema_version, chat_sut_task_id, chat_sut_task_version,
+                chat_sut_spec_sha256,
+                web_runtime_ready, web_model_name, web_config_sha256,
+                web_prompt_schema_version, web_executor_schema_version,
+                web_executor_spec_sha256,
+                linux_runtime_ready, linux_model_name, linux_config_sha256,
+                linux_prompt_schema_version, linux_runner_schema_version,
+                linux_runner_spec_sha256,
                 started_at, last_seen_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
             ON CONFLICT (worker_id) DO UPDATE SET
                 engine = EXCLUDED.engine,
                 engine_version = EXCLUDED.engine_version,
@@ -88,6 +108,25 @@ def update_heartbeat(
                 survey_model_name = EXCLUDED.survey_model_name,
                 survey_config_sha256 = EXCLUDED.survey_config_sha256,
                 survey_prompt_schema_version = EXCLUDED.survey_prompt_schema_version,
+                chat_runtime_ready = EXCLUDED.chat_runtime_ready,
+                chat_model_name = EXCLUDED.chat_model_name,
+                chat_config_sha256 = EXCLUDED.chat_config_sha256,
+                chat_prompt_schema_version = EXCLUDED.chat_prompt_schema_version,
+                chat_sut_task_id = EXCLUDED.chat_sut_task_id,
+                chat_sut_task_version = EXCLUDED.chat_sut_task_version,
+                chat_sut_spec_sha256 = EXCLUDED.chat_sut_spec_sha256,
+                web_runtime_ready = EXCLUDED.web_runtime_ready,
+                web_model_name = EXCLUDED.web_model_name,
+                web_config_sha256 = EXCLUDED.web_config_sha256,
+                web_prompt_schema_version = EXCLUDED.web_prompt_schema_version,
+                web_executor_schema_version = EXCLUDED.web_executor_schema_version,
+                web_executor_spec_sha256 = EXCLUDED.web_executor_spec_sha256,
+                linux_runtime_ready = EXCLUDED.linux_runtime_ready,
+                linux_model_name = EXCLUDED.linux_model_name,
+                linux_config_sha256 = EXCLUDED.linux_config_sha256,
+                linux_prompt_schema_version = EXCLUDED.linux_prompt_schema_version,
+                linux_runner_schema_version = EXCLUDED.linux_runner_schema_version,
+                linux_runner_spec_sha256 = EXCLUDED.linux_runner_spec_sha256,
                 started_at = EXCLUDED.started_at,
                 last_seen_at = EXCLUDED.last_seen_at
             """,
@@ -106,6 +145,25 @@ def update_heartbeat(
                 survey_config.model_name if survey_config is not None else None,
                 survey_config.config_sha256 if survey_config is not None else None,
                 survey_config.prompt_schema_version if survey_config is not None else None,
+                chat_config is not None,
+                chat_config.model_name if chat_config is not None else None,
+                chat_config.config_sha256 if chat_config is not None else None,
+                chat_config.prompt_schema_version if chat_config is not None else None,
+                chat_config.sut_task_id if chat_config is not None else None,
+                chat_config.sut_task_version if chat_config is not None else None,
+                chat_config.sut_spec_sha256 if chat_config is not None else None,
+                web_config is not None,
+                web_config.model_name if web_config is not None else None,
+                web_config.config_sha256 if web_config is not None else None,
+                web_config.prompt_schema_version if web_config is not None else None,
+                web_config.executor_schema_version if web_config is not None else None,
+                web_config.executor_spec_sha256 if web_config is not None else None,
+                linux_config is not None,
+                linux_config.model_name if linux_config is not None else None,
+                linux_config.config_sha256 if linux_config is not None else None,
+                linux_config.prompt_schema_version if linux_config is not None else None,
+                linux_config.runner_schema_version if linux_config is not None else None,
+                linux_config.runner_spec_sha256 if linux_config is not None else None,
                 started_at,
                 now,
             ),

@@ -27,6 +27,7 @@ from app.matraix_surveys.repository import (
     get_matraix_survey_readiness,
     get_matraix_survey_trial,
     list_matraix_survey_experiments,
+    retry_matraix_survey_experiment,
 )
 from app.populations.errors import PopulationCohortNotFoundError
 from app.scenarios.errors import ScenarioNotFoundError
@@ -85,6 +86,27 @@ def create_matraix_surveys_router() -> APIRouter:
         session: MatraixSurveySession,
     ) -> MatraixSurveyExperimentsResponse:
         return await list_matraix_survey_experiments(session)
+
+    @router.post(
+        "/api/v2/matraix/survey-experiments/{experiment_id}/retry",
+        response_model=MatraixSurveyExperimentDetail,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def retry_survey_experiment(
+        experiment_id: UUID,
+        session: MatraixSurveySession,
+    ) -> MatraixSurveyExperimentDetail:
+        try:
+            return await retry_matraix_survey_experiment(session, experiment_id)
+        except MatraixSurveyExperimentNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except MatraixSurveySelectionError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        except MatraixSurveyUnavailableError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
 
     @router.get(
         "/api/v2/matraix/survey-experiments/{experiment_id}",

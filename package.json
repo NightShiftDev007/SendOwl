@@ -1,5 +1,5 @@
 {
-  "name": "ai-decision-center",
+  "name": "sendowl",
   "version": "2.0.0",
   "private": true,
   "description": "SandOwl AI Decision Center — evidence, world models, population trials, and social simulation",
@@ -8,10 +8,11 @@
     "setup:frontend": "pnpm --dir frontend install --frozen-lockfile",
     "setup:oasis-worker": "uv sync --project backend/oasis_worker --python 3.11",
     "setup": "pnpm run setup:backend && pnpm run setup:oasis-worker && pnpm run setup:frontend",
-    "backend": "uv run --project backend uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload",
+    "backend": "uv run --project backend uvicorn app.main:app --host 127.0.0.1 --port 8310 --reload",
     "frontend": "pnpm --dir frontend dev",
     "dev": "concurrently --kill-others -n \"backend,frontend\" -c \"green,cyan\" \"pnpm run backend\" \"pnpm run frontend\"",
     "test:backend": "cd backend && uv run pytest",
+    "test:backend:postgres": "sh scripts/test-backend-postgresql.sh",
     "lint:backend": "cd backend && uv run ruff check . && uv run ruff format --check .",
     "test:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 pytest",
     "lint:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 ruff check . && uv run --python 3.11 ruff format --check .",
@@ -21,10 +22,11 @@
     "typecheck:frontend": "pnpm --dir frontend typecheck",
     "build:frontend": "pnpm --dir frontend build",
     "verify": "pnpm run migrate:check && pnpm run test:backend && pnpm run lint:backend && pnpm run test:oasis-worker && pnpm run lint:oasis-worker && pnpm run test:frontend && pnpm run typecheck:frontend && pnpm run build:frontend && docker compose --env-file .env.example config --quiet",
-    "stack": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} up --build",
-    "stack:down": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} down",
-    "import:agendascope": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e AGENDASCOPE_DATABASE_URL backend python -m app.media.import_agendascope",
-    "import:matraix-personas": "docker compose --env-file ${ADC_ENV_FILE:-.env.example} run --rm -e MATRAIX_PERSONA_DATASET_PATH=/matraix-personas --volume \"${MATRAIX_PERSONA_DATASET_PATH:?MATRAIX_PERSONA_DATASET_PATH is required}:/matraix-personas:ro\" backend python -m app.populations.import_matraix"
+    "stack": "docker compose --env-file ${SENDOWL_ENV_FILE:-.env.example} up --build",
+    "stack:media-sync": "docker compose --env-file ${SENDOWL_ENV_FILE:?SENDOWL_ENV_FILE is required for media sync} --profile media-sync up --build",
+    "stack:down": "docker compose --env-file ${SENDOWL_ENV_FILE:-.env.example} down",
+    "import:agendascope": "docker compose --env-file ${SENDOWL_ENV_FILE:?SENDOWL_ENV_FILE is required for AgendaScope import} run --rm media-sync-worker python -m app.media.import_agendascope",
+    "import:matraix-personas": "docker compose --env-file ${SENDOWL_ENV_FILE:-.env.example} run --rm -e MATRAIX_PERSONA_DATASET_PATH=/matraix-personas --volume \"${MATRAIX_PERSONA_DATASET_PATH:?MATRAIX_PERSONA_DATASET_PATH is required}:/matraix-personas:ro\" backend python -m app.populations.import_matraix"
   },
   "devDependencies": {
     "concurrently": "^9.2.3"

@@ -1,0 +1,64 @@
+.media-world-map {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.media-world-map__empty {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(360px, calc(100% - 36px));
+  gap: 6px;
+  padding: 15px 18px;
+  color: oklch(0.96 0.008 230);
+  text-align: center;
+  background: oklch(0.15 0.022 246 / 0.94);
+  border: 1px solid oklch(0.34 0.025 232 / 0.72);
+  transform: translate(-50%, -50%);
+}
+
+.media-world-map__empty span {
+  color: oklch(0.7 0.023 230);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.media-world-map__canvas {
+  min-height: 0;
+  flex: 1;
+}
+
+.media-world-map__country-control {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  width: min(420px, 68%);
+  min-height: 48px;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px 10px 8px 14px;
+  color: oklch(0.7 0.023 230);
+  background: oklch(0.175 0.025 246);
+  border: 1px solid oklch(0.34 0.025 232 / 0.72);
+  border-radius: 3px;
+  font-size: 0.68rem;
+}
+
+.media-world-map__country-control span {
+  white-space: nowrap;
+}
+
+.media-world-map__country-control select {
+  min-width: 0;
+  flex: 1;
+  color: oklch(0.96 0.008 230);
+  background: oklch(0.135 0.022 246);
+  border-color: oklch(0.34 0.025 232 / 0.72);
+}

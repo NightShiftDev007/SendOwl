@@ -1,4 +1,19 @@
 .product-shell {
+  --canvas: #071119;
+  --surface: #0b1720;
+  --surface-muted: #09151d;
+  --ink: #e8f1f3;
+  --ink-secondary: #b8c6ca;
+  --ink-muted: #8ea6ad;
+  --border: rgba(167, 208, 221, 0.17);
+  --border-strong: rgba(167, 208, 221, 0.32);
+  --brand-soft: rgba(229, 165, 90, 0.13);
+  --success: #83d3a1;
+  --success-soft: #0d241b;
+  --warning: #e5a55a;
+  --warning-soft: #241b0d;
+  --info: #75bde0;
+  --info-soft: #0c202a;
   --product-chrome: oklch(0.145 0.018 252);
   --product-chrome-raised: oklch(0.18 0.021 252);
   --product-chrome-border: oklch(0.3 0.018 252);
@@ -10,7 +25,41 @@
 
   min-width: 320px;
   min-height: 100vh;
+  color-scheme: dark;
+  color: var(--ink);
   background: var(--canvas);
+}
+
+.route-error-page {
+  --canvas: #071119;
+  --surface: #0b1720;
+  --surface-muted: #09151d;
+  --ink: #e8f1f3;
+  --ink-secondary: #b8c6ca;
+  --ink-muted: #8ea6ad;
+  --border: rgba(167, 208, 221, 0.17);
+  --border-strong: rgba(167, 208, 221, 0.32);
+  --brand-soft: rgba(229, 165, 90, 0.13);
+  min-height: 100vh;
+  color-scheme: dark;
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+.route-error-page .workspace-header,
+.route-error-page .workspace-main {
+  background: transparent;
+}
+
+.route-error-page .module-workbench,
+.route-error-page .implementation-note {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.route-error-page .implementation-note {
+  color: var(--ink-secondary);
 }
 
 .product-skip-link {

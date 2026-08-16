@@ -26,7 +26,11 @@ export const reportQuestionSchema = z.object({
   question_sha256: sha256DigestSchema,
   model_name: z.string().trim().min(1).max(200),
   semantic_config_sha256: sha256DigestSchema,
-  prompt_schema_version: z.literal("report-evidence-qa/v1"),
+  prompt_schema_version: z.enum(["report-evidence-qa/v1", "report-evidence-qa/v2"]),
+  parent_question_id: uuidSchema.nullable(),
+  parent_question_sha256: sha256DigestSchema.nullable(),
+  parent_answer_sha256: sha256DigestSchema.nullable(),
+  conversation_depth: z.number().int().min(0).max(4),
   status: z.enum(["queued", "running", "succeeded", "failed"]),
   created_at: timestampSchema,
   started_at: timestampSchema.nullable(),
@@ -37,6 +41,16 @@ export const reportQuestionSchema = z.object({
   error_code: z.string().min(1).max(128).nullable(),
   error_message: z.string().min(1).max(500).nullable(),
 }).strict().superRefine((value, context) => {
+  const rootLineage = value.conversation_depth === 0
+    && value.parent_question_id === null
+    && value.parent_question_sha256 === null
+    && value.parent_answer_sha256 === null
+    && value.prompt_schema_version === "report-evidence-qa/v1";
+  const followUpLineage = value.conversation_depth > 0
+    && value.parent_question_id !== null
+    && value.parent_question_sha256 !== null
+    && value.parent_answer_sha256 !== null
+    && value.prompt_schema_version === "report-evidence-qa/v2";
   const running = value.started_at !== null && value.completed_at === null;
   const terminal = value.started_at !== null && value.completed_at !== null;
   const succeeded = value.answer_markdown !== null
@@ -61,7 +75,7 @@ export const reportQuestionSchema = z.object({
       : value.status === "succeeded"
         ? terminal && succeeded
         : terminal && failed;
-  if (!valid) {
+  if (!valid || (!rootLineage && !followUpLineage)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Report question lifecycle is invalid" });
   }
 });
@@ -73,6 +87,23 @@ export const reportQuestionsResponseSchema = z.object({
 
 export type ReportQuestion = z.infer<typeof reportQuestionSchema>;
 export type ReportQuestionsResponse = z.infer<typeof reportQuestionsResponseSchema>;
+
+export const reportQuestionContextSchema = z.object({
+  current_question_id: uuidSchema,
+  items: z.array(reportQuestionSchema).min(1).max(5),
+}).strict().superRefine((value, context) => {
+  if (value.items.at(-1)?.id !== value.current_question_id) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Context must end at current question" });
+  }
+  value.items.forEach((item, position) => {
+    const expectedParent = position === 0 ? null : value.items[position - 1]?.id;
+    if (item.status !== "succeeded" || item.conversation_depth !== position || item.parent_question_id !== expectedParent) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Context lineage is invalid" });
+    }
+  });
+});
+
+export type ReportQuestionContext = z.infer<typeof reportQuestionContextSchema>;
 
 export function fetchReportQuestions(
   reportId: string,
@@ -88,12 +119,24 @@ export function fetchReportQuestions(
 export function createReportQuestion(
   reportId: string,
   question: string,
+  parentQuestionId: string | null,
   signal: AbortSignal,
 ): Promise<ReportQuestion> {
   return postJson(
     `/api/v2/decision-reports/${encodeURIComponent(reportId)}/questions`,
-    { question },
+    { question, parent_question_id: parentQuestionId },
     reportQuestionSchema,
+    signal,
+  );
+}
+
+export function fetchReportQuestionContext(
+  questionId: string,
+  signal: AbortSignal,
+): Promise<ReportQuestionContext> {
+  return getJson(
+    `/api/v2/report-questions/${encodeURIComponent(questionId)}/context`,
+    reportQuestionContextSchema,
     signal,
   );
 }

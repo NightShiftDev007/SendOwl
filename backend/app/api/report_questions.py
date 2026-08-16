@@ -11,6 +11,7 @@ from app.database import DatabaseConnector
 from app.decision_reports.errors import DecisionReportNotFoundError
 from app.report_questions.contracts import (
     ReportQuestion,
+    ReportQuestionContext,
     ReportQuestionRequest,
     ReportQuestionsResponse,
 )
@@ -18,6 +19,7 @@ from app.report_questions.errors import ReportQuestionNotFoundError, ReportQuest
 from app.report_questions.repository import (
     enqueue_report_question,
     get_report_question,
+    get_report_question_context,
     list_report_questions,
 )
 
@@ -51,6 +53,8 @@ def create_report_questions_router() -> APIRouter:
             return await enqueue_report_question(session, report_id, request)
         except DecisionReportNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except ReportQuestionNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
         except ReportQuestionUnavailableError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
@@ -70,5 +74,20 @@ def create_report_questions_router() -> APIRouter:
             return await get_report_question(session, question_id)
         except ReportQuestionNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
+        "/api/v2/report-questions/{question_id}/context",
+        response_model=ReportQuestionContext,
+    )
+    async def context(
+        question_id: UUID,
+        session: ReportQuestionSession,
+    ) -> ReportQuestionContext:
+        try:
+            return await get_report_question_context(session, question_id)
+        except ReportQuestionNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except ReportQuestionUnavailableError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
     return router

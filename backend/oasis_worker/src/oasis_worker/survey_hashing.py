@@ -161,45 +161,53 @@ def instrument_sha256(instrument: ScenarioPreferenceInstrument) -> str:
 
 
 def experiment_sha256(experiment: SurveyExperiment) -> str:
-    return _digest(
-        {
-            "schema": "matraix-survey-experiment/v1",
-            "scenario": {
-                "id": str(experiment.scenario_id),
-                "title": experiment.scenario_title,
-                "decision_question": experiment.decision_question,
-                "scenario_sha256": experiment.scenario_sha256,
-            },
-            "cohort": {
-                "id": str(experiment.cohort_id),
-                "title": experiment.cohort_title,
-                "cohort_sha256": experiment.cohort_sha256,
-                "dataset_sha256": experiment.dataset_sha256,
-                "persona_count": experiment.persona_count,
-            },
-            "baseline": {
-                "id": str(experiment.baseline_id),
-                "position": experiment.baseline_position,
-                "name": experiment.baseline_name,
-                "hypothesis": experiment.baseline_hypothesis,
-            },
-            "alternative": {
-                "id": str(experiment.alternative_id),
-                "position": experiment.alternative_position,
-                "name": experiment.alternative_name,
-                "hypothesis": experiment.alternative_hypothesis,
-            },
-            "instrument": {
-                "schema_version": SURVEY_INSTRUMENT_SCHEMA_VERSION,
-                "instrument_sha256": experiment.instrument_sha256,
-            },
-            "model": {
-                "name": experiment.model_name,
-                "config_sha256": experiment.survey_config_sha256,
-                "prompt_schema_version": experiment.prompt_schema_version,
-            },
+    payload = {
+        "schema": "matraix-survey-experiment/v1",
+        "scenario": {
+            "id": str(experiment.scenario_id),
+            "title": experiment.scenario_title,
+            "decision_question": experiment.decision_question,
+            "scenario_sha256": experiment.scenario_sha256,
+        },
+        "cohort": {
+            "id": str(experiment.cohort_id),
+            "title": experiment.cohort_title,
+            "cohort_sha256": experiment.cohort_sha256,
+            "dataset_sha256": experiment.dataset_sha256,
+            "persona_count": experiment.persona_count,
+        },
+        "baseline": {
+            "id": str(experiment.baseline_id),
+            "position": experiment.baseline_position,
+            "name": experiment.baseline_name,
+            "hypothesis": experiment.baseline_hypothesis,
+        },
+        "alternative": {
+            "id": str(experiment.alternative_id),
+            "position": experiment.alternative_position,
+            "name": experiment.alternative_name,
+            "hypothesis": experiment.alternative_hypothesis,
+        },
+        "instrument": {
+            "schema_version": SURVEY_INSTRUMENT_SCHEMA_VERSION,
+            "instrument_sha256": experiment.instrument_sha256,
+        },
+        "model": {
+            "name": experiment.model_name,
+            "config_sha256": experiment.survey_config_sha256,
+            "prompt_schema_version": experiment.prompt_schema_version,
+        },
+    }
+    if experiment.attempt_number > 1:
+        if experiment.retry_of_experiment_sha256 is None:
+            raise ValueError("Survey retry experiment has no parent digest")
+        payload = {
+            "schema": "matraix-survey-experiment-retry/v1",
+            "retry_of_experiment_sha256": experiment.retry_of_experiment_sha256,
+            "attempt_number": experiment.attempt_number,
+            "experiment": payload,
         }
-    )
+    return _digest(payload)
 
 
 def trial_sha256(

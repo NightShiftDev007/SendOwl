@@ -14,6 +14,7 @@ from oasis_worker.report_qa_contracts import (
     ClaimedReportQuestion,
     NormalizedReportAnswer,
     ReportQACandidate,
+    ReportQAConversationTurn,
 )
 from oasis_worker.report_qa_hashing import answer_sha256, question_sha256
 from oasis_worker.semantic_contracts import SemanticRuntimeConfig
@@ -28,7 +29,7 @@ def report_question_queue_head(
             """
             SELECT id, created_at FROM report_questions
             WHERE status = 'queued' AND model_name = %s AND semantic_config_sha256 = %s
-              AND prompt_schema_version = 'report-evidence-qa/v1'
+              AND prompt_schema_version IN ('report-evidence-qa/v1', 'report-evidence-qa/v2')
             ORDER BY created_at, id LIMIT 1
             """,
             (runtime_config.model_name, runtime_config.config_sha256),
@@ -117,9 +118,43 @@ def claim_report_question(
             ):
                 raise RuntimeError("report question frozen input digest mismatch")
             if row["question_sha256"] != question_sha256(
-                row["report_sha256"], row["graph_sha256"], row["question"]
+                row["report_sha256"],
+                row["graph_sha256"],
+                row["question"],
+                row["parent_question_sha256"],
+                row["parent_answer_sha256"],
             ):
                 raise RuntimeError("report question digest mismatch")
+            cursor.execute(
+                """
+                WITH RECURSIVE lineage AS (
+                    SELECT id, parent_question_id, question, answer_markdown,
+                           question_sha256, answer_sha256, conversation_depth
+                    FROM report_questions WHERE id = %s
+                    UNION ALL
+                    SELECT parent.id, parent.parent_question_id, parent.question,
+                           parent.answer_markdown, parent.question_sha256,
+                           parent.answer_sha256, parent.conversation_depth
+                    FROM report_questions parent
+                    JOIN lineage child ON child.parent_question_id = parent.id
+                )
+                SELECT question, answer_markdown, question_sha256, answer_sha256,
+                       conversation_depth
+                FROM lineage WHERE id <> %s ORDER BY conversation_depth
+                """,
+                (row["id"], row["id"]),
+            )
+            context_rows = tuple(cursor.fetchall())
+            if len(context_rows) != row["conversation_depth"] or any(
+                item["answer_markdown"] is None or item["answer_sha256"] is None
+                for item in context_rows
+            ):
+                raise RuntimeError("report question conversation lineage mismatch")
+            if context_rows and (
+                context_rows[-1]["question_sha256"] != row["parent_question_sha256"]
+                or context_rows[-1]["answer_sha256"] != row["parent_answer_sha256"]
+            ):
+                raise RuntimeError("report question parent digest mismatch")
             cursor.execute(
                 "SELECT body_markdown FROM decision_report_sections WHERE report_id = %s ORDER BY position",
                 (row["report_id"],),
@@ -139,10 +174,20 @@ def claim_report_question(
                 model_name=row["model_name"],
                 semantic_config_sha256=row["semantic_config_sha256"],
                 prompt_schema_version=row["prompt_schema_version"],
+                parent_question_sha256=row["parent_question_sha256"],
+                parent_answer_sha256=row["parent_answer_sha256"],
+                conversation_depth=row["conversation_depth"],
                 created_at=row["created_at"],
                 report_title=row["report_title"],
                 report_sections=sections,
                 candidates=candidates,
+                conversation_context=tuple(
+                    ReportQAConversationTurn(
+                        question=item["question"],
+                        answer_markdown=item["answer_markdown"],
+                    )
+                    for item in context_rows
+                ),
             )
             cursor.execute(
                 "UPDATE report_questions SET status='running', started_at=now(), claimed_by_worker_id=%s WHERE id=%s AND status='queued'",

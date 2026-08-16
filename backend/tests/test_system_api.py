@@ -112,24 +112,61 @@ def test_capabilities_endpoint_exposes_all_foundation_domains() -> None:
         "decision_threads",
         "decision_reports",
         "report_questions",
+        "tasks.mirofish.persona_interview",
         "scenarios",
         "populations.matraix",
         "simulations.matraix",
         "tasks.matraix.survey",
+        "tasks.matraix.chat",
+        "tasks.matraix.web",
+        "tasks.matraix.linux_artifact",
+        "trials.matraix.archive",
+        "jobs.matraix.batch_registry",
         "simulations.oasis",
     }
     states_by_name = {capability.name: capability.state for capability in capabilities.capabilities}
+    sources_by_name = {
+        capability.name: capability.source for capability in capabilities.capabilities
+    }
+    contracts_by_name = {
+        capability.name: capability.contracts for capability in capabilities.capabilities
+    }
     assert states_by_name["media"] is CapabilityStatus.RUNTIME_READY
+    assert "MediaSourceEvidenceResponse" in contracts_by_name["media"]
+    assert "MediaFirstUtterancesResponse" in contracts_by_name["media"]
     assert states_by_name["world_models"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["world_graphs"] is CapabilityStatus.RUNTIME_READY
+    assert "GraphPersonaCohortOrigin" in contracts_by_name["world_graphs"]
+    assert "GraphPersonaCohortCreation" in contracts_by_name["world_graphs"]
+    assert "GraphPersonaCohortOriginsResponse" in contracts_by_name["world_graphs"]
     assert states_by_name["decision_threads"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["decision_reports"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["report_questions"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["tasks.mirofish.persona_interview"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["evidence"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["scenarios"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["populations.matraix"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["simulations.matraix"] is CapabilityStatus.CONTRACT_READY
     assert states_by_name["tasks.matraix.survey"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["tasks.matraix.web"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["trials.matraix.archive"] is CapabilityStatus.RUNTIME_READY
+    assert sources_by_name["trials.matraix.archive"] == (
+        "MatrAIx Survey + Chat + Web + Linux durable records"
+    )
+    assert contracts_by_name["trials.matraix.archive"][-4:] == (
+        "SurveyTrialArchiveItem",
+        "ChatTrialArchiveItem",
+        "WebTrialArchiveItem",
+        "LinuxTrialArchiveItem",
+    )
+    assert states_by_name["jobs.matraix.batch_registry"] is CapabilityStatus.RUNTIME_READY
+    assert sources_by_name["jobs.matraix.batch_registry"] == (
+        "MatrAIx Survey + Chat + Web + Linux sealed parent registry"
+    )
+    assert "WebBatchRegistryItem" in contracts_by_name["jobs.matraix.batch_registry"]
+    assert "LinuxBatchRegistryItem" in contracts_by_name["jobs.matraix.batch_registry"]
+    assert "LinuxBatchRegistryCandidate" in contracts_by_name["jobs.matraix.batch_registry"]
+    assert "MatraixNativeBatchLaunchResult" in contracts_by_name["jobs.matraix.batch_registry"]
     assert states_by_name["simulations.oasis"] is CapabilityStatus.RUNTIME_READY
 
 

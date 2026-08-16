@@ -1,5 +1,7 @@
 """Media API availability and strict public contract tests."""
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from app.config import load_runtime_settings
@@ -8,8 +10,12 @@ from app.main import create_app
 MEDIA_PATHS = (
     "/api/v2/media/overview",
     "/api/v2/media/articles",
+    f"/api/v2/media/articles/{uuid4()}",
     "/api/v2/media/topics",
+    f"/api/v2/media/topics/{uuid4()}/timeline",
     "/api/v2/media/sources",
+    f"/api/v2/media/sources/{uuid4()}/evidence",
+    "/api/v2/media/sync-status",
 )
 
 

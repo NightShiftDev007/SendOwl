@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { reportQuestionSchema } from "./reportQuestionContracts";
+import { reportQuestionContextSchema, reportQuestionSchema } from "./reportQuestionContracts";
 
 const base = {
   id: "18ac1504-3b0c-4516-a926-22333618786e",
@@ -13,6 +13,10 @@ const base = {
   model_name: "qwen3.7-plus",
   semantic_config_sha256: "d".repeat(64),
   prompt_schema_version: "report-evidence-qa/v1",
+  parent_question_id: null,
+  parent_question_sha256: null,
+  parent_answer_sha256: null,
+  conversation_depth: 0,
   created_at: "2026-08-13T10:00:00+08:00",
 };
 
@@ -66,5 +70,33 @@ describe("reportQuestionSchema", () => {
       error_message: null,
       unsupported: true,
     })).toThrow();
+  });
+
+  it("accepts a contiguous succeeded follow-up context and rejects forged lineage", () => {
+    const root = reportQuestionSchema.parse({
+      ...base,
+      status: "succeeded",
+      started_at: "2026-08-13T10:00:01+08:00",
+      completed_at: "2026-08-13T10:00:03+08:00",
+      answer_markdown: "Root answer",
+      citations: [{ position: 0, article_id: "92db4070-ad03-46d6-a471-300080541591", quote: "Exact evidence", start_offset: 4, end_offset: 18 }],
+      answer_sha256: "e".repeat(64),
+      error_code: null,
+      error_message: null,
+    });
+    const child = reportQuestionSchema.parse({
+      ...root,
+      id: "b2e596fb-5b96-4929-9c92-3b0df073498d",
+      question: "What does that boundary mean?",
+      question_sha256: "f".repeat(64),
+      prompt_schema_version: "report-evidence-qa/v2",
+      parent_question_id: root.id,
+      parent_question_sha256: root.question_sha256,
+      parent_answer_sha256: root.answer_sha256,
+      conversation_depth: 1,
+    });
+
+    expect(reportQuestionContextSchema.parse({ current_question_id: child.id, items: [root, child] }).items).toHaveLength(2);
+    expect(reportQuestionSchema.safeParse({ ...child, parent_question_id: null }).success).toBe(false);
   });
 });

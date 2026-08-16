@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
-    port: 3100,
+    port: 3300,
     strictPort: true,
     watch: {
       usePolling: true,
@@ -13,17 +13,17 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8010",
+        target: "http://127.0.0.1:8310",
         changeOrigin: true,
       },
       "/health": {
-        target: "http://127.0.0.1:8010",
+        target: "http://127.0.0.1:8310",
         changeOrigin: true,
       },
     },
   },
   preview: {
     host: "127.0.0.1",
-    port: 4100,
+    port: 4300,
   },
 });

@@ -1,5 +1,5 @@
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
-FROM python:3.12.11-slim-bookworm
+FROM python:3.12.11-slim-bookworm AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -21,6 +21,18 @@ COPY app ./app
 COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
 RUN uv sync --frozen --no-dev
+
+FROM base AS test
+
+RUN uv sync --frozen
+
+COPY tests ./tests
+
+USER app
+
+CMD ["/bin/sh", "tests/run_postgresql.sh"]
+
+FROM base AS production
 
 USER app
 

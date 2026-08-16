@@ -101,7 +101,10 @@ def _selected_article_metadata_statement(
             MediaArticleRecord.is_duplicate,
             captured_text_size,
         )
-        .where(MediaArticleRecord.id.in_(article_ids))
+        .where(
+            MediaArticleRecord.id.in_(article_ids),
+            MediaArticleRecord.source_present.is_(True),
+        )
         .order_by(MediaArticleRecord.id)
         .with_for_update(of=MediaArticleRecord)
     )

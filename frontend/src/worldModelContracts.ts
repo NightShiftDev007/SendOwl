@@ -2,6 +2,14 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema, type MediaArticle } from "./mediaContracts";
+import {
+  cohortCreateRequestSchema,
+  cohortDatasetSchema,
+  cohortDetailSchema,
+  personaAttributeSchema,
+  personaSummarySchema,
+  type CohortCreateRequest,
+} from "./populationContracts";
 
 const worldModelsEndpoint = "/api/v2/world-models";
 const identifierSchema = z.string().uuid();
@@ -128,17 +136,41 @@ export const worldModelEvidenceSelectionSchema = z
   })
   .strict();
 
+const worldModelEvidenceArraySchema = z.array(worldModelEvidenceSelectionSchema).min(1).max(50);
+
+function hasDuplicateEvidenceArticleIds(
+  evidence: readonly WorldModelEvidenceSelection[],
+): boolean {
+  const articleIds = evidence.map((selection) => selection.article_id);
+
+  return new Set(articleIds).size !== articleIds.length;
+}
+
 export const worldModelCreateRequestSchema = z
   .object({
     title: worldModelTitleSchema,
-    evidence: z.array(worldModelEvidenceSelectionSchema).min(1).max(50),
+    evidence: worldModelEvidenceArraySchema,
     verification: z.literal("human_confirmed"),
   })
   .strict()
   .superRefine((request, context) => {
-    const articleIds = request.evidence.map((selection) => selection.article_id);
+    if (hasDuplicateEvidenceArticleIds(request.evidence)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["evidence"],
+        message: "evidence article_id values must not contain duplicates",
+      });
+    }
+  });
 
-    if (new Set(articleIds).size !== articleIds.length) {
+export const worldSnapshotCreateRequestSchema = z
+  .object({
+    evidence: worldModelEvidenceArraySchema,
+    verification: z.literal("human_confirmed"),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (hasDuplicateEvidenceArticleIds(request.evidence)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["evidence"],
@@ -410,6 +442,287 @@ export const semanticWorldGraphEvidenceTimelineSchema = z
     }
   });
 
+const semanticWorldGraphEdgeSignatureSchema = z.object({
+  source_entity_type: semanticWorldGraphEntityTypeSchema,
+  source_name: nonEmptyTextSchema.max(200),
+  relation_type: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u),
+  target_entity_type: semanticWorldGraphEntityTypeSchema,
+  target_name: nonEmptyTextSchema.max(200),
+  fact: nonEmptyTextSchema.max(500),
+}).strict();
+
+const semanticWorldGraphEdgeObservationSchema = z.object({
+  position: z.number().int().min(0).max(49),
+  graph_id: identifierSchema,
+  graph_sha256: sha256DigestSchema,
+  graph_created_at: isoTimestampSchema,
+  graph_completed_at: isoTimestampSchema,
+  snapshot_id: identifierSchema,
+  snapshot_sha256: sha256DigestSchema,
+  snapshot_version: z.number().int().positive(),
+  edge_id: identifierSchema,
+  evidence_article_ids: z.array(identifierSchema).min(1).max(20),
+  evidence_published_from: isoTimestampSchema,
+  evidence_published_through: isoTimestampSchema,
+}).strict().superRefine((item, context) => {
+  if (
+    Date.parse(item.graph_completed_at) < Date.parse(item.graph_created_at)
+    || Date.parse(item.evidence_published_through) < Date.parse(item.evidence_published_from)
+    || new Set(item.evidence_article_ids).size !== item.evidence_article_ids.length
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Semantic graph edge observation is inconsistent",
+    });
+  }
+});
+
+export const semanticWorldGraphEdgeHistorySchema = z.object({
+  graph_id: identifierSchema,
+  graph_sha256: sha256DigestSchema,
+  edge_id: identifierSchema,
+  observation_semantics: z.literal("cross_snapshot_exact_signature_not_fact_validity"),
+  signature: semanticWorldGraphEdgeSignatureSchema,
+  inspected_graph_count: z.number().int().min(1).max(12),
+  total_succeeded_graph_count: z.number().int().min(1),
+  truncated: z.boolean(),
+  items: z.array(semanticWorldGraphEdgeObservationSchema).min(1).max(50),
+  limitations: z.array(nonEmptyTextSchema).length(3),
+}).strict().superRefine((history, context) => {
+  const positionsAreContiguous = history.items.every((item, index) => item.position === index);
+  const occurrenceIds = history.items.map((item) => `${item.graph_id}:${item.edge_id}`);
+  const currentOccurrences = history.items.filter(
+    (item) => item.graph_id === history.graph_id && item.edge_id === history.edge_id,
+  );
+  const ordered = history.items.every((item, index) => {
+    const previous = history.items[index - 1];
+    if (previous === undefined) return true;
+    if (item.snapshot_version !== previous.snapshot_version) {
+      return item.snapshot_version > previous.snapshot_version;
+    }
+    return Date.parse(item.graph_created_at) >= Date.parse(previous.graph_created_at);
+  });
+  if (
+    !positionsAreContiguous
+    || new Set(occurrenceIds).size !== occurrenceIds.length
+    || currentOccurrences.length !== 1
+    || currentOccurrences[0]?.graph_sha256 !== history.graph_sha256
+    || !ordered
+    || history.total_succeeded_graph_count < history.inspected_graph_count
+    || history.truncated !== (history.total_succeeded_graph_count > history.inspected_graph_count)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Semantic graph edge history is inconsistent",
+    });
+  }
+});
+
+const semanticWorldGraphPersonaMatchSchema = z.object({
+  position: z.number().int().min(0).max(19),
+  score: z.number().int().min(1).max(20),
+  matched_terms: z.array(nonEmptyTextSchema).min(1).max(20),
+  matched_attributes: z.array(personaAttributeSchema).min(1).max(20),
+  persona: personaSummarySchema,
+}).strict().superRefine((match, context) => {
+  const terms = [...match.matched_terms].sort();
+  const termSet = new Set(match.matched_terms);
+  const attributeNames = new Set(match.matched_attributes.map((attribute) => attribute.name));
+  const personaAttributes = new Set(
+    match.persona.attributes.map((attribute) => `${attribute.name}\u0000${attribute.value}`),
+  );
+  if (
+    match.score !== match.matched_terms.length
+    || termSet.size !== match.matched_terms.length
+    || match.matched_terms.some((term, index) => term !== terms[index])
+    || attributeNames.size !== match.matched_attributes.length
+    || match.matched_attributes.some(
+      (attribute) => !personaAttributes.has(`${attribute.name}\u0000${attribute.value}`),
+    )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Semantic world graph Persona match is inconsistent",
+    });
+  }
+});
+
+export const semanticWorldGraphPersonaMatchesSchema = z.object({
+  graph_id: identifierSchema,
+  graph_sha256: sha256DigestSchema,
+  node_id: identifierSchema,
+  dataset: cohortDatasetSchema,
+  match_semantics: z.literal("exact_token_overlap_non_low_information_attributes"),
+  query_terms: z.array(nonEmptyTextSchema).min(1).max(20),
+  inspected_persona_count: z.number().int().min(0).max(200),
+  dataset_persona_count: z.number().int().min(1).max(1_000_000),
+  scan_truncated: z.boolean(),
+  total_match_count_in_scan: z.number().int().min(0).max(200),
+  matches: z.array(semanticWorldGraphPersonaMatchSchema).max(20),
+  limitations: z.array(nonEmptyTextSchema).length(3),
+}).strict().superRefine((response, context) => {
+  const positionsAreContiguous = response.matches.every(
+    (match, index) => match.position === index,
+  );
+  const personaIds = response.matches.map((match) => match.persona.id);
+  const terms = [...response.query_terms].sort();
+  const termSet = new Set(response.query_terms);
+  const matchesAreConsistent = response.matches.every(
+    (match) => match.persona.dataset_id === response.dataset.id
+      && match.matched_terms.every((term) => termSet.has(term)),
+  );
+  if (
+    !positionsAreContiguous
+    || new Set(personaIds).size !== personaIds.length
+    || termSet.size !== response.query_terms.length
+    || response.query_terms.some((term, index) => term !== terms[index])
+    || !matchesAreConsistent
+    || response.inspected_persona_count > response.dataset_persona_count
+    || response.total_match_count_in_scan > response.inspected_persona_count
+    || response.total_match_count_in_scan < response.matches.length
+    || response.scan_truncated
+      !== (response.dataset_persona_count > response.inspected_persona_count)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Semantic world graph Persona match response is inconsistent",
+    });
+  }
+});
+
+export const graphPersonaCohortCreateRequestSchema = cohortCreateRequestSchema.superRefine(
+  (request, context) => {
+    if (request.persona_ids.length > 8) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["persona_ids"],
+        message: "graph-guided cohort selection cannot exceed 8 Personas",
+      });
+    }
+  },
+);
+
+export const graphPersonaCohortOriginSchema = z.object({
+  id: identifierSchema,
+  graph_id: identifierSchema,
+  graph_sha256: sha256DigestSchema,
+  node_id: identifierSchema,
+  dataset: cohortDatasetSchema,
+  cohort_id: identifierSchema,
+  cohort_sha256: sha256DigestSchema,
+  match_semantics: z.literal("exact_token_overlap_non_low_information_attributes"),
+  matcher_version: z.literal("1.0.0"),
+  selected_persona_ids: z.array(identifierSchema).min(1).max(8),
+  origin_sha256: sha256DigestSchema,
+  created_at: isoTimestampSchema,
+}).strict().superRefine((origin, context) => {
+  if (new Set(origin.selected_persona_ids).size !== origin.selected_persona_ids.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["selected_persona_ids"],
+      message: "graph Persona origin selection must be unique",
+    });
+  }
+});
+
+export const graphPersonaCohortCreationSchema = z.object({
+  origin: graphPersonaCohortOriginSchema,
+  cohort: cohortDetailSchema,
+}).strict().superRefine((result, context) => {
+  const memberIds = result.cohort.members.map((member) => member.persona.id);
+  if (
+    result.origin.cohort_id !== result.cohort.id
+    || result.origin.cohort_sha256 !== result.cohort.cohort_sha256
+    || result.origin.dataset.id !== result.cohort.dataset.id
+    || result.origin.dataset.dataset_sha256 !== result.cohort.dataset.dataset_sha256
+    || result.origin.selected_persona_ids.length !== memberIds.length
+    || result.origin.selected_persona_ids.some((personaId, index) => personaId !== memberIds[index])
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "graph Persona cohort origin does not match the returned cohort",
+    });
+  }
+});
+
+export const graphPersonaCohortOriginsResponseSchema = z.object({
+  items: z.array(graphPersonaCohortOriginSchema),
+  page: z.number().int().min(1),
+  page_size: z.number().int().min(1).max(100),
+  total: z.number().int().min(0),
+}).strict().superRefine((response, context) => {
+  const cohortIds = new Set(response.items.map((item) => item.cohort_id));
+  const orderingIsValid = response.items.every((item, index) => {
+    const previous = response.items[index - 1];
+    if (previous === undefined) return true;
+    const currentTime = Date.parse(item.created_at);
+    const previousTime = Date.parse(previous.created_at);
+    return previousTime > currentTime
+      || (previousTime === currentTime && previous.id.localeCompare(item.id) <= 0);
+  });
+  if (
+    response.items.length > response.page_size
+    || response.items.length > response.total
+    || cohortIds.size > 1
+    || !orderingIsValid
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "graph Persona cohort origin page is inconsistent",
+    });
+  }
+});
+
+const semanticWorldGraphSearchMatchFieldSchema = z.enum([
+  "name",
+  "summary",
+  "entity_type",
+  "relation_type",
+  "fact",
+  "evidence_quote",
+]);
+const semanticWorldGraphNodeSearchResultSchema = z.object({
+  kind: z.literal("node"),
+  rank: z.number().int().min(0).max(49),
+  matched_fields: z.array(semanticWorldGraphSearchMatchFieldSchema).min(1).max(4),
+  node: semanticWorldGraphNodeSchema,
+}).strict();
+const semanticWorldGraphEdgeSearchResultSchema = z.object({
+  kind: z.literal("edge"),
+  rank: z.number().int().min(0).max(49),
+  matched_fields: z.array(semanticWorldGraphSearchMatchFieldSchema).min(1).max(3),
+  edge: semanticWorldGraphEdgeSchema,
+}).strict();
+export const semanticWorldGraphSearchResponseSchema = z.object({
+  graph_id: identifierSchema,
+  graph_sha256: sha256DigestSchema,
+  query: nonEmptyTextSchema.min(2).max(100).regex(/^[^\r\n]+$/u),
+  search_semantics: z.literal("casefolded_lexical_substring"),
+  total_match_count: z.number().int().min(0).max(2500),
+  truncated: z.boolean(),
+  results: z.array(z.discriminatedUnion("kind", [
+    semanticWorldGraphNodeSearchResultSchema,
+    semanticWorldGraphEdgeSearchResultSchema,
+  ])).max(50),
+  limitations: z.array(nonEmptyTextSchema).min(2).max(3),
+}).strict().superRefine((response, context) => {
+  const ranksAreContiguous = response.results.every((result, index) => result.rank === index);
+  const identities = response.results.map((result) => (
+    `${result.kind}:${result.kind === "node" ? result.node.id : result.edge.id}`
+  ));
+  if (
+    !ranksAreContiguous
+    || new Set(identities).size !== identities.length
+    || response.total_match_count < response.results.length
+    || response.truncated !== (response.total_match_count > response.results.length)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Semantic world graph search response is inconsistent",
+    });
+  }
+});
+
 export type SnapshotSummary = z.infer<typeof snapshotSummarySchema>;
 export type WorldModelSummary = z.infer<typeof worldModelSummarySchema>;
 export type WorldModelsResponse = z.infer<typeof worldModelsResponseSchema>;
@@ -418,6 +731,7 @@ export type SnapshotDetail = z.infer<typeof snapshotDetailSchema>;
 export type WorldModelDetail = z.infer<typeof worldModelDetailSchema>;
 export type WorldModelEvidenceSelection = z.infer<typeof worldModelEvidenceSelectionSchema>;
 export type WorldModelCreateRequest = z.infer<typeof worldModelCreateRequestSchema>;
+export type WorldSnapshotCreateRequest = z.infer<typeof worldSnapshotCreateRequestSchema>;
 export type EvidenceWorldGraphNode = z.infer<typeof evidenceWorldGraphNodeSchema>;
 export type EvidenceWorldGraph = z.infer<typeof evidenceWorldGraphSchema>;
 export type SemanticWorldGraphNode = z.infer<typeof semanticWorldGraphNodeSchema>;
@@ -427,6 +741,15 @@ export type SemanticWorldGraphsResponse = z.infer<typeof semanticWorldGraphsResp
 export type SemanticWorldGraphSliceDirection = z.infer<typeof semanticWorldGraphSliceDirectionSchema>;
 export type SemanticWorldGraphSlice = z.infer<typeof semanticWorldGraphSliceSchema>;
 export type SemanticWorldGraphEvidenceTimeline = z.infer<typeof semanticWorldGraphEvidenceTimelineSchema>;
+export type SemanticWorldGraphEdgeHistory = z.infer<typeof semanticWorldGraphEdgeHistorySchema>;
+export type SemanticWorldGraphPersonaMatches = z.infer<
+  typeof semanticWorldGraphPersonaMatchesSchema
+>;
+export type GraphPersonaCohortCreation = z.infer<typeof graphPersonaCohortCreationSchema>;
+export type GraphPersonaCohortOriginsResponse = z.infer<
+  typeof graphPersonaCohortOriginsResponseSchema
+>;
+export type SemanticWorldGraphSearchResponse = z.infer<typeof semanticWorldGraphSearchResponseSchema>;
 
 export function buildWorldModelCreateRequest(
   title: string,
@@ -442,8 +765,54 @@ export function buildWorldModelCreateRequest(
   });
 }
 
+export function buildWorldSnapshotCreateRequest(
+  selectedArticles: readonly MediaArticle[],
+): WorldSnapshotCreateRequest {
+  return worldSnapshotCreateRequestSchema.parse({
+    evidence: selectedArticles.map((article) => ({
+      article_id: article.id,
+      evidence_revision_sha256: article.evidence_revision_sha256,
+    })),
+    verification: "human_confirmed",
+  });
+}
+
 export function createWorldModelDetailEndpoint(worldModelId: string): string {
   return `${worldModelsEndpoint}/${encodeURIComponent(worldModelId)}`;
+}
+
+export function createWorldSnapshotEndpoint(
+  worldModelId: string,
+  snapshotId: string | null,
+): string {
+  const snapshotsEndpoint = `${createWorldModelDetailEndpoint(worldModelId)}/snapshots`;
+
+  return snapshotId === null
+    ? snapshotsEndpoint
+    : `${snapshotsEndpoint}/${encodeURIComponent(snapshotId)}`;
+}
+
+function createSnapshotResponseSchema(
+  worldModelId: string,
+  snapshotId: string | null,
+): z.ZodEffects<typeof snapshotDetailSchema> {
+  return snapshotDetailSchema.superRefine((snapshot, context) => {
+    if (snapshot.world_model_id !== worldModelId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["world_model_id"],
+        message: "snapshot must belong to the requested world model",
+      });
+    }
+
+    if (snapshotId !== null && snapshot.id !== snapshotId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["id"],
+        message: "snapshot must match the requested snapshot identifier",
+      });
+    }
+  });
 }
 
 export function fetchWorldModels(signal: AbortSignal): Promise<WorldModelsResponse> {
@@ -457,6 +826,18 @@ export function fetchWorldModelDetail(
   return getJson(
     createWorldModelDetailEndpoint(worldModelId),
     worldModelDetailSchema,
+    signal,
+  );
+}
+
+export function fetchWorldSnapshot(
+  worldModelId: string,
+  snapshotId: string,
+  signal: AbortSignal,
+): Promise<SnapshotDetail> {
+  return getJson(
+    createWorldSnapshotEndpoint(worldModelId, snapshotId),
+    createSnapshotResponseSchema(worldModelId, snapshotId),
     signal,
   );
 }
@@ -534,6 +915,133 @@ export function fetchSemanticWorldGraphEvidenceTimeline(
   );
 }
 
+export function fetchSemanticWorldGraphEdgeHistory(
+  graphId: string,
+  edgeId: string,
+  signal: AbortSignal,
+): Promise<SemanticWorldGraphEdgeHistory> {
+  return getJson(
+    `/api/v2/world-graphs/${encodeURIComponent(graphId)}/edges/${encodeURIComponent(edgeId)}/history`,
+    semanticWorldGraphEdgeHistorySchema,
+    signal,
+  ).then((history) => {
+    if (history.graph_id !== graphId || history.edge_id !== edgeId) {
+      throw new Error("关系观察历史响应与请求的图谱或关系不一致。");
+    }
+    return history;
+  });
+}
+
+export function fetchSemanticWorldGraphPersonaMatches(
+  graphId: string,
+  nodeId: string,
+  datasetId: string,
+  limit: number,
+  signal: AbortSignal,
+): Promise<SemanticWorldGraphPersonaMatches> {
+  const validatedGraphId = identifierSchema.parse(graphId);
+  const validatedNodeId = identifierSchema.parse(nodeId);
+  const validatedDatasetId = identifierSchema.parse(datasetId);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+    throw new Error("Persona 候选 limit 必须是 1–20 的整数。");
+  }
+  const parameters = new URLSearchParams({
+    dataset_id: validatedDatasetId,
+    limit: String(limit),
+  });
+  return getJson(
+    `/api/v2/world-graphs/${encodeURIComponent(validatedGraphId)}/nodes/${encodeURIComponent(validatedNodeId)}/persona-matches?${parameters.toString()}`,
+    semanticWorldGraphPersonaMatchesSchema,
+    signal,
+  ).then((response) => {
+    if (
+      response.graph_id !== validatedGraphId
+      || response.node_id !== validatedNodeId
+      || response.dataset.id !== validatedDatasetId
+    ) {
+      throw new Error("Persona 候选响应与请求的图谱、节点或数据集不一致。");
+    }
+    return response;
+  });
+}
+
+export function createGraphPersonaCohort(
+  graphId: string,
+  nodeId: string,
+  request: CohortCreateRequest,
+  signal: AbortSignal,
+): Promise<GraphPersonaCohortCreation> {
+  const validatedGraphId = identifierSchema.parse(graphId);
+  const validatedNodeId = identifierSchema.parse(nodeId);
+  const validatedRequest = graphPersonaCohortCreateRequestSchema.parse(request);
+  return postJson(
+    `/api/v2/world-graphs/${encodeURIComponent(validatedGraphId)}/nodes/${encodeURIComponent(validatedNodeId)}/cohorts`,
+    validatedRequest,
+    graphPersonaCohortCreationSchema,
+    signal,
+  ).then((result) => {
+    if (result.origin.graph_id !== validatedGraphId || result.origin.node_id !== validatedNodeId) {
+      throw new Error("图谱 Persona Cohort 来源与请求的图谱或节点不一致。");
+    }
+    return result;
+  });
+}
+
+export function fetchGraphPersonaCohortOrigins(
+  cohortId: string,
+  page: number,
+  pageSize: number,
+  signal: AbortSignal,
+): Promise<GraphPersonaCohortOriginsResponse> {
+  const validatedCohortId = identifierSchema.parse(cohortId);
+  if (!Number.isInteger(page) || page < 1) {
+    throw new Error("图谱 Persona 来源 page 必须是正整数。");
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new Error("图谱 Persona 来源 page_size 必须是 1–100 的整数。");
+  }
+  const parameters = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return getJson(
+    `/api/v2/populations/cohorts/${encodeURIComponent(validatedCohortId)}/graph-origins?${parameters.toString()}`,
+    graphPersonaCohortOriginsResponseSchema,
+    signal,
+  ).then((response) => {
+    if (response.items.some((item) => item.cohort_id !== validatedCohortId)) {
+      throw new Error("图谱 Persona 来源响应包含其他 Cohort 的记录。");
+    }
+    return response;
+  });
+}
+
+export function fetchSemanticWorldGraphSearch(
+  graphId: string,
+  queryValue: string,
+  limit: number,
+  signal: AbortSignal,
+): Promise<SemanticWorldGraphSearchResponse> {
+  const query = queryValue.trim();
+  if (query.length < 2 || query.length > 100 || /[\r\n]/u.test(query)) {
+    throw new Error("图谱检索词必须是 2–100 个字符的单行文本。");
+  }
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    throw new Error("图谱检索 limit 必须是 1–50 的整数。");
+  }
+  const parameters = new URLSearchParams({ q: query, limit: String(limit) });
+  return getJson(
+    `/api/v2/world-graphs/${encodeURIComponent(graphId)}/search?${parameters.toString()}`,
+    semanticWorldGraphSearchResponseSchema,
+    signal,
+  ).then((response) => {
+    if (response.graph_id !== graphId || response.query !== query) {
+      throw new Error("图谱检索响应与请求的图谱或检索词不一致。");
+    }
+    return response;
+  });
+}
+
 export function createWorldModel(
   request: WorldModelCreateRequest,
   signal: AbortSignal,
@@ -541,4 +1049,19 @@ export function createWorldModel(
   const validatedRequest = worldModelCreateRequestSchema.parse(request);
 
   return postJson(worldModelsEndpoint, validatedRequest, worldModelDetailSchema, signal);
+}
+
+export function appendWorldSnapshot(
+  worldModelId: string,
+  request: WorldSnapshotCreateRequest,
+  signal: AbortSignal,
+): Promise<SnapshotDetail> {
+  const validatedRequest = worldSnapshotCreateRequestSchema.parse(request);
+
+  return postJson(
+    createWorldSnapshotEndpoint(worldModelId, null),
+    validatedRequest,
+    createSnapshotResponseSchema(worldModelId, null),
+    signal,
+  );
 }

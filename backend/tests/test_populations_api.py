@@ -19,6 +19,10 @@ from app.populations.contracts import (
     PersonaSummary,
 )
 from app.populations.errors import PopulationPersonaSelectionError
+from app.world_graphs.contracts import (
+    GraphPersonaCohortOrigin,
+    GraphPersonaCohortOriginsResponse,
+)
 
 
 def _cohort_detail(request: CohortCreateRequest) -> CohortDetail:
@@ -63,6 +67,7 @@ def test_population_endpoints_return_explicit_503_without_database() -> None:
             },
         ),
         client.get(f"/api/v2/populations/cohorts/{cohort_id}"),
+        client.get(f"/api/v2/populations/cohorts/{cohort_id}/graph-origins"),
     )
 
     assert {response.status_code for response in responses} == {503}
@@ -149,3 +154,74 @@ def test_persona_search_rejects_trimmed_single_character() -> None:
     assert response.json() == {
         "detail": "q must contain between 2 and 100 non-whitespace characters after trimming"
     }
+
+
+def test_graph_origin_directory_forwards_strict_page_and_rejects_query_ambiguity(
+    monkeypatch,
+) -> None:
+    application = create_app(load_runtime_settings({}))
+    cohort_id = uuid4()
+    origin = GraphPersonaCohortOrigin(
+        id=uuid4(),
+        graph_id=uuid4(),
+        graph_sha256="d" * 64,
+        node_id=uuid4(),
+        dataset=CohortDatasetRef(
+            id=uuid4(),
+            slug="matraix-persona-dev-sample",
+            dataset_sha256="a" * 64,
+        ),
+        cohort_id=cohort_id,
+        cohort_sha256="c" * 64,
+        match_semantics="exact_token_overlap_non_low_information_attributes",
+        matcher_version="1.0.0",
+        selected_persona_ids=(uuid4(),),
+        origin_sha256="e" * 64,
+        created_at=datetime(2026, 8, 12, tzinfo=UTC),
+    )
+    expected = GraphPersonaCohortOriginsResponse(
+        items=(origin,),
+        page=2,
+        page_size=5,
+        total=6,
+    )
+
+    async def session_override() -> AsyncIterator[object]:
+        yield object()
+
+    async def origins_response(
+        session: object,
+        requested_cohort_id: UUID,
+        page: int,
+        page_size: int,
+    ) -> GraphPersonaCohortOriginsResponse:
+        assert session is not None
+        assert requested_cohort_id == cohort_id
+        assert (page, page_size) == (2, 5)
+        return expected
+
+    application.dependency_overrides[require_population_session] = session_override
+    monkeypatch.setattr(
+        populations_api,
+        "list_graph_persona_cohort_origins",
+        origins_response,
+    )
+    client = TestClient(application)
+    response = client.get(
+        f"/api/v2/populations/cohorts/{cohort_id}/graph-origins?page=2&page_size=5"
+    )
+
+    assert response.status_code == 200
+    assert GraphPersonaCohortOriginsResponse.model_validate_json(response.content) == expected
+    assert (
+        client.get(
+            f"/api/v2/populations/cohorts/{cohort_id}/graph-origins?page=1&page=2"
+        ).status_code
+        == 422
+    )
+    assert (
+        client.get(
+            f"/api/v2/populations/cohorts/{cohort_id}/graph-origins?unknown=value"
+        ).status_code
+        == 422
+    )

@@ -8,8 +8,12 @@ import {
 import { ZodError } from "zod";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
-import { ApiRequestError } from "./apiClient";
 import {
+  ApiRequestError,
+  isAmbiguousPostResultError,
+} from "./apiClient";
+import {
+  fetchMediaArticle,
   type MediaArticle,
   type MediaArticlesQuery,
   type MediaArticlesResponse,
@@ -22,20 +26,27 @@ import {
 import {
   useWorldModelDetail,
   useWorldModels,
+  useWorldSnapshotDetail,
   type WorldModelDetailLoadState,
   type WorldModelsLoadState,
+  type WorldSnapshotDetailLoadState,
 } from "./useWorldModels";
 import {
+  appendWorldSnapshot,
   buildWorldModelCreateRequest,
+  buildWorldSnapshotCreateRequest,
   createWorldModel,
   type SnapshotEvidence,
+  type SnapshotDetail,
   type WorldModelCreateRequest,
   type WorldModelDetail,
   type WorldModelSummary,
+  type WorldSnapshotCreateRequest,
 } from "./worldModelContracts";
 import { EvidenceWorldGraph } from "./EvidenceWorldGraph";
 import { SemanticWorldGraph } from "./SemanticWorldGraph";
 import { EvidenceBundleLibrary } from "./EvidenceBundleLibrary";
+import type { WorldRoute } from "./worldRoute";
 import "./decisionWorkspace.css";
 
 const articlesPerPage = 20;
@@ -45,6 +56,12 @@ type WorldModelCreationState =
   | { readonly status: "idle" }
   | { readonly status: "submitting" }
   | { readonly status: "success"; readonly worldModel: WorldModelDetail }
+  | { readonly status: "error"; readonly error: Error };
+
+type WorldSnapshotAppendState =
+  | { readonly status: "idle" }
+  | { readonly status: "submitting" }
+  | { readonly status: "success"; readonly snapshot: SnapshotDetail }
   | { readonly status: "error"; readonly error: Error };
 
 interface WorldModelBuilderProps {
@@ -86,10 +103,36 @@ function normalizeWorldModelCreationError(error: unknown): Error {
     : new Error("创建世界模型失败：请求抛出了非标准错误。请检查浏览器控制台和后端日志。");
 }
 
+function normalizeWorldSnapshotAppendError(error: unknown): Error {
+  if (error instanceof ZodError) {
+    const issues = error.issues
+      .map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`)
+      .join("; ");
+
+    return new Error(`追加版本输入无效：${issues}`);
+  }
+
+  return error instanceof Error
+    ? error
+    : new Error("追加世界快照失败：请求抛出了非标准错误。请检查浏览器控制台和后端日志。");
+}
+
 function isStaleEvidenceRevisionError(error: Error): boolean {
   return error instanceof ApiRequestError
     && error.kind === "http"
     && /(?:^|;) status=409(?:\s|;)/u.test(error.message);
+}
+
+function evidenceSelectionKey(
+  worldModelId: string,
+  selectedArticles: readonly MediaArticle[],
+): string {
+  return [
+    worldModelId,
+    ...selectedArticles.map(
+      (article) => `${article.id}:${article.evidence_revision_sha256}`,
+    ),
+  ].join("|");
 }
 
 function abbreviatedDigest(digest: string): string {
@@ -670,6 +713,7 @@ function WorldModelList({
                   type="button"
                   data-selected={isSelected}
                   aria-pressed={isSelected}
+                  disabled={state.status === "loading"}
                   onClick={() => onSelect(worldModel)}
                 >
                   <span className="world-version-marker" aria-hidden="true">
@@ -717,8 +761,224 @@ function SnapshotEvidenceArticle({ evidence }: { readonly evidence: SnapshotEvid
   );
 }
 
-function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelDetail }): JSX.Element {
-  const snapshot = worldModel.latest_snapshot;
+function WorldSnapshotAppender({
+  worldModel,
+  selectedArticles,
+  onAppended,
+  onResetStaleEvidence,
+  onVerifyAmbiguousResult,
+}: {
+  readonly worldModel: WorldModelDetail;
+  readonly selectedArticles: readonly MediaArticle[];
+  readonly onAppended: (snapshot: SnapshotDetail) => void;
+  readonly onResetStaleEvidence: () => void;
+  readonly onVerifyAmbiguousResult: () => void;
+}): JSX.Element {
+  const [confirmedSelectionKey, setConfirmedSelectionKey] = useState<string | null>(null);
+  const [appendState, setAppendState] = useState<WorldSnapshotAppendState>({ status: "idle" });
+  const activeController = useRef<AbortController | null>(null);
+  const selectionKey = evidenceSelectionKey(worldModel.id, selectedArticles);
+  const isHumanConfirmed = selectedArticles.length > 0
+    && confirmedSelectionKey === selectionKey;
+  const isSubmitting = appendState.status === "submitting";
+  const isRevisionConflict = appendState.status === "error"
+    && isStaleEvidenceRevisionError(appendState.error);
+  const isAmbiguousResult = appendState.status === "error"
+    && isAmbiguousPostResultError(appendState.error);
+  const canAppend = selectedArticles.length > 0
+    && selectedArticles.length <= maximumEvidenceCount
+    && isHumanConfirmed
+    && !isSubmitting
+    && !isRevisionConflict
+    && !isAmbiguousResult;
+
+  useEffect(() => {
+    return () => {
+      activeController.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    setConfirmedSelectionKey(null);
+    if (activeController.current === null) {
+      setAppendState({ status: "idle" });
+    }
+  }, [selectionKey]);
+
+  const submitSnapshot = async (): Promise<void> => {
+    if (!canAppend || activeController.current !== null) {
+      return;
+    }
+
+    let request: WorldSnapshotCreateRequest;
+
+    try {
+      request = buildWorldSnapshotCreateRequest(selectedArticles);
+    } catch (error: unknown) {
+      setAppendState({ status: "error", error: normalizeWorldSnapshotAppendError(error) });
+      return;
+    }
+
+    const controller = new AbortController();
+    activeController.current = controller;
+    setAppendState({ status: "submitting" });
+
+    try {
+      const snapshot = await appendWorldSnapshot(worldModel.id, request, controller.signal);
+
+      if (activeController.current !== controller || controller.signal.aborted) {
+        return;
+      }
+
+      setConfirmedSelectionKey(null);
+      setAppendState({ status: "success", snapshot });
+      onAppended(snapshot);
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+
+      if (activeController.current !== controller) {
+        return;
+      }
+
+      setAppendState({ status: "error", error: normalizeWorldSnapshotAppendError(error) });
+    } finally {
+      if (activeController.current === controller) {
+        activeController.current = null;
+      }
+    }
+  };
+
+  const resetStaleEvidence = (): void => {
+    if (activeController.current !== null) {
+      return;
+    }
+
+    setConfirmedSelectionKey(null);
+    setAppendState({ status: "idle" });
+    onResetStaleEvidence();
+  };
+
+  const verifyAmbiguousResult = (): void => {
+    if (activeController.current !== null) {
+      return;
+    }
+
+    setConfirmedSelectionKey(null);
+    setAppendState({ status: "idle" });
+    onVerifyAmbiguousResult();
+  };
+
+  return (
+    <section className="world-snapshot-appender" aria-labelledby="world-snapshot-appender-title">
+      <div className="world-snapshot-appender-heading">
+        <div>
+          <span>追加版本</span>
+          <h4 id="world-snapshot-appender-title">把当前媒体选择冻结为下一版</h4>
+          <p>沿用上方已选报道的精确修订；旧版本保持不变，提交不会自动重试。</p>
+        </div>
+        <strong>{selectedArticles.length} / {maximumEvidenceCount} 篇</strong>
+      </div>
+
+      {selectedArticles.length === 0 ? (
+        <div className="world-snapshot-append-empty" role="status">
+          先在上方媒体流明确选择证据，再为“{worldModel.title}”追加版本。
+        </div>
+      ) : (
+        <label className="world-human-confirmation world-snapshot-append-confirmation">
+          <input
+            type="checkbox"
+            checked={isHumanConfirmed}
+            disabled={isSubmitting}
+            onChange={(event) => {
+              setConfirmedSelectionKey(event.target.checked ? selectionKey : null);
+              setAppendState({ status: "idle" });
+            }}
+          />
+          <span>
+            <strong>我已重新核验这 {selectedArticles.length} 篇修订，并确认追加到此模型</strong>
+            <small>证据选择、顺序或目标模型变化后，本次确认立即失效。</small>
+          </span>
+        </label>
+      )}
+
+      {appendState.status === "error" ? (
+        <div className="world-create-message world-create-error world-snapshot-append-message" role="alert">
+          <strong>
+            {isRevisionConflict
+              ? "证据修订冲突，未创建新版本"
+              : isAmbiguousResult
+                ? "提交结果不确定，请先刷新档案核对"
+                : "新版本未创建"}
+          </strong>
+          <p>{appendState.error.message}</p>
+          <small>
+            {isRevisionConflict
+              ? "服务器返回 409：媒体内容已变化，必须清空选择、刷新并重新人工确认。"
+              : "追加请求不会自动重试，避免一次人工确认生成多个版本。"}
+          </small>
+          {isRevisionConflict ? (
+            <button
+              className="button button-secondary button-compact"
+              type="button"
+              onClick={resetStaleEvidence}
+            >
+              清空选择并刷新媒体
+            </button>
+          ) : null}
+          {isAmbiguousResult ? (
+            <button
+              className="button button-secondary button-compact"
+              type="button"
+              onClick={verifyAmbiguousResult}
+            >
+              刷新档案并核对版本
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {appendState.status === "success" ? (
+        <div className="world-create-message world-create-success world-snapshot-append-message" role="status">
+          已追加 v{appendState.snapshot.version}，档案正在刷新并已显式切换到新版本。
+        </div>
+      ) : null}
+
+      <button
+        className="button button-primary world-snapshot-append-action"
+        type="button"
+        data-testid="append-world-snapshot"
+        disabled={!canAppend}
+        aria-busy={isSubmitting}
+        onClick={() => void submitSnapshot()}
+      >
+        {isSubmitting
+          ? "正在追加不可变快照…"
+          : `人工确认并追加 v${worldModel.latest_snapshot.version + 1}`}
+      </button>
+    </section>
+  );
+}
+
+function WorldModelDetailView({
+  worldModel,
+  snapshot,
+  selectedArticles,
+  onSelectSnapshot,
+  onSnapshotAppended,
+  onResetStaleEvidence,
+  onVerifyAmbiguousResult,
+}: {
+  readonly worldModel: WorldModelDetail;
+  readonly snapshot: SnapshotDetail;
+  readonly selectedArticles: readonly MediaArticle[];
+  readonly onSelectSnapshot: (snapshotId: string | null) => void;
+  readonly onSnapshotAppended: (snapshot: SnapshotDetail) => void;
+  readonly onResetStaleEvidence: () => void;
+  readonly onVerifyAmbiguousResult: () => void;
+}): JSX.Element {
+  const history = [...worldModel.snapshots].reverse();
 
   return (
     <div className="world-model-detail-content">
@@ -726,16 +986,20 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
         <div>
           <span className="world-human-verified">人工冻结声明</span>
           <h3>{worldModel.title}</h3>
-          <p>创建于 {formatMediaTimestamp(worldModel.created_at)}</p>
+          <p>
+            模型创建于 {formatMediaTimestamp(worldModel.created_at)} · 正在核验 v{snapshot.version}
+          </p>
         </div>
         <details className="decision-diagnostics">
           <summary>接口诊断</summary>
           <code>GET /api/v2/world-models/&#123;id&#125;</code>
+          <code>GET /api/v2/world-models/&#123;id&#125;/snapshots/&#123;snapshot_id&#125;</code>
+          <code>POST /api/v2/world-models/&#123;id&#125;/snapshots</code>
         </details>
       </div>
 
-      <dl className="world-snapshot-ledger" aria-label="最新不可变快照摘要">
-        <div><dt>当前版本</dt><dd>v{snapshot.version}</dd></div>
+      <dl className="world-snapshot-ledger" aria-label="当前选定不可变快照摘要">
+        <div><dt>选定版本</dt><dd>v{snapshot.version}</dd></div>
         <div><dt>冻结证据</dt><dd>{formatMediaCount(snapshot.evidence.length)}</dd></div>
         <div><dt>确认方式</dt><dd>人工确认</dd></div>
         <div><dt>冻结时间</dt><dd>{formatMediaTimestamp(snapshot.created_at)}</dd></div>
@@ -746,26 +1010,53 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
         <code>{snapshot.snapshot_sha256}</code>
       </div>
 
-      <EvidenceWorldGraph worldModelId={worldModel.id} snapshotId={snapshot.id} />
-
-      <SemanticWorldGraph worldModelId={worldModel.id} snapshotId={snapshot.id} />
-
       <section className="world-version-history" aria-labelledby="world-version-history-title">
         <div>
           <h4 id="world-version-history-title">版本记录</h4>
           <p>每个版本都是独立快照；新版本不会覆盖旧版本。</p>
         </div>
         <ol>
-          {worldModel.snapshots.map((version) => (
+          {history.map((version) => (
             <li key={version.id} data-current={version.id === snapshot.id}>
-              <strong>v{version.version}</strong>
-              <span>{version.evidence_count} 篇</span>
-              <time dateTime={version.created_at}>{formatMediaTimestamp(version.created_at)}</time>
-              <code title={version.snapshot_sha256}>{abbreviatedDigest(version.snapshot_sha256)}</code>
+              <button
+                type="button"
+                data-testid={`world-snapshot-version-${version.version}`}
+                data-current={version.id === snapshot.id}
+                aria-pressed={version.id === snapshot.id}
+                onClick={() => onSelectSnapshot(
+                  version.id === worldModel.latest_snapshot.id ? null : version.id,
+                )}
+              >
+                <strong>v{version.version}</strong>
+                <span>{version.evidence_count} 篇</span>
+                <time dateTime={version.created_at}>{formatMediaTimestamp(version.created_at)}</time>
+                <code title={version.snapshot_sha256}>{abbreviatedDigest(version.snapshot_sha256)}</code>
+              </button>
             </li>
           ))}
         </ol>
       </section>
+
+      <WorldSnapshotAppender
+        key={worldModel.id}
+        worldModel={worldModel}
+        selectedArticles={selectedArticles}
+        onAppended={onSnapshotAppended}
+        onResetStaleEvidence={onResetStaleEvidence}
+        onVerifyAmbiguousResult={onVerifyAmbiguousResult}
+      />
+
+      <EvidenceWorldGraph
+        key={`evidence-graph:${snapshot.id}`}
+        worldModelId={worldModel.id}
+        snapshotId={snapshot.id}
+      />
+
+      <SemanticWorldGraph
+        key={`semantic-graph:${snapshot.id}`}
+        worldModelId={worldModel.id}
+        snapshotId={snapshot.id}
+      />
 
       <section className="world-frozen-evidence" aria-labelledby="world-frozen-evidence-title">
         <div className="world-frozen-evidence-heading">
@@ -787,17 +1078,44 @@ function WorldModelDetailView({ worldModel }: { readonly worldModel: WorldModelD
 
 function WorldModelDetailPanel({
   selectedWorldModelId,
-  state,
-  onReload,
+  selectedSnapshotId,
+  selectedArticles,
+  worldModelState,
+  snapshotState,
+  onReloadWorldModel,
+  onReloadSnapshot,
+  onSelectSnapshot,
+  onSnapshotAppended,
+  onResetStaleEvidence,
+  onVerifyAmbiguousResult,
 }: {
   readonly selectedWorldModelId: string | null;
-  readonly state: WorldModelDetailLoadState;
-  readonly onReload: () => void;
+  readonly selectedSnapshotId: string | null;
+  readonly selectedArticles: readonly MediaArticle[];
+  readonly worldModelState: WorldModelDetailLoadState;
+  readonly snapshotState: WorldSnapshotDetailLoadState;
+  readonly onReloadWorldModel: () => void;
+  readonly onReloadSnapshot: () => void;
+  readonly onSelectSnapshot: (snapshotId: string | null) => void;
+  readonly onSnapshotAppended: (snapshot: SnapshotDetail) => void;
+  readonly onResetStaleEvidence: () => void;
+  readonly onVerifyAmbiguousResult: () => void;
 }): JSX.Element {
-  const loadedWorldModel = state.status === "idle" ? null : state.data;
+  const loadedWorldModel = worldModelState.status === "idle" ? null : worldModelState.data;
   const worldModel = selectedWorldModelId !== null && loadedWorldModel?.id === selectedWorldModelId
     ? loadedWorldModel
     : null;
+  const loadedSnapshot = snapshotState.status === "idle" ? null : snapshotState.data;
+  const historicalSnapshot = selectedSnapshotId !== null
+    && loadedSnapshot?.world_model_id === selectedWorldModelId
+    && loadedSnapshot.id === selectedSnapshotId
+    ? loadedSnapshot
+    : null;
+  const snapshot = selectedSnapshotId === null
+    ? worldModel?.latest_snapshot ?? null
+    : historicalSnapshot;
+  const isLoading = worldModelState.status === "loading"
+    || (selectedSnapshotId !== null && snapshotState.status === "loading");
 
   if (selectedWorldModelId === null) {
     return (
@@ -814,37 +1132,64 @@ function WorldModelDetailPanel({
     <section
       className="world-model-detail"
       aria-label="世界模型不可变快照详情"
-      aria-busy={state.status === "loading"}
+      aria-busy={isLoading}
     >
-      {state.status === "error" ? (
+      {worldModelState.status === "error" ? (
         <ApiErrorPanel
           title="无法读取不可变快照"
-          error={state.error}
-          isRetrying={state.isRetrying}
-          onRetry={onReload}
+          error={worldModelState.error}
+          isRetrying={worldModelState.isRetrying}
+          onRetry={onReloadWorldModel}
         />
       ) : null}
 
-      {state.status === "loading" && worldModel === null ? (
+      {snapshotState.status === "error" && selectedSnapshotId !== null ? (
+        <ApiErrorPanel
+          title="无法读取选定的历史快照"
+          error={snapshotState.error}
+          isRetrying={snapshotState.isRetrying}
+          onRetry={onReloadSnapshot}
+        />
+      ) : null}
+
+      {isLoading && snapshot === null ? (
         <div className="world-detail-skeleton" role="status" aria-live="polite">
-          <span className="sr-only">正在读取不可变快照</span>
+          <span className="sr-only">正在读取选定的不可变快照</span>
           <span className="skeleton-block" aria-hidden="true" />
           <span className="skeleton-block" aria-hidden="true" />
           <span className="skeleton-block" aria-hidden="true" />
         </div>
       ) : null}
 
-      {worldModel !== null ? <WorldModelDetailView worldModel={worldModel} /> : null}
+      {worldModel !== null && snapshot !== null ? (
+        <WorldModelDetailView
+          worldModel={worldModel}
+          snapshot={snapshot}
+          selectedArticles={selectedArticles}
+          onSelectSnapshot={onSelectSnapshot}
+          onSnapshotAppended={onSnapshotAppended}
+          onResetStaleEvidence={onResetStaleEvidence}
+          onVerifyAmbiguousResult={onVerifyAmbiguousResult}
+        />
+      ) : null}
     </section>
   );
 }
 
-export function WorldModelPage(): JSX.Element {
+export function WorldModelPage({
+  route,
+  onRouteChange,
+}: {
+  readonly route: WorldRoute;
+  readonly onRouteChange: (route: WorldRoute) => void;
+}): JSX.Element {
   const [draftQuery, setDraftQuery] = useState<string>("");
   const [appliedQuery, setAppliedQuery] = useState<string | null>(null);
   const [page, setPage] = useState<number>(1);
   const [selectedArticles, setSelectedArticles] = useState<readonly MediaArticle[]>([]);
   const [isHumanConfirmed, setIsHumanConfirmed] = useState<boolean>(false);
+  const [handoffError, setHandoffError] = useState<Error | null>(null);
+  const hydratedEvidenceId = useRef<string | null>(null);
   const query = useMemo<MediaArticlesQuery>(
     () => ({
       q: appliedQuery,
@@ -857,14 +1202,62 @@ export function WorldModelPage(): JSX.Element {
   );
   const { state: mediaState, reload: reloadMedia } = useMediaArticles(query);
   const { state: worldModelsState, reload: reloadWorldModels } = useWorldModels();
-  const [selectedWorldModelId, setSelectedWorldModelId] = useState<string | null>(null);
+  const selectedWorldModelId = route.worldModelId;
+  const selectedSnapshotId = route.snapshotId;
   const {
     state: worldModelDetailState,
     reload: reloadWorldModelDetail,
   } = useWorldModelDetail(selectedWorldModelId);
+  const {
+    state: worldSnapshotDetailState,
+    reload: reloadWorldSnapshotDetail,
+  } = useWorldSnapshotDetail(selectedWorldModelId, selectedSnapshotId);
   const selectedWorldModel = selectedWorldModelId === null
     ? null
     : worldModelsState.data?.items.find((worldModel) => worldModel.id === selectedWorldModelId) ?? null;
+  const loadedWorldModel = worldModelDetailState.status === "idle"
+    ? null
+    : worldModelDetailState.data;
+  const activeWorldModelDetail = loadedWorldModel?.id === selectedWorldModelId
+    ? loadedWorldModel
+    : null;
+  const loadedSelectedSnapshot = worldSnapshotDetailState.status === "idle"
+    ? null
+    : worldSnapshotDetailState.data;
+  const selectedSnapshot = selectedSnapshotId === null
+    ? activeWorldModelDetail?.latest_snapshot ?? null
+    : loadedSelectedSnapshot?.id === selectedSnapshotId
+      && loadedSelectedSnapshot.world_model_id === selectedWorldModelId
+      ? loadedSelectedSnapshot
+      : null;
+
+  useEffect(() => {
+    if (route.evidenceId === null) {
+      hydratedEvidenceId.current = null;
+      setHandoffError(null);
+      return undefined;
+    }
+    if (hydratedEvidenceId.current === route.evidenceId) return undefined;
+    const controller = new AbortController();
+    setHandoffError(null);
+    void fetchMediaArticle(route.evidenceId, controller.signal)
+      .then((article) => {
+        setSelectedArticles((current) => current.some((item) => item.id === article.id)
+          ? current
+          : current.length >= maximumEvidenceCount
+            ? current
+            : [...current, article]);
+        setIsHumanConfirmed(false);
+        hydratedEvidenceId.current = article.id;
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setHandoffError(error instanceof Error
+          ? error
+          : new Error("读取移交报道时收到非标准错误。"));
+      });
+    return () => controller.abort();
+  }, [route.evidenceId]);
 
   useEffect(() => {
     if (mediaState.data === null || selectedArticles.length === 0) {
@@ -914,12 +1307,36 @@ export function WorldModelPage(): JSX.Element {
   };
 
   const selectWorldModel = (worldModel: WorldModelSummary): void => {
-    setSelectedWorldModelId(worldModel.id);
+    onRouteChange({ ...route, worldModelId: worldModel.id, snapshotId: null });
   };
 
   const worldModelCreated = (worldModel: WorldModelDetail): void => {
-    setSelectedWorldModelId(worldModel.id);
+    onRouteChange({ ...route, worldModelId: worldModel.id, snapshotId: null });
     reloadWorldModels();
+  };
+
+  const snapshotAppended = (snapshot: SnapshotDetail): void => {
+    onRouteChange({ ...route, worldModelId: snapshot.world_model_id, snapshotId: snapshot.id });
+    reloadWorldModelDetail();
+    reloadWorldModels();
+  };
+
+  const resetStaleEvidence = (): void => {
+    setSelectedArticles([]);
+    setIsHumanConfirmed(false);
+    reloadMedia();
+  };
+
+  const verifyAmbiguousAppendResult = (): void => {
+    onRouteChange({ worldModelId: null, snapshotId: null, evidenceId: null });
+    reloadWorldModels();
+  };
+
+  const selectSnapshot = (snapshotId: string | null): void => {
+    if (selectedWorldModelId === null) {
+      throw new Error("Cannot select a World snapshot without a selected WorldModel.");
+    }
+    onRouteChange({ ...route, worldModelId: selectedWorldModelId, snapshotId });
   };
 
   return (
@@ -944,7 +1361,9 @@ export function WorldModelPage(): JSX.Element {
             <small>
               {selectedWorldModel === null
                 ? "从下方档案明确打开一个版本。"
-                : `v${selectedWorldModel.latest_snapshot.version} · ${selectedWorldModel.latest_snapshot.evidence_count} 篇证据`}
+                : selectedSnapshot === null
+                  ? "正在读取明确选定的快照…"
+                  : `v${selectedSnapshot.version} · ${selectedSnapshot.evidence.length} 篇证据`}
             </small>
           </div>
           <ul className="decision-boundary-legend" aria-label="世界模型边界">
@@ -972,6 +1391,30 @@ export function WorldModelPage(): JSX.Element {
         onCreated={worldModelCreated}
       />
 
+      {route.evidenceId === null ? null : (
+        <section className="world-evidence-handoff" aria-live="polite">
+          <div>
+            <span>Media → World</span>
+            <strong>
+              {handoffError === null
+                ? hydratedEvidenceId.current === route.evidenceId
+                  ? "报道已加入待冻结证据"
+                  : "正在核验移交报道…"
+                : "移交报道读取失败"}
+            </strong>
+            <p>系统只带入文章身份和当前证据修订；人工冻结声明仍需你在本页明确确认。</p>
+          </div>
+          {handoffError === null ? null : <p role="alert">{handoffError.message}</p>}
+          <button
+            type="button"
+            className="button button-secondary button-compact"
+            onClick={() => onRouteChange({ ...route, evidenceId: null })}
+          >
+            结束移交上下文
+          </button>
+        </section>
+      )}
+
       <EvidenceBundleLibrary />
 
       <section className="world-model-registry decision-archive-stage" aria-labelledby="world-registry-title">
@@ -991,8 +1434,16 @@ export function WorldModelPage(): JSX.Element {
           />
           <WorldModelDetailPanel
             selectedWorldModelId={selectedWorldModelId}
-            state={worldModelDetailState}
-            onReload={reloadWorldModelDetail}
+            selectedSnapshotId={selectedSnapshotId}
+            selectedArticles={selectedArticles}
+            worldModelState={worldModelDetailState}
+            snapshotState={worldSnapshotDetailState}
+            onReloadWorldModel={reloadWorldModelDetail}
+            onReloadSnapshot={reloadWorldSnapshotDetail}
+            onSelectSnapshot={selectSnapshot}
+            onSnapshotAppended={snapshotAppended}
+            onResetStaleEvidence={resetStaleEvidence}
+            onVerifyAmbiguousResult={verifyAmbiguousAppendResult}
           />
         </div>
       </section>

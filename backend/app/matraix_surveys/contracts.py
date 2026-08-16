@@ -300,6 +300,18 @@ class MatraixSurveyExperimentSummary(ContractModel):
     instrument_schema_version: SurveyInstrumentSchemaVersion
     instrument_sha256: Sha256Digest
     experiment_sha256: Sha256Digest
+    retry_of_experiment_id: UUID | None
+    retry_of_experiment_sha256: Sha256Digest | None
+    attempt_number: Annotated[int, Field(ge=1, le=5)]
+
+    @model_validator(mode="after")
+    def validate_attempt_lineage(self) -> Self:
+        has_parent = (
+            self.retry_of_experiment_id is not None and self.retry_of_experiment_sha256 is not None
+        )
+        if (self.attempt_number == 1) == has_parent:
+            raise ValueError("root Survey attempts have no parent; later attempts require one")
+        return self
 
 
 class MatraixSurveyExperimentDetail(MatraixSurveyExperimentSummary):

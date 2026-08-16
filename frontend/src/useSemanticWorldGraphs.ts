@@ -2,15 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   enqueueSemanticWorldGraph,
+  fetchSemanticWorldGraphEdgeHistory,
   fetchSemanticWorldGraphEvidenceTimeline,
+  fetchSemanticWorldGraphPersonaMatches,
+  fetchSemanticWorldGraphSearch,
   fetchSemanticWorldGraphSlice,
   fetchSemanticWorldGraphs,
   type SemanticWorldGraph,
   type SemanticWorldGraphEvidenceTimeline,
+  type SemanticWorldGraphEdgeHistory,
+  type SemanticWorldGraphPersonaMatches,
+  type SemanticWorldGraphSearchResponse,
   type SemanticWorldGraphSlice,
   type SemanticWorldGraphSliceDirection,
   type SemanticWorldGraphsResponse,
 } from "./worldModelContracts";
+import { fetchSemanticReadiness } from "./semanticExperimentContracts";
 
 export type SemanticWorldGraphsState =
   | { readonly status: "loading"; readonly data: SemanticWorldGraphsResponse | null }
@@ -89,6 +96,12 @@ export function useSemanticWorldGraphs(
     enqueueController.current = controller;
     setEnqueueState("submitting");
     try {
+      const readiness = await fetchSemanticReadiness(controller.signal);
+      if (!readiness.semantic_runtime_ready) {
+        throw new Error(
+          "语义 Worker 尚未通过模型启动探测；图谱 POST 尚未发送。请配置 LLM_API_KEY、LLM_BASE_URL 和 LLM_MODEL_NAME。",
+        );
+      }
       const graph = await enqueueSemanticWorldGraph(worldModelId, snapshotId, controller.signal);
       setSelectedGraphId(graph.id);
       setRequestVersion((current) => current + 1);
@@ -210,6 +223,136 @@ export function useSemanticWorldGraphTimeline(
       });
     return () => controller.abort();
   }, [graphId, requestVersion]);
+
+  return {
+    state,
+    reload: () => setRequestVersion((current) => current + 1),
+  };
+}
+
+export type SemanticWorldGraphSearchState =
+  | { readonly status: "idle"; readonly data: null }
+  | { readonly status: "loading"; readonly data: null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphSearchResponse }
+  | { readonly status: "error"; readonly data: null; readonly error: Error };
+
+export function useSemanticWorldGraphSearch(
+  graphId: string | null,
+  query: string | null,
+): {
+  readonly state: SemanticWorldGraphSearchState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphSearchState>({
+    status: "idle",
+    data: null,
+  });
+
+  useEffect(() => {
+    if (graphId === null || query === null) {
+      setState({ status: "idle", data: null });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ status: "loading", data: null });
+    void fetchSemanticWorldGraphSearch(graphId, query, 20, controller.signal)
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", data: null, error: normalizedError(error) });
+      });
+    return () => controller.abort();
+  }, [graphId, query, requestVersion]);
+
+  return {
+    state,
+    reload: () => setRequestVersion((current) => current + 1),
+  };
+}
+
+export type SemanticWorldGraphEdgeHistoryState =
+  | { readonly status: "idle"; readonly data: null }
+  | { readonly status: "loading"; readonly data: null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphEdgeHistory }
+  | { readonly status: "error"; readonly data: null; readonly error: Error };
+
+export function useSemanticWorldGraphEdgeHistory(
+  graphId: string | null,
+  edgeId: string | null,
+): {
+  readonly state: SemanticWorldGraphEdgeHistoryState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphEdgeHistoryState>({
+    status: "idle",
+    data: null,
+  });
+
+  useEffect(() => {
+    if (graphId === null || edgeId === null) {
+      setState({ status: "idle", data: null });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ status: "loading", data: null });
+    void fetchSemanticWorldGraphEdgeHistory(graphId, edgeId, controller.signal)
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", data: null, error: normalizedError(error) });
+      });
+    return () => controller.abort();
+  }, [edgeId, graphId, requestVersion]);
+
+  return {
+    state,
+    reload: () => setRequestVersion((current) => current + 1),
+  };
+}
+
+export type SemanticWorldGraphPersonaMatchesState =
+  | { readonly status: "idle"; readonly data: null }
+  | { readonly status: "loading"; readonly data: null }
+  | { readonly status: "success"; readonly data: SemanticWorldGraphPersonaMatches }
+  | { readonly status: "error"; readonly data: null; readonly error: Error };
+
+export function useSemanticWorldGraphPersonaMatches(
+  graphId: string | null,
+  nodeId: string | null,
+  datasetId: string | null,
+): {
+  readonly state: SemanticWorldGraphPersonaMatchesState;
+  readonly reload: () => void;
+} {
+  const [requestVersion, setRequestVersion] = useState<number>(0);
+  const [state, setState] = useState<SemanticWorldGraphPersonaMatchesState>({
+    status: "idle",
+    data: null,
+  });
+
+  useEffect(() => {
+    if (graphId === null || nodeId === null || datasetId === null) {
+      setState({ status: "idle", data: null });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setState({ status: "loading", data: null });
+    void fetchSemanticWorldGraphPersonaMatches(
+      graphId,
+      nodeId,
+      datasetId,
+      20,
+      controller.signal,
+    )
+      .then((data) => setState({ status: "success", data }))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", data: null, error: normalizedError(error) });
+      });
+    return () => controller.abort();
+  }, [datasetId, graphId, nodeId, requestVersion]);
 
   return {
     state,

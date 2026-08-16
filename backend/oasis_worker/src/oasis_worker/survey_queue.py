@@ -143,6 +143,7 @@ def _load_experiment(
                alternative_hypothesis, instrument_schema_version, instrument_sha256,
                model_name, survey_config_sha256, prompt_schema_version,
                experiment_sha256, created_at
+               ,retry_of_experiment_id, retry_of_experiment_sha256, attempt_number
         FROM matraix_survey_experiments
         WHERE id = %s AND input_sealed_at IS NOT NULL
         """,
