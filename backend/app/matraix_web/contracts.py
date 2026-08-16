@@ -266,11 +266,19 @@ class MatraixWebEvaluationSummary(ContractModel):
     web_config_sha256: Sha256Digest
     prompt_schema_version: WebPromptSchemaVersion
     evaluation_sha256: Sha256Digest
+    retry_of_evaluation_id: UUID | None
+    retry_of_evaluation_sha256: Sha256Digest | None
+    attempt_number: Annotated[int, Field(ge=1, le=5)]
 
     @model_validator(mode="after")
     def validate_counts(self) -> Self:
         if self.succeeded_trial_count + self.failed_trial_count > self.trial_count:
             raise ValueError("web terminal trial counts cannot exceed trial_count")
+        has_parent = (
+            self.retry_of_evaluation_id is not None and self.retry_of_evaluation_sha256 is not None
+        )
+        if (self.attempt_number == 1) == has_parent:
+            raise ValueError("root Web attempts have no parent; later attempts require one")
         return self
 
 

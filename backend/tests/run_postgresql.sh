@@ -6,6 +6,7 @@ pytest -p no:cacheprovider \
   tests/test_evidence_bundles_postgresql.py::test_evidence_bundle_api_projects_sealed_world_snapshot \
   tests/test_matraix_batch_postgresql.py::test_matraix_batch_registry_executes_against_postgresql \
   tests/test_matraix_chat_postgresql.py::test_matraix_chat_api_and_guards_execute_against_postgresql \
+  tests/test_matraix_linux_postgresql.py::test_matraix_linux_retry_executes_against_postgresql \
   tests/test_matraix_trial_archive_postgresql.py::test_matraix_trial_archive_executes_against_postgresql \
   tests/test_matraix_web_postgresql.py::test_matraix_web_api_and_guards_execute_against_postgresql \
   tests/test_media_importer.py::test_postgresql_identity_lock_and_migration_guard \

@@ -73,6 +73,9 @@ const evaluation = {
   web_config_sha256: digest,
   prompt_schema_version: "matraix-web-quotes-choice/v1",
   evaluation_sha256: digest,
+  retry_of_evaluation_id: null,
+  retry_of_evaluation_sha256: null,
+  attempt_number: 1,
   trials: [trialSummary],
 } as const;
 

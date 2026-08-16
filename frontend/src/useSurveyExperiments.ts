@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   fetchSurveyExperiment,
+  fetchSurveyExperimentProgress,
   fetchSurveyExperiments,
   fetchSurveyReadiness,
   type SurveyExperimentDetail,
   type SurveyExperimentSummary,
   type SurveyReadiness,
 } from "./surveyContracts";
+import { useProgressDrivenResource } from "./parentProgress";
 
 type ReadinessState =
   | { readonly status: "loading" }
@@ -59,21 +61,24 @@ export function useSurveyExperiments(): { readonly state: DirectoryState; readon
 }
 
 export function useSurveyExperiment(experimentId: string | null): { readonly state: DetailState; readonly reload: () => void } {
-  const [version, setVersion] = useState(0);
-  const [state, setState] = useState<DetailState>({ status: "idle" });
-  useEffect(() => {
-    if (experimentId === null) { setState({ status: "idle" }); return; }
-    const controller = new AbortController();
-    setState((current) => current.status === "error" ? { ...current, isRetrying: true } : { status: "loading" });
-    let timeout: number | null = null;
-    void fetchSurveyExperiment(experimentId, controller.signal).then((data) => {
-      setState({ status: "success", data });
-      if (["queued", "running"].includes(data.status)) timeout = window.setTimeout(() => setVersion((current) => current + 1), 2_000);
-    }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      setState({ status: "error", error: errorValue(error, "读取 Survey 实验"), isRetrying: false });
-    });
-    return () => { controller.abort(); if (timeout !== null) window.clearTimeout(timeout); };
-  }, [experimentId, version]);
-  return { state, reload: useCallback(() => setVersion((current) => current + 1), []) };
+  const resource = useProgressDrivenResource(
+    experimentId,
+    fetchSurveyExperiment,
+    fetchSurveyExperimentProgress,
+    2_000,
+    "读取 Survey 实验",
+  );
+  if (resource.state.status === "idle") return { state: { status: "idle" }, reload: resource.reload };
+  if (resource.state.status === "loading") return { state: { status: "loading" }, reload: resource.reload };
+  if (resource.state.status === "error") {
+    return {
+      state: {
+        status: "error",
+        error: resource.state.error,
+        isRetrying: resource.state.isRetrying,
+      },
+      reload: resource.reload,
+    };
+  }
+  return { state: resource.state, reload: resource.reload };
 }

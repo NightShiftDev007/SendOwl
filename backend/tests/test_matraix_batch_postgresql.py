@@ -86,6 +86,8 @@ async def _insert_web_evaluation(
         cohort_ref,
         "qwen-plus",
         web_config_sha256,
+        None,
+        1,
     )
     trial_sha256 = calculate_web_trial_sha256(evaluation_sha256, persona)
     await connection.execute(
@@ -189,6 +191,8 @@ async def _insert_linux_evaluation(
         "qwen-plus",
         linux_config_sha256,
         LINUX_PROMPT_SCHEMA_VERSION,
+        None,
+        1,
     )
     evaluation_sha256 = calculate_linux_evaluation_sha256(trial_id, trial_sha256)
     await connection.execute(
@@ -326,11 +330,11 @@ async def _exercise_registry(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0034"
+                assert revision == "20260816_core_0035"
                 cohort = await _insert_population(connection)
                 scenario, baseline, alternative = await _insert_scenario(connection)
                 created_at = datetime.now(UTC) + timedelta(seconds=1)
-                survey_trial_id, _survey_sha = await _insert_survey_trial(
+                _survey_experiment_id, survey_trial_id, _survey_sha = await _insert_survey_trial(
                     connection,
                     cohort,
                     scenario,

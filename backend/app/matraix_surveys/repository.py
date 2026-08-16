@@ -5,7 +5,7 @@ from math import fsum
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.matraix_surveys.contracts import (
@@ -55,6 +55,11 @@ from app.matraix_surveys.models import (
 from app.populations.repository import get_cohort
 from app.scenarios.contracts import ScenarioDetail, ScenarioVariant
 from app.scenarios.repository import get_scenario
+from app.shared.progress import (
+    ParentProgress,
+    build_parent_progress,
+    parse_parent_progress_statuses,
+)
 from app.simulations.constants import (
     CAMEL_ENGINE_VERSION,
     OASIS_ENGINE_VERSION,
@@ -888,6 +893,41 @@ async def get_matraix_survey_experiment(
             f"MatrAIx Survey experiment {experiment_id} was not found"
         )
     return await _detail(session, record)
+
+
+async def get_matraix_survey_experiment_progress(
+    session: AsyncSession,
+    experiment_id: UUID,
+) -> ParentProgress:
+    record = await session.scalar(
+        select(MatraixSurveyExperimentRecord).where(
+            MatraixSurveyExperimentRecord.id == experiment_id,
+            MatraixSurveyExperimentRecord.input_sealed_at.is_not(None),
+        )
+    )
+    if record is None:
+        raise MatraixSurveyExperimentNotFoundError(
+            f"MatrAIx Survey experiment {experiment_id} was not found"
+        )
+    rows = (await _load_trial_summaries(session, (record,)))[record.id]
+    answer_count = await session.scalar(
+        select(func.count())
+        .select_from(MatraixSurveyAnswerRecord)
+        .join(
+            MatraixSurveyTrialRecord,
+            MatraixSurveyTrialRecord.id == MatraixSurveyAnswerRecord.trial_id,
+        )
+        .where(MatraixSurveyTrialRecord.experiment_id == record.id)
+    )
+    if answer_count is None:
+        raise RuntimeError(f"MatrAIx Survey experiment {record.id} answer count is unavailable")
+    return build_parent_progress(
+        record.id,
+        record.attempt_number,
+        parse_parent_progress_statuses(tuple(row.status for row in rows)),
+        answer_count,
+        datetime.now(UTC),
+    )
 
 
 async def get_matraix_survey_trial(

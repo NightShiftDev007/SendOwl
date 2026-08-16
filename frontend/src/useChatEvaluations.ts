@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   fetchChatEvaluation,
+  fetchChatEvaluationProgress,
   fetchChatEvaluations,
   fetchChatReadiness,
   fetchChatTasks,
@@ -13,6 +14,7 @@ import {
   type ChatTrialAtifProjection,
   type MatraixChatTask,
 } from "./chatEvaluationContracts";
+import { useProgressDrivenResource } from "./parentProgress";
 
 export type ChatReadinessLoadState =
   | { readonly status: "loading"; readonly data: ChatReadiness | null }
@@ -191,56 +193,13 @@ export function useChatEvaluation(
   readonly state: ChatEvaluationDetailLoadState;
   readonly reload: () => void;
 } {
-  const [requestVersion, setRequestVersion] = useState<number>(0);
-  const [state, setState] = useState<ChatEvaluationDetailLoadState>({ status: "idle" });
-  const previousId = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (evaluationId === null) {
-      previousId.current = null;
-      setState({ status: "idle" });
-      return;
-    }
-
-    const isNewEvaluation = previousId.current !== evaluationId;
-    previousId.current = evaluationId;
-    const controller = new AbortController();
-    let pollId: number | null = null;
-
-    setState((current) => ({
-      status: "loading",
-      data: isNewEvaluation || current.status === "idle" ? null : current.data,
-    }));
-
-    void fetchChatEvaluation(evaluationId, controller.signal)
-      .then((data) => {
-        setState({ status: "success", data });
-        if (data.status === "queued" || data.status === "running") {
-          pollId = window.setTimeout(() => {
-            setRequestVersion((current) => current + 1);
-          }, 2_000);
-        }
-      })
-      .catch((error: unknown) => {
-        if (isAbortError(error)) return;
-        setState((current) => ({
-          status: "error",
-          error: normalizeError(error, "读取 Chat Evaluation"),
-          isRetrying: false,
-          data: current.status === "idle" ? null : current.data,
-        }));
-      });
-
-    return () => {
-      controller.abort();
-      if (pollId !== null) window.clearTimeout(pollId);
-    };
-  }, [evaluationId, requestVersion]);
-
-  return {
-    state,
-    reload: useCallback(() => setRequestVersion((current) => current + 1), []),
-  };
+  return useProgressDrivenResource(
+    evaluationId,
+    fetchChatEvaluation,
+    fetchChatEvaluationProgress,
+    2_000,
+    "读取 Chat Evaluation",
+  );
 }
 
 export function useChatTrialTrajectory(

@@ -4,7 +4,7 @@ import { ApiErrorPanel } from "./ApiErrorPanel";
 import { isAmbiguousPostResultError } from "./apiClient";
 import { formatMediaTimestamp } from "./mediaPresentation";
 import { PopulationContextPanel } from "./PopulationContextPanel";
-import { createWebEvaluation, fetchWebReadiness } from "./webEvaluationContracts";
+import { createWebEvaluation, fetchWebReadiness, retryWebEvaluation } from "./webEvaluationContracts";
 import {
   useWebEvaluation,
   useWebEvaluations,
@@ -50,7 +50,11 @@ export function WebEvaluationPage({
   const tasks = useWebTasks();
   const directory = useWebEvaluations(page);
   const detail = useWebEvaluation(initialEvaluationId);
-  const trial = useWebTrial(initialTrialId);
+  const trialSummary = detail.state.data?.trials.find((item) => item.id === initialTrialId) ?? null;
+  const trialRevision = trialSummary === null
+    ? null
+    : `${trialSummary.status}:${trialSummary.observed_page_count}:${trialSummary.observed_quote_count}`;
+  const trial = useWebTrial(initialTrialId, trialRevision);
   const ready = readiness.state.status === "success" && readiness.state.data.web_runtime_ready;
 
   useEffect(() => () => activeSubmission.current?.abort(), []);
@@ -66,6 +70,29 @@ export function WebEvaluationPage({
       const created = await createWebEvaluation(cohortId, controller.signal);
       setSubmission({ status: "idle" });
       setConfirmed(false);
+      directory.reload();
+      onSelectionChange(1, created.id, null);
+    } catch (error: unknown) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      const normalized = normalizeError(error);
+      const ambiguous = isAmbiguousPostResultError(normalized);
+      setSubmission({ status: "error", error: normalized, ambiguous });
+      if (ambiguous) onSelectionChange(1, null, null);
+      directory.reload();
+    } finally {
+      if (activeSubmission.current === controller) activeSubmission.current = null;
+    }
+  };
+
+  const retry = async (): Promise<void> => {
+    const selected = detail.state.data;
+    if (detail.state.status !== "success" || selected === null || selected.status !== "failed" || selected.attempt_number >= 5 || !ready || submission.status === "submitting") return;
+    const controller = new AbortController();
+    activeSubmission.current = controller;
+    setSubmission({ status: "submitting" });
+    try {
+      const created = await retryWebEvaluation(selected.id, controller.signal);
+      setSubmission({ status: "idle" });
       directory.reload();
       onSelectionChange(1, created.id, null);
     } catch (error: unknown) {
@@ -112,7 +139,7 @@ export function WebEvaluationPage({
         </aside>
 
         <main className="web-eval-stage">
-          <header><div><span>OBSERVATION / EVIDENCE</span><h3>浏览证据与选择结果</h3></div>{selectedDetail !== null ? <code>{shortHash(selectedDetail.evaluation_sha256)}</code> : null}</header>
+          <header><div><span>OBSERVATION / EVIDENCE</span><h3>浏览证据与选择结果</h3></div>{selectedDetail !== null ? <div><code>attempt {selectedDetail.attempt_number} · {shortHash(selectedDetail.evaluation_sha256)}</code>{selectedDetail.status === "failed" ? <button type="button" disabled={!ready || selectedDetail.attempt_number >= 5 || submission.status === "submitting"} onClick={() => { void retry(); }}>{submission.status === "submitting" ? "正在创建…" : "保留失败并重试"}</button> : null}</div> : null}</header>
           {initialEvaluationId === null ? <div className="web-eval-empty"><strong>显式选择或创建 Evaluation</strong><p>目录不会自动打开第一条历史记录，避免误认旧上下文。</p></div> : null}
           {detail.state.status === "error" ? <ApiErrorPanel title="无法读取 Web Evaluation" error={detail.state.error} isRetrying={false} onRetry={detail.reload} /> : null}
           {selectedDetail !== null ? <>
@@ -131,7 +158,7 @@ export function WebEvaluationPage({
           <header><div><span>ARCHIVE / SEALED</span><h3>Web Evaluation 目录</h3></div><button type="button" onClick={directory.reload}>刷新</button></header>
           {directory.state.status === "error" ? <ApiErrorPanel title="无法读取 Web 目录" error={directory.state.error} isRetrying={false} onRetry={directory.reload} /> : null}
           {directory.state.data?.items.length === 0 ? <div className="web-eval-empty"><strong>尚无 Web Evaluation</strong></div> : null}
-          <ol>{directory.state.data?.items.map((item) => <li key={item.id}><button type="button" data-selected={item.id === initialEvaluationId} onClick={() => onSelectionChange(page, item.id, null)}><strong>{item.cohort.title}</strong><span>{item.status} · {item.trial_count} Persona</span><time dateTime={item.created_at}>{formatMediaTimestamp(item.created_at)}</time><code>{shortHash(item.evaluation_sha256)}</code></button></li>)}</ol>
+          <ol>{directory.state.data?.items.map((item) => <li key={item.id}><button type="button" data-selected={item.id === initialEvaluationId} onClick={() => onSelectionChange(page, item.id, null)}><strong>{item.cohort.title}</strong><span>attempt {item.attempt_number} · {item.status} · {item.trial_count} Persona</span><time dateTime={item.created_at}>{formatMediaTimestamp(item.created_at)}</time><code>{shortHash(item.evaluation_sha256)}</code></button></li>)}</ol>
           <nav aria-label="Web Evaluation 分页"><button type="button" disabled={page <= 1} onClick={() => onSelectionChange(page - 1, null, null)}>上一页</button><span>{page} / {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => onSelectionChange(page + 1, null, null)}>下一页</button></nav>
           {readiness.state.data !== null ? <details><summary>运行边界与 provenance</summary><dl><div><dt>Model</dt><dd>{readiness.state.data.model_name ?? "—"}</dd></div><div><dt>Config</dt><dd><code>{readiness.state.data.web_config_sha256 ?? "—"}</code></dd></div></dl><ul>{readiness.state.data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></details> : null}
         </aside>

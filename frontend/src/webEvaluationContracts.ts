@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema } from "./mediaContracts";
+import { parentProgressSchema, type ParentProgress } from "./parentProgress";
 
 const uuidSchema = z.string().uuid();
 const timestampSchema = z.string().datetime({ offset: true });
@@ -175,17 +176,28 @@ const summaryObjectSchema = z.object({
   web_config_sha256: sha256DigestSchema,
   prompt_schema_version: z.literal("matraix-web-quotes-choice/v1"),
   evaluation_sha256: sha256DigestSchema,
+  retry_of_evaluation_id: uuidSchema.nullable(),
+  retry_of_evaluation_sha256: sha256DigestSchema.nullable(),
+  attempt_number: z.number().int().min(1).max(5),
 }).strict();
 
 export const webEvaluationSummarySchema = summaryObjectSchema.superRefine((value, context) => {
   if (value.trial_count !== value.cohort.persona_count || value.succeeded_trial_count + value.failed_trial_count > value.trial_count) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["trial_count"], message: "Evaluation counts must match the frozen Cohort" });
   }
+  const hasParent = value.retry_of_evaluation_id !== null && value.retry_of_evaluation_sha256 !== null;
+  if ((value.attempt_number === 1) === hasParent) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["attempt_number"], message: "Web retry lineage must match attempt number" });
+  }
 });
 
 export const webEvaluationDetailSchema = summaryObjectSchema.extend({
   trials: z.array(trialSummarySchema).min(1).max(4),
 }).strict().superRefine((value, context) => {
+  const hasParent = value.retry_of_evaluation_id !== null && value.retry_of_evaluation_sha256 !== null;
+  if ((value.attempt_number === 1) === hasParent) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["attempt_number"], message: "Web retry lineage must match attempt number" });
+  }
   if (value.trials.length !== value.trial_count || !value.trials.every((trial, index) => trial.persona.position === index)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["trials"], message: "Trials must match frozen Persona order" });
   }
@@ -258,6 +270,14 @@ export function fetchWebEvaluation(id: string, signal: AbortSignal): Promise<Web
   return getJson(`/api/v2/matraix/web-evaluations/${uuidSchema.parse(id)}`, webEvaluationDetailSchema, signal);
 }
 
+export function fetchWebEvaluationProgress(id: string, signal: AbortSignal): Promise<ParentProgress> {
+  return getJson(
+    `/api/v2/matraix/web-evaluations/${uuidSchema.parse(id)}/progress`,
+    parentProgressSchema,
+    signal,
+  );
+}
+
 export function fetchWebTrial(id: string, signal: AbortSignal): Promise<WebTrial> {
   return getJson(`/api/v2/matraix/web-trials/${uuidSchema.parse(id)}`, webTrialSchema, signal);
 }
@@ -265,4 +285,9 @@ export function fetchWebTrial(id: string, signal: AbortSignal): Promise<WebTrial
 export function createWebEvaluation(cohortId: string, signal: AbortSignal): Promise<WebEvaluationDetail> {
   const body = createRequestSchema.parse({ cohort_id: cohortId, task_id: "matraix/quotes-playwright-choice", task_version: "1.0.0" });
   return postJson("/api/v2/matraix/web-evaluations", body, webEvaluationDetailSchema, signal);
+}
+
+export function retryWebEvaluation(evaluationId: string, signal: AbortSignal): Promise<WebEvaluationDetail> {
+  const id = uuidSchema.parse(evaluationId);
+  return postJson(`/api/v2/matraix/web-evaluations/${id}/retry`, {}, webEvaluationDetailSchema, signal);
 }

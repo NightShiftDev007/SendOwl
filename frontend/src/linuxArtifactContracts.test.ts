@@ -70,6 +70,9 @@ describe("Linux artifact contracts", () => {
         profile_sha256: "e".repeat(64),
       },
       trial_sha256: "f".repeat(64),
+      retry_of_trial_id: null,
+      retry_of_trial_sha256: null,
+      attempt_number: 1,
       result: null,
       error: null,
     })).toThrow();
@@ -97,6 +100,9 @@ describe("Linux artifact contracts", () => {
         profile_sha256: "e".repeat(64),
       },
       trial_sha256: "f".repeat(64),
+      retry_of_trial_id: null,
+      retry_of_trial_sha256: null,
+      attempt_number: 1,
       result: null,
       error: null,
     } as const;

@@ -73,6 +73,12 @@ class MatraixLinuxTrialRecord(ApplicationBase):
     linux_config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     trial_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    retry_of_trial_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("matraix_linux_trials.id", ondelete="RESTRICT"),
+    )
+    retry_of_trial_sha256: Mapped[str | None] = mapped_column(String(64))
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     claimed_by_worker_id: Mapped[str | None] = mapped_column(String(128))
@@ -135,6 +141,13 @@ class MatraixLinuxTrialRecord(ApplicationBase):
         ),
         CheckConstraint("trial_sha256 ~ '^[a-f0-9]{64}$'", name="ck_linux_trial_sha"),
         CheckConstraint(
+            "(attempt_number=1 AND retry_of_trial_id IS NULL "
+            "AND retry_of_trial_sha256 IS NULL) OR "
+            "(attempt_number BETWEEN 2 AND 5 AND retry_of_trial_id IS NOT NULL "
+            "AND retry_of_trial_sha256 ~ '^[a-f0-9]{64}$')",
+            name="ck_linux_trial_attempt_lineage",
+        ),
+        CheckConstraint(
             "status IN ('queued','running','succeeded','failed')", name="ck_linux_status"
         ),
         CheckConstraint(
@@ -191,4 +204,5 @@ class MatraixLinuxTrialRecord(ApplicationBase):
         ),
         Index("ix_linux_trials_created", "created_at"),
         Index("ix_linux_trials_status_created", "status", "created_at"),
+        UniqueConstraint("retry_of_trial_id", name="uq_linux_trial_retry_parent"),
     )

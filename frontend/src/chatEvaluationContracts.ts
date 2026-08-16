@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema } from "./mediaContracts";
+import { parentProgressSchema, type ParentProgress } from "./parentProgress";
 
 const tasksEndpoint = "/api/v2/matraix/chat-tasks";
 const evaluationsEndpoint = "/api/v2/matraix/chat-evaluations";
@@ -570,6 +571,18 @@ export function fetchChatEvaluation(
   return getJson(
     `${evaluationsEndpoint}/${encodeURIComponent(id)}`,
     chatEvaluationDetailSchema,
+    signal,
+  );
+}
+
+export function fetchChatEvaluationProgress(
+  evaluationId: string,
+  signal: AbortSignal,
+): Promise<ParentProgress> {
+  const id = identifierSchema.parse(evaluationId);
+  return getJson(
+    `${evaluationsEndpoint}/${encodeURIComponent(id)}/progress`,
+    parentProgressSchema,
     signal,
   );
 }

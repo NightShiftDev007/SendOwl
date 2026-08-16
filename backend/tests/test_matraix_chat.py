@@ -335,6 +335,7 @@ def test_chat_task_is_public_without_database_and_runtime_routes_are_explicit() 
     responses = (
         client.get("/api/v2/matraix/chat-evaluations"),
         client.get(f"/api/v2/matraix/chat-evaluations/{uuid4()}"),
+        client.get(f"/api/v2/matraix/chat-evaluations/{uuid4()}/progress"),
         client.get(f"/api/v2/matraix/chat-trials/{uuid4()}"),
         client.get(f"/api/v2/matraix/chat-trials/{uuid4()}/trajectory"),
         client.get("/api/v2/matraix/chat-readiness"),

@@ -34,10 +34,11 @@ Scenario Alternative
 - 有界语义实验：Persona World 将真实导入档案封存为 Cohort，并可带着 Cohort 或 Scenario 深链进入 Playground。Playground 把 Scenario baseline、1～2 个 alternatives 与 Cohort 组成持久实验矩阵；worker 在每个 seed 上使用真实 OpenAI-compatible LLM 执行 OASIS/CAMEL 受众动作，保存 SQLite 产物与类型化事件。决策报告页把真实 comparison 封存为固定四章节 Findings，展示实际观测计数、同 seed 配对差值、运行来源和限制，并提供 Markdown 下载；报告问答支持最多五轮的内容寻址追问链，历史只用于理解指代，每轮事实仍必须重新引用同一冻结图谱的精确原文。Persona 证据访谈进一步绑定 Report、Cohort、Persona profile 与模型配置，支持单人追问和 2～8 人原子访谈会话；每个回答只能引用固定报告章节，并明确是合成视角而非真人陈述。
 - Task Gallery：统一展示 OASIS 与 MatrAIx 任务能力，可用性同时读取 `/api/v2/system/capabilities` 与各执行器的实时 readiness。Survey、Chatbot Evaluation、固定来源样例 Web Evaluation 与固定 Linux 产物任务已提供真实 Playground；尚未迁移的 OS App、通用 Computer Use 与 Harbor 会明确锁定。
 - MatrAIx Chatbot Evaluation：固定接入 MatrAIx 仓库的 Acme Support REST 与 streamable-HTTP MCP 两个 source sample，把一个封存的 1～8 人 Cohort 展开为逐 Persona 多轮试验。隔离 sidecar 提供确定性支持回复；Worker 只允许固定 MCP 工具，真实千问生成 Persona 消息和严格 self-report，PostgreSQL 保存逐条 transcript、typed feedback、运行结果与内容哈希。样例不是生产客服系统，也不输出 benchmark reward。
-- MatrAIx Web Evaluation：固定接入 MatrAIx `example-web-playwright_quote-choice` source sample，把封存的 1～4 人 Cohort 展开为逐 Persona 试验。独立、无 Docker socket 的 Chromium 容器只访问固定的 Quotes to Scrape 来源，读取三页真实 DOM、保存内容寻址截图和引文；Worker 只能从实际观察到的引文中提交选择。它不是任意网址浏览器、通用 Web Agent、Harbor trajectory 或生产任务。
-- MatrAIx Linux Artifact Trial：固定接入 `matraix/linux-note-to-csv` source sample。用户显式选择封存 Cohort 与其中一个 Persona 后，千问只提交受约束解释和合成反馈；独立非特权 Runner 写入并校验固定 CSV、submission、feedback 与 verifier 产物，API 按允许清单和内容哈希读取。该任务不执行任意 shell、不接收任意路径，也不是桌面 Computer Use、OS App 或 Harbor runtime。
+- MatrAIx Web Evaluation：固定接入 MatrAIx `example-web-playwright_quote-choice` source sample，把封存的 1～4 人 Cohort 展开为逐 Persona 试验。独立、无 Docker socket 的 Chromium 容器只访问固定的 Quotes to Scrape 来源，读取三页真实 DOM、保存内容寻址截图和引文；Worker 只能从实际观察到的引文中提交选择。失败 Evaluation 可创建最多五次、保留旧记录的不可变 attempt 谱系。它不是任意网址浏览器、通用 Web Agent、Harbor trajectory 或生产任务。
+- MatrAIx Linux Artifact Trial：固定接入 `matraix/linux-note-to-csv` source sample。用户显式选择封存 Cohort 与其中一个 Persona 后，千问只提交受约束解释和合成反馈；独立非特权 Runner 写入并校验固定 CSV、submission、feedback 与 verifier 产物，API 按允许清单和内容哈希读取。失败 Trial 可创建最多五次、保留旧产物身份的不可变 attempt 谱系，并为每次 attempt 封存独立 Evaluation。该任务不执行任意 shell、不接收任意路径，也不是桌面 Computer Use、OS App 或 Harbor runtime。
 - MatrAIx Trial Archive：把已经持久化的 Survey、Chat、固定 Web 与固定 Linux trial 投影为同一份有界分页目录，统一展示执行状态、Persona、父任务或封存 Cohort、来源哈希，并从同一只读快照给出当前筛选的精确类型/状态计数，再深链回各自的 typed detail。Archive 只读取轻量身份与结果摘要，不读取 Survey 答案、Chat transcript、Web 截图或 Linux 文件内容，也不把回答、合成反馈或协议完成状态改写成 reward。Chat detail 仍可把真实 customer/support transcript 严格投影为内容寻址的 ATIF-v1.7 trajectory；该投影明确标注为 derived transcript projection，不虚构 reasoning、tool call、reward、截图、录屏或 Harbor 原生遥测。
-- MatrAIx Batch Registry：可把 1～20 个已封存的 Survey、Chat、Web 或 Linux 父运行按显式顺序内容寻址并登记，也可通过一次原子请求创建 SendOwl-native Survey/Chat 父运行并立即封存 Registry；任一输入失败会整体回滚。Web 和 Linux 只进入 registry-only 候选和成员，不进入 native launch；Linux Evaluation 只封存一个真实固定 Linux Trial，不把 Cohort 冒充父运行。Registry 使用有界候选目录和同一只读快照展示底层 Trial 的观测状态。Chat 失败 Evaluation 可创建最多五次、保留全部旧失败记录的不可变 attempt 谱系；这些仍是 SendOwl-native 入队与恢复能力，不等于 Harbor job launch/retry，也不提供 verifier reward、Harbor 原生 trajectory、通用 artifacts 或授权导出。
+- MatrAIx Batch Registry：可把 1～20 个已封存的 Survey、Chat、Web 或 Linux 父运行按显式顺序内容寻址并登记，也可通过一次原子请求创建 SendOwl-native Survey/Chat 父运行并立即封存 Registry；任一输入失败会整体回滚。Web 和 Linux 只进入 registry-only 候选和成员，不进入 native launch；Linux Evaluation 只封存一个真实固定 Linux Trial，不把 Cohort 冒充父运行。Registry 使用有界候选目录和同一只读快照展示底层 Trial 的观测状态。Survey、Chat、Web、Linux 的失败父运行均保留旧记录并创建最多五次的不可变 attempt 谱系；这些仍是 SendOwl-native 入队与恢复能力，不等于 Harbor job launch/retry，也不提供 verifier reward、Harbor 原生 trajectory、通用 artifacts 或授权导出。
+- 运行进度读取：Survey、Chat、Web、Linux sealed parent 提供同语义的轻量 progress 投影，包含逐状态 Trial 计数、append-only 事件计数和稳定修订摘要。运行页仅在摘要变化时重读 typed detail，避免每次状态探测都重复传输 Survey answers、Chat transcript、Web 页面引用或 Linux 结果元数据。
 - 运行互动图：借用 MiroFish 的关系图交互方式，把真实 Semantic Trial 事件投影为 Actor、Post、Comment 与 Reaction 关系，并支持节点核验；该图明确不是 Zep 世界图，也不表示现实社会关系。
 - 证据世界图：把不可变 WorldSnapshot 直接投影为 Snapshot、Article、Source、Country 节点及其可证明关系；默认由 PostgreSQL 快照数据计算，前端 SVG 只负责交互展示，不需要 Zep Cloud。
 - 千问语义世界图：对同一冻结快照异步提取组织、人物、地点、政策、事件和概念关系；每个节点与关系都必须携带可在冻结正文中逐字校验的引用，PostgreSQL 保存规范化图和内容哈希，Zep Cloud 不参与运行链路。
@@ -86,7 +87,7 @@ pnpm stack
 
 Compose 会先运行 Alembic migration，再启动 API、OASIS worker 和 Nginx 前端。默认本机入口为 <http://127.0.0.1:3200>。
 
-Core 分支使用独立的 Compose project 和数据卷，当前 Alembic head 为 `20260816_core_0034`，与企业版分支的 revision ID 分离。不要把已运行企业版迁移的外部数据库直接配置给本分支；版本不匹配会明确失败，而不会把两种 schema 视为相同版本。
+Core 分支使用独立的 Compose project 和数据卷，当前 Alembic head 为 `20260816_core_0035`，与企业版分支的 revision ID 分离。不要把已运行企业版迁移的外部数据库直接配置给本分支；版本不匹配会明确失败，而不会把两种 schema 视为相同版本。
 
 非本机环境必须提供独立环境文件并替换所有凭据：
 

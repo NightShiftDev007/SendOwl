@@ -79,6 +79,8 @@ def _validate_claim(row: dict[str, object], config: LinuxRuntimeConfig) -> Linux
         str(row["model_name"]),
         str(row["linux_config_sha256"]),
         str(row["prompt_schema_version"]),
+        (str(row["retry_of_trial_sha256"]) if row["retry_of_trial_sha256"] is not None else None),
+        int(row["attempt_number"]),
     )
     if (
         row["task_spec_sha256"] != LINUX_TASK_SPEC_SHA256

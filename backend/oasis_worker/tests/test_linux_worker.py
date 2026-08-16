@@ -18,6 +18,8 @@ def test_linux_trial_and_result_hashes_match_control_plane_golden_values() -> No
         "qwen-plus",
         "d" * 64,
         "matraix-linux-note-to-csv/v1",
+        None,
+        1,
     )
     files = LinuxFileHashes(
         cleaned_list_csv="e" * 64,

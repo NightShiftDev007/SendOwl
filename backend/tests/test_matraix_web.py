@@ -54,6 +54,8 @@ def test_web_task_and_output_are_content_addressed() -> None:
         cohort,
         "qwen-plus",
         "d" * 64,
+        None,
+        1,
     )
     trial_sha = calculate_trial_sha256(evaluation_sha, persona)
     observed_at = datetime(2026, 8, 15, tzinfo=UTC)
@@ -147,6 +149,8 @@ def test_web_task_is_public_and_runtime_routes_require_database() -> None:
     responses = (
         client.get("/api/v2/matraix/web-evaluations"),
         client.get(f"/api/v2/matraix/web-evaluations/{uuid4()}"),
+        client.get(f"/api/v2/matraix/web-evaluations/{uuid4()}/progress"),
+        client.post(f"/api/v2/matraix/web-evaluations/{uuid4()}/retry", json={}),
         client.get(f"/api/v2/matraix/web-trials/{uuid4()}"),
         client.get(f"/api/v2/matraix/web-trials/{uuid4()}/screenshots/0"),
         client.get("/api/v2/matraix/web-readiness"),

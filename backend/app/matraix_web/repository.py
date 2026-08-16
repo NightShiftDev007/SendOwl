@@ -57,6 +57,11 @@ from app.matraix_web.tasks import (
 )
 from app.populations.contracts import CohortDetail, CohortMember
 from app.populations.repository import get_cohort
+from app.shared.progress import (
+    ParentProgress,
+    build_parent_progress,
+    parse_parent_progress_statuses,
+)
 from app.simulations.constants import (
     CAMEL_ENGINE_VERSION,
     OASIS_ENGINE_VERSION,
@@ -205,6 +210,8 @@ def verify_web_evaluation_record(record: MatraixWebEvaluationRecord) -> WebCohor
         cohort,
         record.model_name,
         record.web_config_sha256,
+        record.retry_of_evaluation_sha256,
+        record.attempt_number,
     )
     if record.evaluation_sha256 != expected:
         raise RuntimeError(f"MatrAIx Web evaluation {record.id} integrity mismatch")
@@ -396,6 +403,9 @@ def _summary(
         web_config_sha256=record.web_config_sha256,
         prompt_schema_version=record.prompt_schema_version,
         evaluation_sha256=record.evaluation_sha256,
+        retry_of_evaluation_id=record.retry_of_evaluation_id,
+        retry_of_evaluation_sha256=record.retry_of_evaluation_sha256,
+        attempt_number=record.attempt_number,
     )
 
 
@@ -474,18 +484,15 @@ async def _detail(
     )
 
 
-async def create_web_evaluation(
+async def _create_web_evaluation_attempt(
     session: AsyncSession,
-    request: MatraixWebEvaluationCreateRequest,
-) -> MatraixWebEvaluationDetail:
-    if request.task_id != TASK_ID or request.task_version != TASK_VERSION:
-        raise MatraixWebSelectionError("unsupported fixed MatrAIx Web task")
-    cohort_detail = await get_cohort(session, request.cohort_id)
-    if cohort_detail.persona_count > 4:
-        raise MatraixWebSelectionError(
-            f"cohort contains {cohort_detail.persona_count} personas; Web supports at most 4"
-        )
-    model_name, config_sha256 = await _live_config(session)
+    cohort_detail: CohortDetail,
+    model_name: str,
+    config_sha256: str,
+    retry_of_evaluation_id: UUID | None,
+    retry_of_evaluation_sha256: str | None,
+    attempt_number: int,
+) -> MatraixWebEvaluationRecord:
     task = build_web_task()
     cohort = _cohort_ref(cohort_detail)
     digest = calculate_evaluation_sha256(
@@ -494,6 +501,8 @@ async def create_web_evaluation(
         cohort,
         model_name,
         config_sha256,
+        retry_of_evaluation_sha256,
+        attempt_number,
     )
     await _lock_content(session, digest)
     existing = await session.scalar(
@@ -502,9 +511,7 @@ async def create_web_evaluation(
         )
     )
     if existing is not None:
-        detail = await _detail(session, existing)
-        await session.commit()
-        return detail
+        return existing
     created_at = datetime.now(UTC)
     evaluation = MatraixWebEvaluationRecord(
         id=uuid4(),
@@ -523,6 +530,9 @@ async def create_web_evaluation(
         web_config_sha256=config_sha256,
         prompt_schema_version=PROMPT_SCHEMA_VERSION,
         evaluation_sha256=digest,
+        retry_of_evaluation_id=retry_of_evaluation_id,
+        retry_of_evaluation_sha256=retry_of_evaluation_sha256,
+        attempt_number=attempt_number,
         created_at=created_at,
         input_sealed_at=None,
     )
@@ -547,6 +557,75 @@ async def create_web_evaluation(
     await session.flush()
     evaluation.input_sealed_at = created_at
     await session.flush()
+    return evaluation
+
+
+async def create_web_evaluation(
+    session: AsyncSession,
+    request: MatraixWebEvaluationCreateRequest,
+) -> MatraixWebEvaluationDetail:
+    if request.task_id != TASK_ID or request.task_version != TASK_VERSION:
+        raise MatraixWebSelectionError("unsupported fixed MatrAIx Web task")
+    cohort_detail = await get_cohort(session, request.cohort_id)
+    if cohort_detail.persona_count > 4:
+        raise MatraixWebSelectionError(
+            f"cohort contains {cohort_detail.persona_count} personas; Web supports at most 4"
+        )
+    model_name, config_sha256 = await _live_config(session)
+    evaluation = await _create_web_evaluation_attempt(
+        session,
+        cohort_detail,
+        model_name,
+        config_sha256,
+        None,
+        None,
+        1,
+    )
+    detail = await _detail(session, evaluation)
+    await session.commit()
+    return detail
+
+
+async def retry_web_evaluation(
+    session: AsyncSession,
+    evaluation_id: UUID,
+) -> MatraixWebEvaluationDetail:
+    parent = await session.get(MatraixWebEvaluationRecord, evaluation_id)
+    if parent is None or parent.input_sealed_at is None:
+        raise MatraixWebEvaluationNotFoundError(
+            f"MatrAIx Web evaluation {evaluation_id} was not found"
+        )
+    existing = await session.scalar(
+        select(MatraixWebEvaluationRecord).where(
+            MatraixWebEvaluationRecord.retry_of_evaluation_id == parent.id
+        )
+    )
+    if existing is not None:
+        return await _detail(session, existing)
+    trials = await _load_trial_records(session, (parent.id,))
+    statuses = tuple(trial.status for trial in trials)
+    if any(status in ("queued", "running") for status in statuses) or not any(
+        status == "failed" for status in statuses
+    ):
+        raise MatraixWebSelectionError(
+            "only a terminal Web evaluation containing a failed trial can be retried"
+        )
+    if parent.attempt_number >= 5:
+        raise MatraixWebSelectionError("Web evaluation retry limit of 5 attempts was reached")
+    frozen_cohort = verify_web_evaluation_record(parent)
+    cohort_detail = await get_cohort(session, parent.cohort_id)
+    if _cohort_ref(cohort_detail) != frozen_cohort:
+        raise RuntimeError(f"MatrAIx Web evaluation {parent.id} Cohort integrity mismatch")
+    model_name, config_sha256 = await _live_config(session)
+    evaluation = await _create_web_evaluation_attempt(
+        session,
+        cohort_detail,
+        model_name,
+        config_sha256,
+        parent.id,
+        parent.evaluation_sha256,
+        parent.attempt_number + 1,
+    )
     detail = await _detail(session, evaluation)
     await session.commit()
     return detail
@@ -612,6 +691,43 @@ async def get_web_evaluation(
             f"MatrAIx Web evaluation {evaluation_id} was not found"
         )
     return await _detail(session, record)
+
+
+async def get_web_evaluation_progress(
+    session: AsyncSession,
+    evaluation_id: UUID,
+) -> ParentProgress:
+    record = await session.scalar(
+        select(MatraixWebEvaluationRecord).where(
+            MatraixWebEvaluationRecord.id == evaluation_id,
+            MatraixWebEvaluationRecord.input_sealed_at.is_not(None),
+        )
+    )
+    if record is None:
+        raise MatraixWebEvaluationNotFoundError(
+            f"MatrAIx Web evaluation {evaluation_id} was not found"
+        )
+    trial_records = await _load_trial_records(session, (record.id,))
+    trial_ids = tuple(trial.id for trial in trial_records)
+    page_count = await session.scalar(
+        select(func.count())
+        .select_from(MatraixWebPageRecord)
+        .where(MatraixWebPageRecord.trial_id.in_(trial_ids))
+    )
+    quote_count = await session.scalar(
+        select(func.count())
+        .select_from(MatraixWebQuoteRecord)
+        .where(MatraixWebQuoteRecord.trial_id.in_(trial_ids))
+    )
+    if page_count is None or quote_count is None:
+        raise RuntimeError(f"MatrAIx Web evaluation {record.id} event count is unavailable")
+    return build_parent_progress(
+        record.id,
+        record.attempt_number,
+        parse_parent_progress_statuses(tuple(trial.status for trial in trial_records)),
+        page_count + quote_count,
+        datetime.now(UTC),
+    )
 
 
 async def get_web_trial(session: AsyncSession, trial_id: UUID) -> MatraixWebTrial:

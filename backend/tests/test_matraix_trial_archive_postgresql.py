@@ -40,7 +40,10 @@ from app.matraix_surveys.instrument import (
 from app.matraix_surveys.instrument import (
     PROMPT_SCHEMA_VERSION as SURVEY_PROMPT_SCHEMA_VERSION,
 )
-from app.matraix_surveys.repository import list_matraix_survey_experiments
+from app.matraix_surveys.repository import (
+    get_matraix_survey_experiment_progress,
+    list_matraix_survey_experiments,
+)
 from app.populations.contracts import (
     CohortCreateRequest,
     CohortDetail,
@@ -424,7 +427,7 @@ async def _insert_survey_trial(
     baseline: SurveyVariantRef,
     alternative: SurveyVariantRef,
     created_at: datetime,
-) -> tuple[UUID, str]:
+) -> tuple[UUID, UUID, str]:
     cohort_ref = _survey_cohort(cohort)
     persona = _survey_persona(cohort)
     instrument = build_survey_instrument(baseline, alternative)
@@ -514,7 +517,7 @@ async def _insert_survey_trial(
         text("UPDATE matraix_survey_experiments SET input_sealed_at=:created_at WHERE id=:id"),
         {"id": experiment_id, "created_at": created_at},
     )
-    return trial_id, trial_sha256
+    return experiment_id, trial_id, trial_sha256
 
 
 async def _insert_failed_chat_trial(
@@ -700,11 +703,11 @@ async def _exercise_archive_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0034"
+                assert revision == "20260816_core_0035"
                 cohort = await _insert_population(connection)
                 scenario, baseline, alternative = await _insert_scenario(connection)
                 trial_created_at = datetime.now(UTC)
-                survey_id, survey_sha = await _insert_survey_trial(
+                survey_experiment_id, survey_id, survey_sha = await _insert_survey_trial(
                     connection,
                     cohort,
                     scenario,
@@ -797,6 +800,19 @@ async def _exercise_archive_api(database_url: str) -> None:
                 survey_list_sql = "\n".join(statements)
                 assert "matraix_survey_trials" in survey_list_sql
                 assert "matraix_survey_answers" not in survey_list_sql
+
+                async with AsyncSession(
+                    bind=connection,
+                    expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                ) as session:
+                    survey_progress = await get_matraix_survey_experiment_progress(
+                        session,
+                        survey_experiment_id,
+                    )
+                assert survey_progress.status == "queued"
+                assert survey_progress.queued_trial_count == 1
+                assert survey_progress.event_count == 0
             finally:
                 await transaction.rollback()
     finally:

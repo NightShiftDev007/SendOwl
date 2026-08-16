@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema } from "./mediaContracts";
+import { parentProgressSchema, type ParentProgress } from "./parentProgress";
 
 const uuidSchema = z.string().uuid();
 const textSchema = z.string().trim().min(1);
@@ -87,9 +88,16 @@ export const linuxTrialSchema = z.object({
   cohort: cohortSchema,
   persona: personaSchema,
   trial_sha256: sha256DigestSchema,
+  retry_of_trial_id: uuidSchema.nullable(),
+  retry_of_trial_sha256: sha256DigestSchema.nullable(),
+  attempt_number: z.number().int().min(1).max(5),
   result: resultSchema.nullable(),
   error: errorSchema.nullable(),
 }).strict().superRefine((value, context) => {
+  const hasParent = value.retry_of_trial_id !== null && value.retry_of_trial_sha256 !== null;
+  if ((value.attempt_number === 1) === hasParent) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["attempt_number"], message: "Linux retry lineage must match attempt number" });
+  }
   const valid = value.status === "queued"
     ? value.started_at === null && value.completed_at === null && value.result === null && value.error === null
     : value.status === "running"
@@ -169,6 +177,14 @@ export async function fetchLinuxEvaluation(id: string, signal: AbortSignal): Pro
   );
 }
 
+export async function fetchLinuxEvaluationProgress(id: string, signal: AbortSignal): Promise<ParentProgress> {
+  return getJson(
+    `/api/v2/matraix/linux-evaluations/${uuidSchema.parse(id)}/progress`,
+    parentProgressSchema,
+    signal,
+  );
+}
+
 export async function createLinuxTrial(cohortId: string, personaId: string, signal: AbortSignal): Promise<LinuxTrial> {
   return postJson("/api/v2/matraix/linux-trials", {
     cohort_id: uuidSchema.parse(cohortId),
@@ -189,4 +205,16 @@ export async function createLinuxEvaluation(
     task_id: "matraix/linux-note-to-csv",
     task_version: "1.0.0",
   }, linuxEvaluationSchema, signal);
+}
+
+export async function retryLinuxEvaluation(
+  evaluationId: string,
+  signal: AbortSignal,
+): Promise<LinuxEvaluation> {
+  return postJson(
+    `/api/v2/matraix/linux-evaluations/${uuidSchema.parse(evaluationId)}/retry`,
+    {},
+    linuxEvaluationSchema,
+    signal,
+  );
 }

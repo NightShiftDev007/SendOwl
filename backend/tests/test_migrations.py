@@ -126,6 +126,9 @@ MATRAIX_BATCH_REGISTRY_WEB_MIGRATION_FILE = (
 MATRAIX_LINUX_EVALUATION_REGISTRY_MIGRATION_FILE = (
     VERSIONS_DIRECTORY / "20260816_core_0034_linux_evaluation_registry.py"
 )
+MATRAIX_WEB_LINUX_RETRY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0035_web_linux_retry_lineage.py"
+)
 TEST_POSTGRES_DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 
 
@@ -139,7 +142,7 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
     configuration = Config(str(BACKEND_DIRECTORY / "alembic.ini"))
     scripts = ScriptDirectory.from_config(configuration)
 
-    assert scripts.get_heads() == ["20260816_core_0034"]
+    assert scripts.get_heads() == ["20260816_core_0035"]
     assert {revision.revision for revision in scripts.walk_revisions()} == {
         *(f"20260812_core_{position:04d}" for position in range(1, 14)),
         "20260813_core_0014",
@@ -163,6 +166,7 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
         "20260815_core_0032",
         "20260816_core_0033",
         "20260816_core_0034",
+        "20260816_core_0035",
     }
 
 
@@ -393,6 +397,14 @@ def test_matraix_batch_registry_migration_seals_ordered_source_parents() -> None
     assert "kind IN ('survey','chat','web','linux')" in linux_source
     assert "FROM matraix_linux_evaluations source" in linux_source
     assert "cannot downgrade while Linux batch registry items exist" in linux_source
+
+    retry_source = MATRAIX_WEB_LINUX_RETRY_MIGRATION_FILE.read_text(encoding="utf-8")
+    assert 'down_revision: str | None = "20260816_core_0034"' in retry_source
+    assert "matraix-web-evaluation-retry/v1" in retry_source
+    assert "matraix-linux-trial-retry/v1" in retry_source
+    assert "Web retry requires a terminal parent with a failed trial" in retry_source
+    assert "Linux retry lineage does not match a failed parent attempt" in retry_source
+    assert "cannot downgrade while Web or Linux retry attempts exist" in retry_source
 
 
 def test_core_lineage_never_reuses_enterprise_revision_ids_or_schema() -> None:
@@ -1069,7 +1081,7 @@ async def _exercise_postgresql_content_address_guards(database_url: str) -> None
                 current_revision = await connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-                assert current_revision == "20260816_core_0034"
+                assert current_revision == "20260816_core_0035"
 
                 created_at = datetime.now(UTC)
                 world_model_id = uuid4()

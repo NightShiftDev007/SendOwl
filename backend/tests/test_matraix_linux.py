@@ -48,6 +48,8 @@ def test_linux_task_and_result_are_content_addressed() -> None:
         "qwen-plus",
         "d" * 64,
         "matraix-linux-note-to-csv/v1",
+        None,
+        1,
     )
     files = LinuxArtifactHashes(
         cleaned_list_csv="e" * 64,
@@ -94,6 +96,9 @@ def test_linux_task_and_result_are_content_addressed() -> None:
         cohort=cohort,
         persona=persona,
         trial_sha256=trial_sha,
+        retry_of_trial_id=None,
+        retry_of_trial_sha256=None,
+        attempt_number=1,
         result=result,
         error=None,
     )
@@ -126,6 +131,8 @@ def test_linux_task_is_public_and_runtime_routes_require_database() -> None:
         client.get("/api/v2/matraix/linux-trials"),
         client.get(f"/api/v2/matraix/linux-trials/{trial_id}"),
         client.get(f"/api/v2/matraix/linux-evaluations/{trial_id}"),
+        client.get(f"/api/v2/matraix/linux-evaluations/{trial_id}/progress"),
+        client.post(f"/api/v2/matraix/linux-evaluations/{trial_id}/retry", json={}),
         client.get(f"/api/v2/matraix/linux-trials/{trial_id}/artifacts/cleaned_list.csv"),
         client.get("/api/v2/matraix/linux-readiness"),
         client.post(

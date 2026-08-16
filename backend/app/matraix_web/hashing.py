@@ -48,19 +48,30 @@ def calculate_evaluation_sha256(
     cohort: WebCohortRef,
     model_name: str,
     web_config_sha256: str,
+    retry_of_evaluation_sha256: str | None,
+    attempt_number: int,
 ) -> str:
+    base = (
+        task_spec_sha256,
+        executor_spec_sha256,
+        str(cohort.id),
+        cohort.cohort_sha256,
+        cohort.dataset_sha256,
+        str(cohort.persona_count),
+        model_name,
+        web_config_sha256,
+        PROMPT_SCHEMA_VERSION,
+    )
+    if attempt_number == 1 and retry_of_evaluation_sha256 is None:
+        return _digest(("matraix-web-evaluation/v1", *base))
+    if not 2 <= attempt_number <= 5 or retry_of_evaluation_sha256 is None:
+        raise ValueError("Web retry requires a parent digest and attempt 2..5")
     return _digest(
         (
-            "matraix-web-evaluation/v1",
-            task_spec_sha256,
-            executor_spec_sha256,
-            str(cohort.id),
-            cohort.cohort_sha256,
-            cohort.dataset_sha256,
-            str(cohort.persona_count),
-            model_name,
-            web_config_sha256,
-            PROMPT_SCHEMA_VERSION,
+            "matraix-web-evaluation-retry/v1",
+            retry_of_evaluation_sha256,
+            str(attempt_number),
+            *base,
         )
     )
 

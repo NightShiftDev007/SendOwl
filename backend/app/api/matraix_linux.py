@@ -29,12 +29,15 @@ from app.matraix_linux.repository import (
     create_linux_trial,
     get_linux_artifact,
     get_linux_evaluation,
+    get_linux_evaluation_progress,
     get_linux_readiness,
     get_linux_trial,
     list_linux_tasks,
     list_linux_trials,
+    retry_linux_evaluation,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.progress import ParentProgress
 
 LINUX_UNAVAILABLE_DETAIL = (
     "MatrAIx Linux data is unavailable because DATABASE_URL is not configured"
@@ -129,6 +132,19 @@ def create_matraix_linux_router() -> APIRouter:
             raise HTTPException(status_code=503, detail=str(error)) from error
 
     @router.get(
+        "/api/v2/matraix/linux-evaluations/{evaluation_id}/progress",
+        response_model=ParentProgress,
+    )
+    async def linux_evaluation_progress(
+        evaluation_id: UUID,
+        session: LinuxSession,
+    ) -> ParentProgress:
+        try:
+            return await get_linux_evaluation_progress(session, evaluation_id)
+        except MatraixLinuxEvaluationNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @router.get(
         "/api/v2/matraix/linux-evaluations/{evaluation_id}",
         response_model=MatraixLinuxEvaluation,
     )
@@ -140,6 +156,24 @@ def create_matraix_linux_router() -> APIRouter:
             return await get_linux_evaluation(session, evaluation_id)
         except MatraixLinuxEvaluationNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @router.post(
+        "/api/v2/matraix/linux-evaluations/{evaluation_id}/retry",
+        response_model=MatraixLinuxEvaluation,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def retry_evaluation(
+        evaluation_id: UUID,
+        session: LinuxSession,
+    ) -> MatraixLinuxEvaluation:
+        try:
+            return await retry_linux_evaluation(session, evaluation_id)
+        except MatraixLinuxEvaluationNotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except MatraixLinuxSelectionError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except MatraixLinuxUnavailableError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
 
     @router.get("/api/v2/matraix/linux-trials", response_model=MatraixLinuxTrialsResponse)
     async def linux_trials(request: Request, session: LinuxSession) -> MatraixLinuxTrialsResponse:

@@ -204,6 +204,7 @@ def build_system_capabilities() -> SystemCapabilities:
                     "MatraixSurveyExperiment",
                     "MatraixSurveyTrial",
                     "SurveyInstrument",
+                    "ParentProgress",
                 ),
             ),
             CapabilityDescriptor(
@@ -215,28 +216,34 @@ def build_system_capabilities() -> SystemCapabilities:
                     "MatraixChatEvaluation",
                     "MatraixChatTrial",
                     "MatraixChatAtifProjection",
+                    "ParentProgress",
                 ),
             ),
             CapabilityDescriptor(
                 name="tasks.matraix.web",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MatrAIx Playwright source sample + Qwen",
+                source="MatrAIx Playwright source sample + Qwen + immutable retry lineage",
                 contracts=(
                     "MatraixWebTask",
                     "MatraixWebEvaluation",
                     "MatraixWebTrial",
                     "WebPageObservation",
+                    "ParentProgress",
                 ),
             ),
             CapabilityDescriptor(
                 name="tasks.matraix.linux_artifact",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MatrAIx Linux source sample + Qwen + isolated artifact runner",
+                source=(
+                    "MatrAIx Linux source sample + Qwen + isolated artifact runner "
+                    "+ immutable retry lineage"
+                ),
                 contracts=(
                     "MatraixLinuxTask",
                     "MatraixLinuxEvaluation",
                     "MatraixLinuxTrial",
                     "LinuxTrialResult",
+                    "ParentProgress",
                 ),
             ),
             CapabilityDescriptor(

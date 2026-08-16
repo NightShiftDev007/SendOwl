@@ -235,7 +235,7 @@ async def _exercise_chat_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0034"
+                assert revision == "20260816_core_0035"
                 cohort_id = await _insert_population(connection)
                 await _insert_ready_worker(connection)
                 application = FastAPI()
@@ -271,6 +271,14 @@ async def _exercise_chat_api(database_url: str) -> None:
                     trial_id = UUID(created["trials"][0]["id"])
                     assert created["status"] == "queued"
                     assert created["task"]["source"]["production_sut"] is False
+                    progress_response = await client.get(
+                        f"/api/v2/matraix/chat-evaluations/{evaluation_id}/progress"
+                    )
+                    assert progress_response.status_code == 200
+                    progress = progress_response.json()
+                    assert progress["status"] == "queued"
+                    assert progress["queued_trial_count"] == 1
+                    assert progress["event_count"] == 0
 
                     await connection.execute(
                         text(

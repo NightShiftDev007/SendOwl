@@ -24,6 +24,7 @@ from app.matraix_surveys.errors import (
 from app.matraix_surveys.repository import (
     create_matraix_survey_experiment,
     get_matraix_survey_experiment,
+    get_matraix_survey_experiment_progress,
     get_matraix_survey_readiness,
     get_matraix_survey_trial,
     list_matraix_survey_experiments,
@@ -31,6 +32,7 @@ from app.matraix_surveys.repository import (
 )
 from app.populations.errors import PopulationCohortNotFoundError
 from app.scenarios.errors import ScenarioNotFoundError
+from app.shared.progress import ParentProgress
 
 SURVEY_UNAVAILABLE_DETAIL = (
     "MatrAIx Survey data is unavailable because DATABASE_URL is not configured"
@@ -107,6 +109,19 @@ def create_matraix_surveys_router() -> APIRouter:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),
             ) from error
+
+    @router.get(
+        "/api/v2/matraix/survey-experiments/{experiment_id}/progress",
+        response_model=ParentProgress,
+    )
+    async def survey_experiment_progress(
+        experiment_id: UUID,
+        session: MatraixSurveySession,
+    ) -> ParentProgress:
+        try:
+            return await get_matraix_survey_experiment_progress(session, experiment_id)
+        except MatraixSurveyExperimentNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 
     @router.get(
         "/api/v2/matraix/survey-experiments/{experiment_id}",

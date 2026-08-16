@@ -37,22 +37,33 @@ def trial_sha256(
     model_name: str,
     config_sha256: str,
     prompt_schema_version: str,
+    retry_of_trial_sha256: str | None,
+    attempt_number: int,
 ) -> str:
+    base = (
+        task_spec_sha256,
+        runner_spec_sha256,
+        cohort_id,
+        cohort_sha256,
+        dataset_sha256,
+        persona_id,
+        str(persona_position),
+        persona_external_id,
+        persona_profile_sha256,
+        model_name,
+        config_sha256,
+        prompt_schema_version,
+    )
+    if attempt_number == 1 and retry_of_trial_sha256 is None:
+        return _digest(("matraix-linux-trial/v1", *base))
+    if not 2 <= attempt_number <= 5 or retry_of_trial_sha256 is None:
+        raise ValueError("Linux retry requires a parent digest and attempt 2..5")
     return _digest(
         (
-            "matraix-linux-trial/v1",
-            task_spec_sha256,
-            runner_spec_sha256,
-            cohort_id,
-            cohort_sha256,
-            dataset_sha256,
-            persona_id,
-            str(persona_position),
-            persona_external_id,
-            persona_profile_sha256,
-            model_name,
-            config_sha256,
-            prompt_schema_version,
+            "matraix-linux-trial-retry/v1",
+            retry_of_trial_sha256,
+            str(attempt_number),
+            *base,
         )
     )
 

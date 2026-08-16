@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   fetchWebEvaluation,
+  fetchWebEvaluationProgress,
   fetchWebEvaluations,
   fetchWebReadiness,
   fetchWebTasks,
@@ -12,6 +13,7 @@ import {
   type WebTask,
   type WebTrial,
 } from "./webEvaluationContracts";
+import { useProgressDrivenResource } from "./parentProgress";
 
 type LoadState<T> =
   | { readonly status: "loading"; readonly data: T | null }
@@ -80,20 +82,29 @@ export function useWebEvaluations(page: number): ReturnType<typeof useResource<{
   return useResource(loader, null, null);
 }
 
-export function useWebEvaluation(id: string | null): ReturnType<typeof useResource<WebEvaluationDetail | null>> {
-  const loader = useCallback((signal: AbortSignal) => id === null ? Promise.resolve(null) : fetchWebEvaluation(id, signal), [id]);
-  const shouldRefresh = useCallback(
-    (data: WebEvaluationDetail | null) => data !== null && (data.status === "queued" || data.status === "running"),
-    [],
+export function useWebEvaluation(
+  id: string | null,
+): ReturnType<typeof useProgressDrivenResource<WebEvaluationDetail>> {
+  return useProgressDrivenResource(
+    id,
+    fetchWebEvaluation,
+    fetchWebEvaluationProgress,
+    2_000,
+    "读取 Web Evaluation",
   );
-  return useResource(loader, id === null ? null : 2_000, shouldRefresh);
 }
 
-export function useWebTrial(id: string | null): ReturnType<typeof useResource<WebTrial | null>> {
-  const loader = useCallback((signal: AbortSignal) => id === null ? Promise.resolve(null) : fetchWebTrial(id, signal), [id]);
+export function useWebTrial(
+  id: string | null,
+  parentRevision: string | null,
+): ReturnType<typeof useResource<WebTrial | null>> {
+  const loader = useCallback((signal: AbortSignal) => {
+    void parentRevision;
+    return id === null ? Promise.resolve(null) : fetchWebTrial(id, signal);
+  }, [id, parentRevision]);
   const shouldRefresh = useCallback(
     (data: WebTrial | null) => data !== null && (data.status === "queued" || data.status === "running"),
     [],
   );
-  return useResource(loader, id === null ? null : 2_000, shouldRefresh);
+  return useResource(loader, id === null || parentRevision !== null ? null : 2_000, shouldRefresh);
 }

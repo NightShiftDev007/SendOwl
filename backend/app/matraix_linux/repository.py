@@ -44,6 +44,11 @@ from app.matraix_linux.tasks import (
 )
 from app.populations.contracts import CohortDetail, CohortMember
 from app.populations.repository import get_cohort
+from app.shared.progress import (
+    ParentProgress,
+    build_parent_progress,
+    parse_parent_progress_statuses,
+)
 from app.simulations.constants import (
     CAMEL_ENGINE_VERSION,
     OASIS_ENGINE_VERSION,
@@ -168,6 +173,8 @@ def verify_linux_trial_record(
         record.model_name,
         record.linux_config_sha256,
         record.prompt_schema_version,
+        record.retry_of_trial_sha256,
+        record.attempt_number,
     )
     if record.trial_sha256 != expected:
         raise RuntimeError(f"MatrAIx Linux trial {record.id} integrity mismatch")
@@ -248,6 +255,9 @@ def _trial(record: MatraixLinuxTrialRecord) -> MatraixLinuxTrial:
         cohort=cohort,
         persona=persona,
         trial_sha256=record.trial_sha256,
+        retry_of_trial_id=record.retry_of_trial_id,
+        retry_of_trial_sha256=record.retry_of_trial_sha256,
+        attempt_number=record.attempt_number,
         result=_result(record),
         error=error,
     )
@@ -287,25 +297,17 @@ def _evaluation(
     )
 
 
-async def _ensure_linux_trial_record(
+async def _create_linux_trial_attempt(
     session: AsyncSession,
-    request: MatraixLinuxTrialCreateRequest,
+    task: MatraixLinuxTask,
+    cohort: LinuxCohortRef,
+    persona: LinuxPersonaRef,
+    model_name: str,
+    config_sha256: str,
+    retry_of_trial_id: UUID | None,
+    retry_of_trial_sha256: str | None,
+    attempt_number: int,
 ) -> MatraixLinuxTrialRecord:
-    if request.task_id != TASK_ID or request.task_version != TASK_VERSION:
-        raise MatraixLinuxSelectionError("unsupported fixed MatrAIx Linux task")
-    cohort_detail = await get_cohort(session, request.cohort_id)
-    member = next(
-        (item for item in cohort_detail.members if item.persona.id == request.persona_id),
-        None,
-    )
-    if member is None:
-        raise MatraixLinuxSelectionError(
-            f"Persona {request.persona_id} is not a member of Cohort {request.cohort_id}"
-        )
-    model_name, config_sha256 = await _live_config(session)
-    task = build_linux_task()
-    cohort = _cohort_ref(cohort_detail)
-    persona = _persona_ref(member)
     digest = calculate_trial_sha256(
         task.task_spec_sha256,
         task.runner_spec_sha256,
@@ -314,6 +316,8 @@ async def _ensure_linux_trial_record(
         model_name,
         config_sha256,
         PROMPT_SCHEMA_VERSION,
+        retry_of_trial_sha256,
+        attempt_number,
     )
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:digest, 0))"),
@@ -346,6 +350,9 @@ async def _ensure_linux_trial_record(
         linux_config_sha256=config_sha256,
         prompt_schema_version=PROMPT_SCHEMA_VERSION,
         trial_sha256=digest,
+        retry_of_trial_id=retry_of_trial_id,
+        retry_of_trial_sha256=retry_of_trial_sha256,
+        attempt_number=attempt_number,
         status="queued",
         created_at=datetime.now(UTC),
     )
@@ -353,6 +360,35 @@ async def _ensure_linux_trial_record(
     await session.flush()
     verify_linux_trial_record(record)
     return record
+
+
+async def _ensure_linux_trial_record(
+    session: AsyncSession,
+    request: MatraixLinuxTrialCreateRequest,
+) -> MatraixLinuxTrialRecord:
+    if request.task_id != TASK_ID or request.task_version != TASK_VERSION:
+        raise MatraixLinuxSelectionError("unsupported fixed MatrAIx Linux task")
+    cohort_detail = await get_cohort(session, request.cohort_id)
+    member = next(
+        (item for item in cohort_detail.members if item.persona.id == request.persona_id),
+        None,
+    )
+    if member is None:
+        raise MatraixLinuxSelectionError(
+            f"Persona {request.persona_id} is not a member of Cohort {request.cohort_id}"
+        )
+    model_name, config_sha256 = await _live_config(session)
+    return await _create_linux_trial_attempt(
+        session,
+        build_linux_task(),
+        _cohort_ref(cohort_detail),
+        _persona_ref(member),
+        model_name,
+        config_sha256,
+        None,
+        None,
+        1,
+    )
 
 
 async def create_linux_trial(
@@ -365,11 +401,10 @@ async def create_linux_trial(
     return result
 
 
-async def create_linux_evaluation(
+async def _create_linux_evaluation_record(
     session: AsyncSession,
-    request: MatraixLinuxTrialCreateRequest,
-) -> MatraixLinuxEvaluation:
-    trial = await _ensure_linux_trial_record(session, request)
+    trial: MatraixLinuxTrialRecord,
+) -> MatraixLinuxEvaluationRecord:
     digest = calculate_evaluation_sha256(trial.id, trial.trial_sha256)
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:digest, 0))"),
@@ -381,9 +416,7 @@ async def create_linux_evaluation(
         )
     )
     if existing is not None:
-        result = _evaluation(existing, trial)
-        await session.commit()
-        return result
+        return existing
     created_at = datetime.now(UTC)
     evaluation = MatraixLinuxEvaluationRecord(
         id=uuid4(),
@@ -397,6 +430,84 @@ async def create_linux_evaluation(
     await session.flush()
     evaluation.input_sealed_at = created_at
     await session.flush()
+    return evaluation
+
+
+async def create_linux_evaluation(
+    session: AsyncSession,
+    request: MatraixLinuxTrialCreateRequest,
+) -> MatraixLinuxEvaluation:
+    trial = await _ensure_linux_trial_record(session, request)
+    evaluation = await _create_linux_evaluation_record(session, trial)
+    result = _evaluation(evaluation, trial)
+    await session.commit()
+    return result
+
+
+async def retry_linux_evaluation(
+    session: AsyncSession,
+    evaluation_id: UUID,
+) -> MatraixLinuxEvaluation:
+    row = (
+        await session.execute(
+            select(MatraixLinuxEvaluationRecord, MatraixLinuxTrialRecord)
+            .join(
+                MatraixLinuxTrialRecord,
+                MatraixLinuxTrialRecord.id == MatraixLinuxEvaluationRecord.trial_id,
+            )
+            .where(
+                MatraixLinuxEvaluationRecord.id == evaluation_id,
+                MatraixLinuxEvaluationRecord.input_sealed_at.is_not(None),
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise MatraixLinuxEvaluationNotFoundError(
+            f"MatrAIx Linux evaluation {evaluation_id} was not found"
+        )
+    parent_evaluation, parent_trial = row
+    existing_row = (
+        await session.execute(
+            select(MatraixLinuxEvaluationRecord, MatraixLinuxTrialRecord)
+            .join(
+                MatraixLinuxTrialRecord,
+                MatraixLinuxTrialRecord.id == MatraixLinuxEvaluationRecord.trial_id,
+            )
+            .where(MatraixLinuxTrialRecord.retry_of_trial_id == parent_trial.id)
+        )
+    ).one_or_none()
+    if existing_row is not None:
+        existing_evaluation, existing_trial = existing_row
+        return _evaluation(existing_evaluation, existing_trial)
+    if parent_trial.status != "failed":
+        raise MatraixLinuxSelectionError("only a failed Linux evaluation can be retried")
+    if parent_trial.attempt_number >= 5:
+        raise MatraixLinuxSelectionError("Linux evaluation retry limit of 5 attempts was reached")
+    task, frozen_cohort, frozen_persona = verify_linux_trial_record(parent_trial)
+    cohort_detail = await get_cohort(session, parent_trial.cohort_id)
+    member = next(
+        (item for item in cohort_detail.members if item.persona.id == parent_trial.persona_id),
+        None,
+    )
+    if member is None:
+        raise RuntimeError(f"MatrAIx Linux trial {parent_trial.id} Persona is no longer present")
+    cohort = _cohort_ref(cohort_detail)
+    persona = _persona_ref(member)
+    if cohort != frozen_cohort or persona != frozen_persona:
+        raise RuntimeError(f"MatrAIx Linux trial {parent_trial.id} frozen input mismatch")
+    model_name, config_sha256 = await _live_config(session)
+    trial = await _create_linux_trial_attempt(
+        session,
+        task,
+        cohort,
+        persona,
+        model_name,
+        config_sha256,
+        parent_trial.id,
+        parent_trial.trial_sha256,
+        parent_trial.attempt_number + 1,
+    )
+    evaluation = await _create_linux_evaluation_record(session, trial)
     result = _evaluation(evaluation, trial)
     await session.commit()
     return result
@@ -466,6 +577,38 @@ async def get_linux_evaluation(
         )
     evaluation, trial = row
     return _evaluation(evaluation, trial)
+
+
+async def get_linux_evaluation_progress(
+    session: AsyncSession,
+    evaluation_id: UUID,
+) -> ParentProgress:
+    row = (
+        await session.execute(
+            select(MatraixLinuxEvaluationRecord, MatraixLinuxTrialRecord)
+            .join(
+                MatraixLinuxTrialRecord,
+                MatraixLinuxTrialRecord.id == MatraixLinuxEvaluationRecord.trial_id,
+            )
+            .where(
+                MatraixLinuxEvaluationRecord.id == evaluation_id,
+                MatraixLinuxEvaluationRecord.input_sealed_at.is_not(None),
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise MatraixLinuxEvaluationNotFoundError(
+            f"MatrAIx Linux evaluation {evaluation_id} was not found"
+        )
+    evaluation, trial = row
+    event_count = 1 if trial.status in ("succeeded", "failed") else 0
+    return build_parent_progress(
+        evaluation.id,
+        trial.attempt_number,
+        parse_parent_progress_statuses((trial.status,)),
+        event_count,
+        datetime.now(UTC),
+    )
 
 
 async def get_linux_readiness(session: AsyncSession) -> MatraixLinuxReadiness:

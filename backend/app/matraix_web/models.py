@@ -43,6 +43,12 @@ class MatraixWebEvaluationRecord(ApplicationBase):
     web_config_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
     evaluation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    retry_of_evaluation_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("matraix_web_evaluations.id", ondelete="RESTRICT"),
+    )
+    retry_of_evaluation_sha256: Mapped[str | None] = mapped_column(String(64))
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     input_sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -80,10 +86,18 @@ class MatraixWebEvaluationRecord(ApplicationBase):
         ),
         CheckConstraint("evaluation_sha256 ~ '^[a-f0-9]{64}$'", name="ck_web_eval_sha"),
         CheckConstraint(
+            "(attempt_number=1 AND retry_of_evaluation_id IS NULL "
+            "AND retry_of_evaluation_sha256 IS NULL) OR "
+            "(attempt_number BETWEEN 2 AND 5 AND retry_of_evaluation_id IS NOT NULL "
+            "AND retry_of_evaluation_sha256 ~ '^[a-f0-9]{64}$')",
+            name="ck_web_eval_attempt_lineage",
+        ),
+        CheckConstraint(
             "input_sealed_at IS NULL OR input_sealed_at >= created_at",
             name="ck_web_eval_sealed_time",
         ),
         UniqueConstraint("evaluation_sha256", name="uq_web_eval_sha"),
+        UniqueConstraint("retry_of_evaluation_id", name="uq_web_eval_retry_parent"),
         Index("ix_web_evaluations_created", "created_at"),
     )
 

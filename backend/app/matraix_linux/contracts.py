@@ -130,11 +130,17 @@ class MatraixLinuxTrial(ContractModel):
     cohort: LinuxCohortRef
     persona: LinuxPersonaRef
     trial_sha256: Sha256Digest
+    retry_of_trial_id: UUID | None
+    retry_of_trial_sha256: Sha256Digest | None
+    attempt_number: Annotated[int, Field(ge=1, le=5)]
     result: LinuxTrialResult | None
     error: LinuxTrialError | None
 
     @model_validator(mode="after")
     def validate_state(self) -> Self:
+        has_parent = self.retry_of_trial_id is not None and self.retry_of_trial_sha256 is not None
+        if (self.attempt_number == 1) == has_parent:
+            raise ValueError("root Linux attempts have no parent; later attempts require one")
         if self.status == "queued":
             valid = self.started_at is None and self.completed_at is None
             valid = valid and self.result is None and self.error is None

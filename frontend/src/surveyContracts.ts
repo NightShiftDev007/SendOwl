@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getJson, postJson } from "./apiClient";
 import { sha256DigestSchema } from "./mediaContracts";
+import { parentProgressSchema, type ParentProgress } from "./parentProgress";
 
 const experimentsEndpoint = "/api/v2/matraix/survey-experiments";
 const trialsEndpoint = "/api/v2/matraix/survey-trials";
@@ -291,6 +292,10 @@ export function fetchSurveyExperiments(signal: AbortSignal): Promise<z.infer<typ
 export function fetchSurveyExperiment(experimentId: string, signal: AbortSignal): Promise<SurveyExperimentDetail> {
   const id = identifierSchema.parse(experimentId);
   return getJson(`${experimentsEndpoint}/${encodeURIComponent(id)}`, surveyExperimentDetailSchema, signal);
+}
+export function fetchSurveyExperimentProgress(experimentId: string, signal: AbortSignal): Promise<ParentProgress> {
+  const id = identifierSchema.parse(experimentId);
+  return getJson(`${experimentsEndpoint}/${encodeURIComponent(id)}/progress`, parentProgressSchema, signal);
 }
 export function fetchSurveyTrial(trialId: string, signal: AbortSignal): Promise<SurveyTrial> {
   const id = identifierSchema.parse(trialId);

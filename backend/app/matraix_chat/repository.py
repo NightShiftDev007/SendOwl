@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.matraix_chat.contracts import (
@@ -54,6 +54,11 @@ from app.matraix_chat.tasks import (
 )
 from app.populations.contracts import CohortDetail, CohortMember
 from app.populations.repository import get_cohort
+from app.shared.progress import (
+    ParentProgress,
+    build_parent_progress,
+    parse_parent_progress_statuses,
+)
 from app.simulations.constants import (
     CAMEL_ENGINE_VERSION,
     OASIS_ENGINE_VERSION,
@@ -761,6 +766,41 @@ async def get_chat_evaluation(
             f"MatrAIx Chat evaluation {evaluation_id} was not found"
         )
     return await _detail(session, record)
+
+
+async def get_chat_evaluation_progress(
+    session: AsyncSession,
+    evaluation_id: UUID,
+) -> ParentProgress:
+    record = await session.scalar(
+        select(MatraixChatEvaluationRecord).where(
+            MatraixChatEvaluationRecord.id == evaluation_id,
+            MatraixChatEvaluationRecord.input_sealed_at.is_not(None),
+        )
+    )
+    if record is None:
+        raise MatraixChatEvaluationNotFoundError(
+            f"MatrAIx Chat evaluation {evaluation_id} was not found"
+        )
+    rows = (await _load_trial_summaries(session, (record,)))[record.id]
+    message_count = await session.scalar(
+        select(func.count())
+        .select_from(MatraixChatMessageRecord)
+        .join(
+            MatraixChatTrialRecord,
+            MatraixChatTrialRecord.id == MatraixChatMessageRecord.trial_id,
+        )
+        .where(MatraixChatTrialRecord.evaluation_id == record.id)
+    )
+    if message_count is None:
+        raise RuntimeError(f"MatrAIx Chat evaluation {record.id} message count is unavailable")
+    return build_parent_progress(
+        record.id,
+        record.attempt_number,
+        parse_parent_progress_statuses(tuple(row.status for row in rows)),
+        message_count,
+        datetime.now(UTC),
+    )
 
 
 async def get_chat_trial(session: AsyncSession, trial_id: UUID) -> MatraixChatTrial:

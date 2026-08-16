@@ -25,6 +25,7 @@ from app.matraix_chat.errors import (
 from app.matraix_chat.repository import (
     create_chat_evaluation,
     get_chat_evaluation,
+    get_chat_evaluation_progress,
     get_chat_readiness,
     get_chat_trial,
     list_chat_evaluations,
@@ -37,6 +38,7 @@ from app.matraix_chat.trajectory import (
     project_chat_trial_atif,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.progress import ParentProgress
 
 CHAT_UNAVAILABLE_DETAIL = "MatrAIx Chat data is unavailable because DATABASE_URL is not configured"
 
@@ -116,6 +118,19 @@ def create_matraix_chat_router() -> APIRouter:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),
             ) from error
+
+    @router.get(
+        "/api/v2/matraix/chat-evaluations/{evaluation_id}/progress",
+        response_model=ParentProgress,
+    )
+    async def chat_evaluation_progress(
+        evaluation_id: UUID,
+        session: ChatSession,
+    ) -> ParentProgress:
+        try:
+            return await get_chat_evaluation_progress(session, evaluation_id)
+        except MatraixChatEvaluationNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
 
     @router.get(
         "/api/v2/matraix/chat-evaluations/{evaluation_id}",

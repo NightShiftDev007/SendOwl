@@ -104,7 +104,7 @@ async def _exercise_web_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0034"
+                assert revision == "20260816_core_0035"
                 cohort_id = await _insert_population(connection)
                 await _insert_ready_worker(connection)
 
@@ -141,6 +141,52 @@ async def _exercise_web_api(database_url: str) -> None:
                     evaluation_id = UUID(created["id"])
                     trial_id = UUID(created["trials"][0]["id"])
                     assert created["status"] == "queued"
+                    assert created["attempt_number"] == 1
+                    progress_response = await client.get(
+                        f"/api/v2/matraix/web-evaluations/{evaluation_id}/progress"
+                    )
+                    assert progress_response.status_code == 200
+                    assert progress_response.json()["queued_trial_count"] == 1
+                    assert progress_response.json()["event_count"] == 0
+
+                    await connection.execute(
+                        text(
+                            "UPDATE matraix_web_trials SET status='running',"
+                            "started_at=clock_timestamp(),claimed_by_worker_id='web-test' "
+                            "WHERE id=:trial_id"
+                        ),
+                        {"trial_id": trial_id},
+                    )
+                    await connection.execute(
+                        text(
+                            "UPDATE matraix_web_trials SET status='failed',"
+                            "completed_at=clock_timestamp(),error_code='browser_timeout',"
+                            "error_message='The fixed browser attempt timed out.' "
+                            "WHERE id=:trial_id"
+                        ),
+                        {"trial_id": trial_id},
+                    )
+                    retry_response = await client.post(
+                        f"/api/v2/matraix/web-evaluations/{evaluation_id}/retry",
+                        json={},
+                    )
+                    assert retry_response.status_code == 202, retry_response.text
+                    retried = retry_response.json()
+                    assert retried["attempt_number"] == 2
+                    assert retried["retry_of_evaluation_id"] == str(evaluation_id)
+                    assert retried["retry_of_evaluation_sha256"] == created["evaluation_sha256"]
+                    repeated_retry = await client.post(
+                        f"/api/v2/matraix/web-evaluations/{evaluation_id}/retry",
+                        json={},
+                    )
+                    assert repeated_retry.status_code == 202
+                    assert repeated_retry.json()["id"] == retried["id"]
+                    parent_response = await client.get(
+                        f"/api/v2/matraix/web-evaluations/{evaluation_id}"
+                    )
+                    assert parent_response.json()["status"] == "failed"
+                    evaluation_id = UUID(retried["id"])
+                    trial_id = UUID(retried["trials"][0]["id"])
 
                     await connection.execute(
                         text(

@@ -28,13 +28,16 @@ from app.matraix_web.errors import (
 from app.matraix_web.repository import (
     create_web_evaluation,
     get_web_evaluation,
+    get_web_evaluation_progress,
     get_web_readiness,
     get_web_screenshot,
     get_web_trial,
     list_web_evaluations,
     list_web_tasks,
+    retry_web_evaluation,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.progress import ParentProgress
 
 WEB_UNAVAILABLE_DETAIL = "MatrAIx Web data is unavailable because DATABASE_URL is not configured"
 WEB_ARTIFACT_ROOT = Path("/web-artifacts")
@@ -143,6 +146,19 @@ def create_matraix_web_router() -> APIRouter:
             ) from error
 
     @router.get(
+        "/api/v2/matraix/web-evaluations/{evaluation_id}/progress",
+        response_model=ParentProgress,
+    )
+    async def web_evaluation_progress(
+        evaluation_id: UUID,
+        session: WebSession,
+    ) -> ParentProgress:
+        try:
+            return await get_web_evaluation_progress(session, evaluation_id)
+        except MatraixWebEvaluationNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
         "/api/v2/matraix/web-evaluations/{evaluation_id}",
         response_model=MatraixWebEvaluationDetail,
     )
@@ -154,6 +170,30 @@ def create_matraix_web_router() -> APIRouter:
             return await get_web_evaluation(session, evaluation_id)
         except MatraixWebEvaluationNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.post(
+        "/api/v2/matraix/web-evaluations/{evaluation_id}/retry",
+        response_model=MatraixWebEvaluationDetail,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def retry_evaluation(
+        evaluation_id: UUID,
+        session: WebSession,
+    ) -> MatraixWebEvaluationDetail:
+        try:
+            return await retry_web_evaluation(session, evaluation_id)
+        except MatraixWebEvaluationNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+        except MatraixWebSelectionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
+        except MatraixWebUnavailableError as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(error),
+            ) from error
 
     @router.get(
         "/api/v2/matraix/web-trials/{trial_id}",

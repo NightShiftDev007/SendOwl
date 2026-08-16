@@ -1,6 +1,6 @@
 # SendOwl 项目交接与上下文
 
-> 状态基准：2026-08-16；分支 `main`；基准提交 `76a7cfa`；代码迁移 head `20260816_core_0034`。
+> 状态基准：2026-08-16；分支 `main`；基准提交 `75929b9`；代码迁移 head `20260816_core_0035`。
 
 本文是接手 SendOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 
@@ -119,8 +119,8 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 - OASIS semantic experiment：Scenario × Cohort × Variant × Seed 有界矩阵、类型化事件和同 seed 配对观测计数。
 - Survey：固定三题、逐 Persona 严格回答和精确聚合。
 - Chat：固定 Acme REST/MCP source samples、真实多轮 transcript、typed self-report、内容哈希和最多五次不可变 retry lineage。
-- Web：固定 Quotes to Scrape Playwright source sample、真实 DOM、三页 screenshot 和引用约束选择。
-- Linux：固定 note-to-CSV source sample、隔离非特权 runner、允许清单 artifacts 和 typed verifier 结果。
+- Web：固定 Quotes to Scrape Playwright source sample、真实 DOM、三页 screenshot、引用约束选择和最多五次不可变 retry lineage。
+- Linux：固定 note-to-CSV source sample、隔离非特权 runner、允许清单 artifacts、typed verifier 结果和最多五次不可变 retry lineage。
 - Trial Archive：Survey、Chat、Web、Linux 四类 Trial 的统一有界目录、状态统计和 typed detail 深链。
 - Batch Registry：Survey/Chat/Web/Linux sealed parent 的不可变登记，以及 SendOwl-native Survey/Chat 原子入队并立即登记；Web/Linux 不进入 native launch。Linux parent 只封存一个真实固定 Trial，不复用 Cohort 充当运行。
 
@@ -131,7 +131,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 ### 6.1 服务与迁移
 
 - 后端 `/health` 和 `/readyz` 正常；数据库已连接。
-- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0034` 需在下次 SendOwl 专属迁移后生效。
+- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0035` 需在下次 SendOwl 专属迁移后生效。
 - OASIS worker 在线；platform smoke ready。
 - Compose 还包含 Acme REST/MCP、固定 Chromium executor、Linux artifact runner 和 Nginx frontend。
 
@@ -211,7 +211,7 @@ backend/app/report_questions/    证据问答与追问链
 backend/app/persona_interviews/  合成 Persona 报告访谈
 backend/app/matraix_*            Survey、Chat、Web、Linux、Trial Archive、Batch Registry
 backend/oasis_worker/            Python 3.11 OASIS 与各 LLM 任务执行器
-backend/migrations/versions/     0001～0034 独立 Core 迁移链
+backend/migrations/versions/     0001～0035 独立 Core 迁移链
 compose.yaml                     sendowl 独立运行拓扑
 ```
 
@@ -229,7 +229,6 @@ compose.yaml                     sendowl 独立运行拓扑
 - 完整 Harbor job launch、worker plane、通用 retry/cancel、attempt lineage、verifier reward、通用 artifacts 和受权导出。
 - 桌面 OS App、真实 Computer Use、录屏、通用 trajectory 和 macOS/iOS runner。
 - 用户自定义 Chat/MCP/Web/OS 任务；当前所有 connector 都是固定、允许清单化的 source sample。
-- Web/Linux 尚未拥有与 Chat/Survey 对等的通用 retry attempt ledger。
 
 ### 9.3 MiroFish 未完成范围
 
@@ -266,9 +265,7 @@ compose.yaml                     sendowl 独立运行拓扑
 
 ### 阶段 B：补齐当前内部断链
 
-1. 如果确有 Linux 批次需求，先设计不可变 Linux evaluation parent，再接 Registry。
-2. 为 Web/Linux 增加保留旧失败记录的 attempt lineage，而不是 `failed → queued` 或删除历史。
-3. 统一父资源分页、轻量进度接口和详情增量读取，避免轮询大 transcript/artifact。
+1. Survey、Chat、Web、Linux 的轻量父资源 progress 接口和修订驱动轮询已接通；继续统一父资源分页，并为超长 transcript/artifact 增加真正的详情增量读取。
 
 ### 阶段 C：选择下一项大能力，不要同时铺开
 
@@ -346,7 +343,7 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 ## 13. 已知交接风险
 
-- 当前 `main` 基于 `76a7cfa`，其后大量整合文件仍未提交；这是一份可运行的工作状态，不是干净发布版本。接手人应先按领域审查并规划提交边界，禁止整体 reset。
+- 当前 `main` 基于 `75929b9`；其后的 Web/Linux retry lineage 与四类父资源轻量 progress 是正在验证的未提交切片，禁止整体 reset。
 - 系统 capability 的 `runtime_ready` 表示能力代码已存在；真正是否允许执行仍要读取对应实时 readiness。当前需要 LLM 的五类执行均未就绪。
 - 媒体同步当前处于显式启用状态；任何调整源 DSN、schema revision 或同步周期的操作都必须保持源只读并只影响 SendOwl。
 - 固定 source sample 的成功只证明该受约束纵向链路，不代表通用 Chat/Web/Linux/Harbor 能力。
