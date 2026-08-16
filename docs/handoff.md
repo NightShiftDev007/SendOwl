@@ -1,6 +1,6 @@
 # SendOwl 项目交接与上下文
 
-> 状态基准：2026-08-16；分支 `main`；基准提交 `75929b9`；代码迁移 head `20260816_core_0035`。
+> 状态基准：2026-08-16；分支 `main`；基准提交 `907e74e`；代码迁移 head `20260816_core_0035`。
 
 本文是接手 SendOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 
@@ -265,7 +265,7 @@ compose.yaml                     sendowl 独立运行拓扑
 
 ### 阶段 B：补齐当前内部断链
 
-1. Survey、Chat、Web、Linux 的轻量父资源 progress 接口和修订驱动轮询已接通；继续统一父资源分页，并为超长 transcript/artifact 增加真正的详情增量读取。
+1. Survey、Chat、Web 父资源目录与 Linux Trial 目录的有界分页、四类 sealed parent 的轻量 progress 和修订驱动轮询已接通；继续补 Linux Evaluation 父目录，并为超长 transcript/artifact 增加真正的详情增量读取。
 
 ### 阶段 C：选择下一项大能力，不要同时铺开
 
@@ -343,7 +343,7 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 ## 13. 已知交接风险
 
-- 当前 `main` 基于 `75929b9`；其后的 Web/Linux retry lineage 与四类父资源轻量 progress 是正在验证的未提交切片，禁止整体 reset。
+- 当前 `main` 已提交到 `907e74e`；其后的统一目录分页是正在验证的未提交切片，禁止整体 reset。
 - 系统 capability 的 `runtime_ready` 表示能力代码已存在；真正是否允许执行仍要读取对应实时 readiness。当前需要 LLM 的五类执行均未就绪。
 - 媒体同步当前处于显式启用状态；任何调整源 DSN、schema revision 或同步周期的操作都必须保持源只读并只影响 SendOwl。
 - 固定 source sample 的成功只证明该受约束纵向链路，不代表通用 Chat/Web/Linux/Harbor 能力。

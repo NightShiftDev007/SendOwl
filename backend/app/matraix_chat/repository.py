@@ -728,7 +728,22 @@ async def retry_chat_evaluation(
     return detail
 
 
-async def list_chat_evaluations(session: AsyncSession) -> MatraixChatEvaluationsResponse:
+async def list_chat_evaluations(
+    session: AsyncSession,
+    page: int,
+    page_size: int,
+) -> MatraixChatEvaluationsResponse:
+    total = await session.scalar(
+        select(func.count())
+        .select_from(MatraixChatEvaluationRecord)
+        .where(MatraixChatEvaluationRecord.input_sealed_at.is_not(None))
+    )
+    if total is None:
+        raise RuntimeError("MatrAIx Chat evaluation count is unavailable")
+    if total == 0:
+        return MatraixChatEvaluationsResponse(items=(), page=1, page_size=page_size, total=0)
+    if (page - 1) * page_size >= total:
+        raise MatraixChatSelectionError("requested Chat evaluation page starts beyond total")
     records = tuple(
         (
             await session.execute(
@@ -738,6 +753,8 @@ async def list_chat_evaluations(session: AsyncSession) -> MatraixChatEvaluations
                     MatraixChatEvaluationRecord.created_at.desc(),
                     MatraixChatEvaluationRecord.id.asc(),
                 )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         )
         .scalars()
@@ -748,7 +765,12 @@ async def list_chat_evaluations(session: AsyncSession) -> MatraixChatEvaluations
         _summary_without_artifacts(record, trials[record.id], build_chat_task(record.task_id))
         for record in records
     )
-    return MatraixChatEvaluationsResponse(items=items, total=len(items))
+    return MatraixChatEvaluationsResponse(
+        items=items,
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 async def get_chat_evaluation(

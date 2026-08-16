@@ -285,7 +285,9 @@ class MatraixChatEvaluationDetail(MatraixChatEvaluationSummary):
 
 
 class MatraixChatEvaluationsResponse(ContractModel):
-    items: tuple[MatraixChatEvaluationSummary, ...]
+    items: Annotated[tuple[MatraixChatEvaluationSummary, ...], Field(max_length=50)]
+    page: Annotated[int, Field(ge=1)]
+    page_size: Annotated[int, Field(ge=1, le=50)]
     total: Annotated[int, Field(ge=0)]
 
 

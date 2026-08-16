@@ -130,7 +130,7 @@ describe("hash route resolution", () => {
         trialId: null,
         archiveKind: null,
         archiveStatus: null,
-        page: null,
+        page: 1,
       },
     });
   });
@@ -148,7 +148,7 @@ describe("hash route resolution", () => {
         trialId: "ff51bd82-385d-48ad-aa3c-9277dd927380",
         archiveKind: null,
         archiveStatus: null,
-        page: null,
+        page: 1,
       },
     });
   });

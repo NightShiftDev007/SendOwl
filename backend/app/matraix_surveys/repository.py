@@ -858,7 +858,20 @@ async def retry_matraix_survey_experiment(
 
 async def list_matraix_survey_experiments(
     session: AsyncSession,
+    page: int,
+    page_size: int,
 ) -> MatraixSurveyExperimentsResponse:
+    total = await session.scalar(
+        select(func.count())
+        .select_from(MatraixSurveyExperimentRecord)
+        .where(MatraixSurveyExperimentRecord.input_sealed_at.is_not(None))
+    )
+    if total is None:
+        raise RuntimeError("MatrAIx Survey experiment count is unavailable")
+    if total == 0:
+        return MatraixSurveyExperimentsResponse(items=(), page=1, page_size=page_size, total=0)
+    if (page - 1) * page_size >= total:
+        raise MatraixSurveySelectionError("requested Survey experiment page starts beyond total")
     records = tuple(
         (
             await session.execute(
@@ -868,6 +881,8 @@ async def list_matraix_survey_experiments(
                     MatraixSurveyExperimentRecord.created_at.desc(),
                     MatraixSurveyExperimentRecord.id.asc(),
                 )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         )
         .scalars()
@@ -875,7 +890,12 @@ async def list_matraix_survey_experiments(
     )
     trials = await _load_trial_summaries(session, records)
     items = tuple(_summary_without_answers(record, trials[record.id]) for record in records)
-    return MatraixSurveyExperimentsResponse(items=items, total=len(items))
+    return MatraixSurveyExperimentsResponse(
+        items=items,
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
 
 
 async def get_matraix_survey_experiment(

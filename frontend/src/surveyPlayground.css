@@ -51,6 +51,8 @@
 .survey-instrument > header p { margin:5px 0 0; color:var(--survey-muted); }
 .survey-instrument code { color:var(--survey-cyan); overflow-wrap:anywhere; }
 .survey-instrument ol,.survey-trial-list,.survey-directory > ol { padding:0; margin:0; list-style:none; }
+.survey-directory > nav { display:flex; align-items:center; justify-content:space-between; gap:10px; padding-top:14px; border-top:1px solid var(--survey-line); }
+.survey-directory > nav span { color:var(--survey-muted); font:600 .68rem/1.4 "JetBrains Mono",monospace; }
 .survey-instrument li { display:grid; grid-template-columns:28px minmax(0,1fr); gap:11px; padding:13px 16px; border-top:1px solid rgba(143,184,199,.1); }
 .survey-instrument li > span { display:grid; width:27px; height:27px; place-items:center; color:var(--survey-cyan); border:1px solid var(--survey-line); }
 .survey-instrument li div { display:grid; gap:4px; }

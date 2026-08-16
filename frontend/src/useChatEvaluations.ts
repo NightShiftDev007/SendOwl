@@ -37,13 +37,25 @@ export type ChatTasksLoadState =
     };
 
 export type ChatEvaluationsLoadState =
-  | { readonly status: "loading"; readonly items: readonly ChatEvaluationSummary[] }
-  | { readonly status: "success"; readonly items: readonly ChatEvaluationSummary[] }
+  | {
+      readonly status: "loading";
+      readonly items: readonly ChatEvaluationSummary[];
+      readonly total: number;
+      readonly pageSize: number;
+    }
+  | {
+      readonly status: "success";
+      readonly items: readonly ChatEvaluationSummary[];
+      readonly total: number;
+      readonly pageSize: number;
+    }
   | {
       readonly status: "error";
       readonly error: Error;
       readonly isRetrying: boolean;
       readonly items: readonly ChatEvaluationSummary[];
+      readonly total: number;
+      readonly pageSize: number;
     };
 
 export type ChatEvaluationDetailLoadState =
@@ -154,7 +166,7 @@ export function useChatTasks(): {
   };
 }
 
-export function useChatEvaluations(): {
+export function useChatEvaluations(page: number): {
   readonly state: ChatEvaluationsLoadState;
   readonly reload: () => void;
 } {
@@ -162,13 +174,25 @@ export function useChatEvaluations(): {
   const [state, setState] = useState<ChatEvaluationsLoadState>({
     status: "loading",
     items: [],
+    total: 0,
+    pageSize: 20,
   });
 
   useEffect(() => {
     const controller = new AbortController();
-    setState((current) => ({ status: "loading", items: current.items }));
-    void fetchChatEvaluations(controller.signal)
-      .then((response) => setState({ status: "success", items: response.items }))
+    setState((current) => ({
+      status: "loading",
+      items: current.items,
+      total: current.total,
+      pageSize: current.pageSize,
+    }));
+    void fetchChatEvaluations(page, controller.signal)
+      .then((response) => setState({
+        status: "success",
+        items: response.items,
+        total: response.total,
+        pageSize: response.page_size,
+      }))
       .catch((error: unknown) => {
         if (isAbortError(error)) return;
         setState((current) => ({
@@ -176,10 +200,12 @@ export function useChatEvaluations(): {
           error: normalizeError(error, "读取 Chat Evaluation 目录"),
           isRetrying: false,
           items: current.items,
+          total: current.total,
+          pageSize: current.pageSize,
         }));
       });
     return () => controller.abort();
-  }, [requestVersion]);
+  }, [page, requestVersion]);
 
   return {
     state,

@@ -15,7 +15,7 @@ describe("Task Gallery route", () => {
       registryId: null,
       archiveKind: null,
       archiveStatus: null,
-      page: null,
+      page: 1,
     });
     expect(resolveTaskGalleryRoute(hash.slice("#/tasks?".length))).toEqual({
       status: "resolved",
@@ -27,7 +27,7 @@ describe("Task Gallery route", () => {
         registryId: null,
         archiveKind: null,
         archiveStatus: null,
-        page: null,
+        page: 1,
       },
     });
   });
@@ -41,10 +41,10 @@ describe("Task Gallery route", () => {
       registryId: null,
       archiveKind: null,
       archiveStatus: null,
-      page: null,
+      page: 1,
     });
     expect(hash).toBe(
-      `#/tasks?task=survey&experiment_id=${evaluationId}&trial_id=${trialId}`,
+      `#/tasks?task=survey&experiment_id=${evaluationId}&trial_id=${trialId}&page=1`,
     );
     expect(resolveTaskGalleryRoute(hash.slice("#/tasks?".length))).toMatchObject({
       status: "resolved",
@@ -156,7 +156,6 @@ describe("Task Gallery route", () => {
     "task=trials&page=1&page=2",
     "task=trials&kind=os_app",
     "task=trials&status=unknown",
-    "task=chat&page=1",
     `task=trials&experiment_id=${evaluationId}`,
     "task=batch&page=0",
     "task=batch&page=1&page=2",

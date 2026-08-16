@@ -305,15 +305,24 @@ function EvaluationDirectory({
   items,
   status,
   selectedEvaluationId,
+  page,
+  total,
+  pageSize,
   onSelect,
+  onPageChange,
   onReload,
 }: {
   readonly items: readonly ChatEvaluationSummary[];
   readonly status: "loading" | "success" | "error";
   readonly selectedEvaluationId: string | null;
+  readonly page: number;
+  readonly total: number;
+  readonly pageSize: number;
   readonly onSelect: (evaluationId: string) => void;
+  readonly onPageChange: (page: number) => void;
   readonly onReload: () => void;
 }): JSX.Element {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   return (
     <aside className="chat-eval-directory" aria-labelledby="chat-eval-directory-title">
       <header>
@@ -343,20 +352,28 @@ function EvaluationDirectory({
           </li>
         ))}
       </ol>
+      <nav aria-label="Chat Evaluation 分页">
+        <button type="button" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>上一页</button>
+        <span>{page} / {totalPages}</span>
+        <button type="button" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>下一页</button>
+      </nav>
     </aside>
   );
 }
 
 export function ChatEvaluationPage({
+  page,
   initialEvaluationId,
   initialTrialId,
   onBack,
   onSelectionChange,
 }: {
+  readonly page: number;
   readonly initialEvaluationId: string | null;
   readonly initialTrialId: string | null;
   readonly onBack: () => void;
   readonly onSelectionChange: (
+    page: number,
     evaluationId: string | null,
     trialId: string | null,
   ) => void;
@@ -364,7 +381,7 @@ export function ChatEvaluationPage({
   const { state: readiness, reload: reloadReadiness } = useChatReadiness();
   const { state: tasks, reload: reloadTasks } = useChatTasks();
   const { state: cohorts, reload: reloadCohorts } = useCohorts();
-  const { state: directory, reload: reloadDirectory } = useChatEvaluations();
+  const { state: directory, reload: reloadDirectory } = useChatEvaluations(page);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [cohortId, setCohortId] = useState<string | null>(null);
   const selectedEvaluationId = initialEvaluationId;
@@ -404,7 +421,7 @@ export function ChatEvaluationPage({
 
   const selectEvaluation = (evaluationId: string): void => {
     if (activeController.current !== null) return;
-    onSelectionChange(evaluationId, null);
+    onSelectionChange(page, evaluationId, null);
   };
 
   const submit = (): void => {
@@ -445,7 +462,7 @@ export function ChatEvaluationPage({
       })
       .then((created) => {
         if (activeController.current !== controller || controller.signal.aborted) return;
-        onSelectionChange(created.id, null);
+        onSelectionChange(1, created.id, null);
         setConfirmed(false);
         setSubmission({ status: "idle" });
         reloadDirectory();
@@ -456,7 +473,7 @@ export function ChatEvaluationPage({
         const normalized = normalizeSubmissionError(error);
         const ambiguous = isAmbiguousPostResultError(normalized);
         if (ambiguous) {
-          onSelectionChange(null, null);
+          onSelectionChange(1, null, null);
           reloadDirectory();
         }
         setConfirmed(false);
@@ -487,7 +504,7 @@ export function ChatEvaluationPage({
       })
       .then((created) => {
         if (activeController.current !== controller || controller.signal.aborted) return;
-        onSelectionChange(created.id, null);
+        onSelectionChange(1, created.id, null);
         setRetrySubmission({ status: "idle" });
         reloadDirectory();
       })
@@ -497,7 +514,7 @@ export function ChatEvaluationPage({
         const normalized = normalizeSubmissionError(error);
         const ambiguous = isAmbiguousPostResultError(normalized);
         if (ambiguous) {
-          onSelectionChange(null, null);
+          onSelectionChange(1, null, null);
           reloadDirectory();
         }
         setRetrySubmission({ status: "error", error: normalized, ambiguous });
@@ -680,7 +697,7 @@ export function ChatEvaluationPage({
             <EvaluationStage
               evaluation={evaluation}
               selectedTrialId={selectedTrialId}
-              onSelectTrial={(trialId) => onSelectionChange(evaluation.id, trialId)}
+              onSelectTrial={(trialId) => onSelectionChange(page, evaluation.id, trialId)}
             />
           ) : null}
         </main>
@@ -693,7 +710,11 @@ export function ChatEvaluationPage({
             items={directory.items}
             status={directory.status}
             selectedEvaluationId={selectedEvaluationId}
+            page={page}
+            total={directory.total}
+            pageSize={directory.pageSize}
             onSelect={selectEvaluation}
+            onPageChange={(nextPage) => onSelectionChange(nextPage, null, null)}
             onReload={reloadDirectory}
           />
         </div>

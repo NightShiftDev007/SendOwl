@@ -8,6 +8,7 @@ const experimentsEndpoint = "/api/v2/matraix/survey-experiments";
 const trialsEndpoint = "/api/v2/matraix/survey-trials";
 const readinessEndpoint = "/api/v2/matraix/survey-readiness";
 const identifierSchema = z.string().uuid();
+const pageSchema = z.number().int().positive();
 const timestampSchema = z.string().datetime({ offset: true });
 const nonEmptyTextSchema = z.string().trim().min(1);
 const singleLineTextSchema = nonEmptyTextSchema.regex(/^[^\r\n]+$/u);
@@ -239,7 +240,9 @@ export const surveyExperimentDetailSchema = surveyExperimentSummaryObjectSchema.
 });
 
 export const surveyExperimentsResponseSchema = z.object({
-  items: z.array(surveyExperimentSummarySchema),
+  items: z.array(surveyExperimentSummarySchema).max(50),
+  page: z.number().int().positive(),
+  page_size: z.number().int().min(1).max(50),
   total: z.number().int().nonnegative(),
 }).strict();
 
@@ -286,8 +289,9 @@ export type SurveyExperimentCreateRequest = z.infer<typeof surveyExperimentCreat
 export function fetchSurveyReadiness(signal: AbortSignal): Promise<SurveyReadiness> {
   return getJson(readinessEndpoint, surveyReadinessSchema, signal);
 }
-export function fetchSurveyExperiments(signal: AbortSignal): Promise<z.infer<typeof surveyExperimentsResponseSchema>> {
-  return getJson(experimentsEndpoint, surveyExperimentsResponseSchema, signal);
+export function fetchSurveyExperiments(page: number, signal: AbortSignal): Promise<z.infer<typeof surveyExperimentsResponseSchema>> {
+  const parsedPage = pageSchema.parse(page);
+  return getJson(`${experimentsEndpoint}?page=${parsedPage}&page_size=20`, surveyExperimentsResponseSchema, signal);
 }
 export function fetchSurveyExperiment(experimentId: string, signal: AbortSignal): Promise<SurveyExperimentDetail> {
   const id = identifierSchema.parse(experimentId);

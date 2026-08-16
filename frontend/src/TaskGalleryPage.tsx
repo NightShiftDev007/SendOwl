@@ -570,10 +570,11 @@ export function TaskGalleryPage({
   if (route.task === "survey") {
     return (
       <SurveyPlaygroundPage
+        page={route.page ?? 1}
         initialExperimentId={route.experimentId}
         initialTrialId={route.trialId}
         onBack={() => onRouteChange(taskGalleryRootRoute())}
-        onSelectionChange={(experimentId, trialId) => {
+        onSelectionChange={(page, experimentId, trialId) => {
           onRouteChange({
             task: "survey",
             experimentId,
@@ -582,7 +583,7 @@ export function TaskGalleryPage({
             registryId: null,
             archiveKind: null,
             archiveStatus: null,
-            page: null,
+            page,
           });
         }}
       />
@@ -592,10 +593,11 @@ export function TaskGalleryPage({
   if (route.task === "chat") {
     return (
       <ChatEvaluationPage
+        page={route.page ?? 1}
         initialEvaluationId={route.evaluationId}
         initialTrialId={route.trialId}
         onBack={() => onRouteChange(taskGalleryRootRoute())}
-        onSelectionChange={(evaluationId, trialId) => {
+        onSelectionChange={(page, evaluationId, trialId) => {
           onRouteChange({
             task: "chat",
             experimentId: null,
@@ -604,7 +606,7 @@ export function TaskGalleryPage({
             registryId: null,
             archiveKind: null,
             archiveStatus: null,
-            page: null,
+            page,
           });
         }}
       />

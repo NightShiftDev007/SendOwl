@@ -725,6 +725,20 @@
   color: var(--chat-danger);
 }
 
+.chat-eval-directory > nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--chat-line);
+}
+
+.chat-eval-directory > nav span {
+  color: var(--chat-muted);
+  font: 600 0.68rem/1.4 "JetBrains Mono", monospace;
+}
+
 @media (max-width: 1180px) {
   .chat-eval-cockpit {
     grid-template-columns: minmax(270px, 4fr) minmax(480px, 8fr);

@@ -62,7 +62,7 @@ function sourceRunHash(item: MatraixBatchRegistryItem): string {
         registryId: null,
         archiveKind: null,
         archiveStatus: null,
-        page: null,
+        page: 1,
       });
   }
   if (item.kind === "chat") {
@@ -74,7 +74,7 @@ function sourceRunHash(item: MatraixBatchRegistryItem): string {
         registryId: null,
         archiveKind: null,
         archiveStatus: null,
-        page: null,
+        page: 1,
       });
   }
   if (item.kind === "web") {

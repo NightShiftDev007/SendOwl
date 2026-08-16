@@ -511,6 +511,9 @@ async def _exercise_chat_api(database_url: str) -> None:
                     statements.clear()
                     list_response = await client.get("/api/v2/matraix/chat-evaluations")
                     assert list_response.status_code == 200
+                    assert list_response.json()["page"] == 1
+                    assert list_response.json()["page_size"] == 20
+                    assert list_response.json()["total"] >= len(list_response.json()["items"])
                     listed = next(
                         item
                         for item in list_response.json()["items"]
@@ -521,6 +524,14 @@ async def _exercise_chat_api(database_url: str) -> None:
                     list_sql = "\n".join(statements)
                     assert "matraix_chat_messages" not in list_sql
                     assert "matraix_chat_feedback" not in list_sql
+                    invalid_page = await client.get(
+                        "/api/v2/matraix/chat-evaluations?page=999&page_size=20"
+                    )
+                    assert invalid_page.status_code == 422
+                    unknown_query = await client.get(
+                        "/api/v2/matraix/chat-evaluations?page=1&cursor=unexpected"
+                    )
+                    assert unknown_query.status_code == 422
 
                     detail_response = await client.get(
                         f"/api/v2/matraix/chat-evaluations/{evaluation_id}"

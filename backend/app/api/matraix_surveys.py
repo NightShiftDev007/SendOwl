@@ -32,6 +32,7 @@ from app.matraix_surveys.repository import (
 )
 from app.populations.errors import PopulationCohortNotFoundError
 from app.scenarios.errors import ScenarioNotFoundError
+from app.shared.pagination import parse_page_request
 from app.shared.progress import ParentProgress
 
 SURVEY_UNAVAILABLE_DETAIL = (
@@ -85,9 +86,21 @@ def create_matraix_surveys_router() -> APIRouter:
         response_model=MatraixSurveyExperimentsResponse,
     )
     async def survey_experiments(
+        request: Request,
         session: MatraixSurveySession,
     ) -> MatraixSurveyExperimentsResponse:
-        return await list_matraix_survey_experiments(session)
+        pagination = parse_page_request(request, 20, 50)
+        try:
+            return await list_matraix_survey_experiments(
+                session,
+                pagination.page,
+                pagination.page_size,
+            )
+        except MatraixSurveySelectionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
 
     @router.post(
         "/api/v2/matraix/survey-experiments/{experiment_id}/retry",

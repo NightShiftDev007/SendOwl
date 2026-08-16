@@ -125,8 +125,8 @@ export function resolveTaskGalleryRoute(query: string): TaskGalleryRouteResult {
     if (task !== "trials" && (rawKind !== null || rawStatus !== null)) {
       return { status: "invalid", message: "kind 和 status 只属于 Trial Archive。" };
     }
-    if (task !== "trials" && task !== "batch" && task !== "web" && task !== "linux" && rawPage !== null) {
-      return { status: "invalid", message: "page 只属于 Trial Archive 或 Batch Registry。" };
+    if (task === null && rawPage !== null) {
+      return { status: "invalid", message: "page 必须与一个具体任务一起提供。" };
     }
     if (task === "trials" && (experimentId !== null || evaluationId !== null || trialId !== null)) {
       return { status: "invalid", message: "Trial Archive 不接受父任务或 trial 资源参数。" };
@@ -151,9 +151,7 @@ export function resolveTaskGalleryRoute(query: string): TaskGalleryRouteResult {
         registryId,
         archiveKind: kindResult?.data ?? null,
         archiveStatus: statusResult?.data ?? null,
-        page: task === "trials" || task === "batch" || task === "web" || task === "linux"
-          ? pageResult?.data ?? 1
-          : null,
+        page: task === null ? null : pageResult?.data ?? 1,
       },
     };
   } catch (error: unknown) {
@@ -191,8 +189,8 @@ export function createTaskGalleryHash(route: TaskGalleryRoute): string {
   if (route.task !== "trials" && (route.archiveKind !== null || route.archiveStatus !== null)) {
     throw new Error("Only Trial Archive may serialize filters.");
   }
-  if (route.task !== "trials" && route.task !== "batch" && route.task !== "web" && route.task !== "linux" && route.page !== null) {
-    throw new Error("Only Trial Archive or Batch Registry may serialize pagination.");
+  if (route.task === null && route.page !== null) {
+    throw new Error("Pagination requires a selected task.");
   }
 
   if (route.task === null) return "#/tasks";
@@ -225,6 +223,9 @@ export function createTaskGalleryHash(route: TaskGalleryRoute): string {
     parameters.set("page", String(positivePageSchema.parse(route.page ?? 1)));
   }
   if (route.task === "linux") {
+    parameters.set("page", String(positivePageSchema.parse(route.page ?? 1)));
+  }
+  if (route.task === "survey" || route.task === "chat") {
     parameters.set("page", String(positivePageSchema.parse(route.page ?? 1)));
   }
   return `#/tasks?${parameters.toString()}`;

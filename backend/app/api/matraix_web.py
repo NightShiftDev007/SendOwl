@@ -37,11 +37,11 @@ from app.matraix_web.repository import (
     retry_web_evaluation,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.pagination import parse_page_request
 from app.shared.progress import ParentProgress
 
 WEB_UNAVAILABLE_DETAIL = "MatrAIx Web data is unavailable because DATABASE_URL is not configured"
 WEB_ARTIFACT_ROOT = Path("/web-artifacts")
-WEB_LIST_QUERY_FIELDS = frozenset({"page", "page_size"})
 
 
 async def require_web_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -56,43 +56,6 @@ async def require_web_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 
 WebSession = Annotated[AsyncSession, Depends(require_web_session)]
-
-
-def _validate_list_query(request: Request) -> None:
-    unknown = sorted(set(request.query_params) - WEB_LIST_QUERY_FIELDS)
-    repeated = [
-        field
-        for field in sorted(WEB_LIST_QUERY_FIELDS)
-        if len(request.query_params.getlist(field)) > 1
-    ]
-    if unknown or repeated:
-        fragments = []
-        if unknown:
-            fragments.append(f"unknown query fields: {', '.join(unknown)}")
-        if repeated:
-            fragments.append(f"repeated query fields: {', '.join(repeated)}")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="; ".join(fragments),
-        )
-
-
-def _query_integer(request: Request, field: str, fallback: int, minimum: int, maximum: int) -> int:
-    raw = request.query_params.get(field)
-    if raw is None:
-        return fallback
-    if not raw.isdecimal():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"{field} must be an integer",
-        )
-    value = int(raw)
-    if not minimum <= value <= maximum:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"{field} must be between {minimum} and {maximum}",
-        )
-    return value
 
 
 def create_matraix_web_router() -> APIRouter:
@@ -134,11 +97,13 @@ def create_matraix_web_router() -> APIRouter:
         request: Request,
         session: WebSession,
     ) -> MatraixWebEvaluationsResponse:
-        _validate_list_query(request)
-        page = _query_integer(request, "page", 1, 1, 2_147_483_647)
-        page_size = _query_integer(request, "page_size", 20, 1, 50)
+        pagination = parse_page_request(request, 20, 50)
         try:
-            return await list_web_evaluations(session, page, page_size)
+            return await list_web_evaluations(
+                session,
+                pagination.page,
+                pagination.page_size,
+            )
         except MatraixWebSelectionError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

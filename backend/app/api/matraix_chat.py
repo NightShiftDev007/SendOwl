@@ -38,6 +38,7 @@ from app.matraix_chat.trajectory import (
     project_chat_trial_atif,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.pagination import parse_page_request
 from app.shared.progress import ParentProgress
 
 CHAT_UNAVAILABLE_DETAIL = "MatrAIx Chat data is unavailable because DATABASE_URL is not configured"
@@ -95,8 +96,22 @@ def create_matraix_chat_router() -> APIRouter:
         "/api/v2/matraix/chat-evaluations",
         response_model=MatraixChatEvaluationsResponse,
     )
-    async def chat_evaluations(session: ChatSession) -> MatraixChatEvaluationsResponse:
-        return await list_chat_evaluations(session)
+    async def chat_evaluations(
+        request: Request,
+        session: ChatSession,
+    ) -> MatraixChatEvaluationsResponse:
+        pagination = parse_page_request(request, 20, 50)
+        try:
+            return await list_chat_evaluations(
+                session,
+                pagination.page,
+                pagination.page_size,
+            )
+        except MatraixChatSelectionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(error),
+            ) from error
 
     @router.post(
         "/api/v2/matraix/chat-evaluations/{evaluation_id}/retry",

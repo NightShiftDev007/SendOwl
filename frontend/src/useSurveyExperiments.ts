@@ -16,9 +16,9 @@ type ReadinessState =
   | { readonly status: "success"; readonly data: SurveyReadiness }
   | { readonly status: "error"; readonly error: Error; readonly isRetrying: boolean };
 type DirectoryState =
-  | { readonly status: "loading" }
-  | { readonly status: "success"; readonly items: readonly SurveyExperimentSummary[] }
-  | { readonly status: "error"; readonly error: Error; readonly isRetrying: boolean };
+  | { readonly status: "loading"; readonly items: readonly SurveyExperimentSummary[]; readonly total: number; readonly pageSize: number }
+  | { readonly status: "success"; readonly items: readonly SurveyExperimentSummary[]; readonly total: number; readonly pageSize: number }
+  | { readonly status: "error"; readonly error: Error; readonly isRetrying: boolean; readonly items: readonly SurveyExperimentSummary[]; readonly total: number; readonly pageSize: number };
 type DetailState =
   | { readonly status: "idle" }
   | { readonly status: "loading" }
@@ -45,18 +45,18 @@ export function useSurveyReadiness(): { readonly state: ReadinessState; readonly
   return { state, reload: useCallback(() => setVersion((current) => current + 1), []) };
 }
 
-export function useSurveyExperiments(): { readonly state: DirectoryState; readonly reload: () => void } {
+export function useSurveyExperiments(page: number): { readonly state: DirectoryState; readonly reload: () => void } {
   const [version, setVersion] = useState(0);
-  const [state, setState] = useState<DirectoryState>({ status: "loading" });
+  const [state, setState] = useState<DirectoryState>({ status: "loading", items: [], total: 0, pageSize: 20 });
   useEffect(() => {
     const controller = new AbortController();
-    setState((current) => current.status === "error" ? { ...current, isRetrying: true } : { status: "loading" });
-    void fetchSurveyExperiments(controller.signal).then((data) => setState({ status: "success", items: data.items })).catch((error: unknown) => {
+    setState((current) => current.status === "error" ? { ...current, isRetrying: true } : { status: "loading", items: current.items, total: current.total, pageSize: current.pageSize });
+    void fetchSurveyExperiments(page, controller.signal).then((data) => setState({ status: "success", items: data.items, total: data.total, pageSize: data.page_size })).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setState({ status: "error", error: errorValue(error, "读取 Survey 实验目录"), isRetrying: false });
+      setState((current) => ({ status: "error", error: errorValue(error, "读取 Survey 实验目录"), isRetrying: false, items: current.items, total: current.total, pageSize: current.pageSize }));
     });
     return () => controller.abort();
-  }, [version]);
+  }, [page, version]);
   return { state, reload: useCallback(() => setVersion((current) => current + 1), []) };
 }
 

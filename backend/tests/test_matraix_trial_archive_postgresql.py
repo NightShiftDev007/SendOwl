@@ -794,8 +794,10 @@ async def _exercise_archive_api(database_url: str) -> None:
                     expire_on_commit=False,
                     join_transaction_mode="create_savepoint",
                 ) as session:
-                    survey_experiments = await list_matraix_survey_experiments(session)
+                    survey_experiments = await list_matraix_survey_experiments(session, 1, 20)
                 assert survey_experiments.total == 1
+                assert survey_experiments.page == 1
+                assert survey_experiments.page_size == 20
                 assert survey_experiments.items[0].status == "queued"
                 survey_list_sql = "\n".join(statements)
                 assert "matraix_survey_trials" in survey_list_sql

@@ -37,13 +37,13 @@ from app.matraix_linux.repository import (
     retry_linux_evaluation,
 )
 from app.populations.errors import PopulationCohortNotFoundError
+from app.shared.pagination import parse_page_request
 from app.shared.progress import ParentProgress
 
 LINUX_UNAVAILABLE_DETAIL = (
     "MatrAIx Linux data is unavailable because DATABASE_URL is not configured"
 )
 LINUX_ARTIFACT_ROOT = Path("/linux-artifacts")
-LINUX_LIST_QUERY_FIELDS = frozenset({"page", "page_size"})
 
 
 async def require_linux_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -58,34 +58,6 @@ async def require_linux_session(request: Request) -> AsyncIterator[AsyncSession]
 
 
 LinuxSession = Annotated[AsyncSession, Depends(require_linux_session)]
-
-
-def _query_integer(request: Request, field: str, fallback: int, maximum: int) -> int:
-    raw = request.query_params.get(field)
-    if raw is None:
-        return fallback
-    if not raw.isdecimal():
-        raise HTTPException(status_code=422, detail=f"{field} must be an integer")
-    value = int(raw)
-    if not 1 <= value <= maximum:
-        raise HTTPException(status_code=422, detail=f"{field} must be between 1 and {maximum}")
-    return value
-
-
-def _validate_list_query(request: Request) -> None:
-    unknown = sorted(set(request.query_params) - LINUX_LIST_QUERY_FIELDS)
-    repeated = [
-        field
-        for field in sorted(LINUX_LIST_QUERY_FIELDS)
-        if len(request.query_params.getlist(field)) > 1
-    ]
-    if unknown or repeated:
-        fragments = []
-        if unknown:
-            fragments.append(f"unknown query fields: {', '.join(unknown)}")
-        if repeated:
-            fragments.append(f"repeated query fields: {', '.join(repeated)}")
-        raise HTTPException(status_code=422, detail="; ".join(fragments))
 
 
 def create_matraix_linux_router() -> APIRouter:
@@ -177,11 +149,9 @@ def create_matraix_linux_router() -> APIRouter:
 
     @router.get("/api/v2/matraix/linux-trials", response_model=MatraixLinuxTrialsResponse)
     async def linux_trials(request: Request, session: LinuxSession) -> MatraixLinuxTrialsResponse:
-        _validate_list_query(request)
-        page = _query_integer(request, "page", 1, 2_147_483_647)
-        page_size = _query_integer(request, "page_size", 20, 50)
+        pagination = parse_page_request(request, 20, 50)
         try:
-            return await list_linux_trials(session, page, page_size)
+            return await list_linux_trials(session, pagination.page, pagination.page_size)
         except MatraixLinuxSelectionError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 

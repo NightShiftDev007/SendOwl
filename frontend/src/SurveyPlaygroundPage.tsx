@@ -82,15 +82,18 @@ function SurveyResults({
 }
 
 export function SurveyPlaygroundPage({
+  page,
   initialExperimentId,
   initialTrialId,
   onBack,
   onSelectionChange,
 }: {
+  readonly page: number;
   readonly initialExperimentId: string | null;
   readonly initialTrialId: string | null;
   readonly onBack: () => void;
   readonly onSelectionChange: (
+    page: number,
     experimentId: string | null,
     trialId: string | null,
   ) => void;
@@ -98,7 +101,7 @@ export function SurveyPlaygroundPage({
   const { state: readiness, reload: reloadReadiness } = useSurveyReadiness();
   const { state: scenarios } = useScenarios();
   const { state: cohorts } = useCohorts();
-  const { state: directory, reload: reloadDirectory } = useSurveyExperiments();
+  const { state: directory, reload: reloadDirectory } = useSurveyExperiments(page);
   const [scenarioId, setScenarioId] = useState<string | null>(null);
   const [cohortId, setCohortId] = useState<string | null>(null);
   const { state: scenarioDetail } = useScenarioDetail(scenarioId);
@@ -130,7 +133,7 @@ export function SurveyPlaygroundPage({
       return createSurveyExperiment({ scenario_id: scenarioId, cohort_id: cohortId, alternative_id: alternativeId }, controller.signal);
     }).then((experiment) => {
       if (activeController.current !== controller) return;
-      onSelectionChange(experiment.id, null); setSubmission({ status: "idle" }); setConfirmed(false); reloadDirectory();
+      onSelectionChange(1, experiment.id, null); setSubmission({ status: "idle" }); setConfirmed(false); reloadDirectory();
     }).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (activeController.current !== controller) return;
@@ -144,7 +147,7 @@ export function SurveyPlaygroundPage({
     void fetchSurveyReadiness(controller.signal).then((state) => {
       if (!state.survey_runtime_ready) throw new Error("Survey runtime 在重试前已不可用，POST 尚未发送。");
       return retrySurveyExperiment(selectedExperiment.data.id, controller.signal);
-    }).then((created) => { if (activeController.current === controller) { onSelectionChange(created.id, null); reloadDirectory(); } })
+    }).then((created) => { if (activeController.current === controller) { onSelectionChange(1, created.id, null); reloadDirectory(); } })
       .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setSubmission({ status: "error", message: error instanceof Error ? error.message : "创建 Survey 重试 attempt 失败。" }); })
       .finally(() => { if (activeController.current === controller) activeController.current = null; setRetrying(false); });
   };
@@ -169,14 +172,15 @@ export function SurveyPlaygroundPage({
         {selectedExperimentId === null ? <div className="survey-empty"><strong>先冻结实验输入</strong><p>选择 Scenario、Cohort 和一个备选方案后，这里会显示固定三题问卷、运行状态与逐 Persona 原始回答。</p></div> : null}
         {selectedExperiment.status === "loading" ? <div className="survey-loading" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div> : null}
         {selectedExperiment.status === "error" ? <ApiErrorPanel title="无法读取 Survey 实验" error={selectedExperiment.error} isRetrying={selectedExperiment.isRetrying} onRetry={reloadExperiment} /> : null}
-        {selectedExperiment.status === "success" ? <><section className="survey-instrument"><header><div><strong>{selectedExperiment.data.instrument.title}</strong><p>{selectedExperiment.data.instrument.description}</p></div><code>{shortHash(selectedExperiment.data.instrument.instrument_sha256)}</code></header><ol>{selectedExperiment.data.instrument.questions.map((question) => <li key={question.id}><span>{question.position + 1}</span><div><strong>{question.prompt}</strong><small>{question.type}{question.min_value === null ? "" : ` · ${question.min_value}–${question.max_value}`}</small></div></li>)}</ol></section><SurveyResults experiment={selectedExperiment.data} selectedTrialId={selectedTrialId} onSelectTrial={(trialId) => onSelectionChange(selectedExperiment.data.id, trialId)} /></> : null}
+        {selectedExperiment.status === "success" ? <><section className="survey-instrument"><header><div><strong>{selectedExperiment.data.instrument.title}</strong><p>{selectedExperiment.data.instrument.description}</p></div><code>{shortHash(selectedExperiment.data.instrument.instrument_sha256)}</code></header><ol>{selectedExperiment.data.instrument.questions.map((question) => <li key={question.id}><span>{question.position + 1}</span><div><strong>{question.prompt}</strong><small>{question.type}{question.min_value === null ? "" : ` · ${question.min_value}–${question.max_value}`}</small></div></li>)}</ol></section><SurveyResults experiment={selectedExperiment.data} selectedTrialId={selectedTrialId} onSelectTrial={(trialId) => onSelectionChange(page, selectedExperiment.data.id, trialId)} /></> : null}
       </section>
 
       <aside className="survey-directory">
         <header><div><span>TRIAL ARCHIVE</span><h3>Survey 实验目录</h3></div><button type="button" disabled={directory.status === "loading"} onClick={reloadDirectory}>刷新</button></header>
         {directory.status === "error" ? <ApiErrorPanel title="无法读取实验目录" error={directory.error} isRetrying={directory.isRetrying} onRetry={reloadDirectory} /> : null}
         {directory.status === "success" && directory.items.length === 0 ? <div className="survey-empty"><strong>尚无 Survey</strong><p>完成第一组严格输入后，实验会持久保存在这里。</p></div> : null}
-        {directory.status === "success" ? <ol>{directory.items.map((experiment) => <li key={experiment.id}><button type="button" data-selected={experiment.id === selectedExperimentId} onClick={() => onSelectionChange(experiment.id, null)}><span><strong>{experiment.scenario.title}</strong><small>attempt {experiment.attempt_number} · {experiment.cohort.title} · {experiment.trial_count} Persona</small></span><em data-status={experiment.status}>{experiment.status}</em><code>{shortHash(experiment.experiment_sha256)}</code></button></li>)}</ol> : null}
+        {directory.status === "success" ? <ol>{directory.items.map((experiment) => <li key={experiment.id}><button type="button" data-selected={experiment.id === selectedExperimentId} onClick={() => onSelectionChange(page, experiment.id, null)}><span><strong>{experiment.scenario.title}</strong><small>attempt {experiment.attempt_number} · {experiment.cohort.title} · {experiment.trial_count} Persona</small></span><em data-status={experiment.status}>{experiment.status}</em><code>{shortHash(experiment.experiment_sha256)}</code></button></li>)}</ol> : null}
+        <nav aria-label="Survey 实验分页"><button type="button" disabled={page <= 1} onClick={() => onSelectionChange(page - 1, null, null)}>上一页</button><span>{page} / {Math.max(1, Math.ceil(directory.total / directory.pageSize))}</span><button type="button" disabled={page >= Math.max(1, Math.ceil(directory.total / directory.pageSize))} onClick={() => onSelectionChange(page + 1, null, null)}>下一页</button></nav>
         {readiness.status === "success" ? <details className="survey-provenance"><summary>运行边界与 provenance</summary><dl><div><dt>Model</dt><dd>{readiness.data.model_name ?? "—"}</dd></div><div><dt>Config</dt><dd><code>{readiness.data.survey_config_sha256 ?? "—"}</code></dd></div><div><dt>Worker</dt><dd>{readiness.data.live_worker_count}</dd></div></dl><ul>{readiness.data.limitations.map((item) => <li key={item}>{item}</li>)}</ul></details> : null}
       </aside>
     </div>

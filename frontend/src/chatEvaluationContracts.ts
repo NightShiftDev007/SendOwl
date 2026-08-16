@@ -9,6 +9,7 @@ const evaluationsEndpoint = "/api/v2/matraix/chat-evaluations";
 const trialsEndpoint = "/api/v2/matraix/chat-trials";
 const readinessEndpoint = "/api/v2/matraix/chat-readiness";
 const identifierSchema = z.string().uuid();
+const pageSchema = z.number().int().positive();
 const timestampSchema = z.string().datetime({ offset: true });
 const nonEmptyTextSchema = z.string().trim().min(1);
 const singleLineTextSchema = nonEmptyTextSchema.regex(/^[^\r\n]+$/u);
@@ -457,14 +458,16 @@ export const chatEvaluationDetailSchema = chatEvaluationSummaryObjectSchema.exte
 });
 
 export const chatEvaluationsResponseSchema = z.object({
-  items: z.array(chatEvaluationSummarySchema),
+  items: z.array(chatEvaluationSummarySchema).max(50),
+  page: z.number().int().positive(),
+  page_size: z.number().int().min(1).max(50),
   total: z.number().int().nonnegative(),
 }).strict().superRefine((response, context) => {
-  if (response.items.length !== response.total) {
+  if (response.items.length > response.total) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["total"],
-      message: "Total must equal the complete chat evaluation directory length",
+      message: "Page items cannot exceed the complete chat evaluation count",
     });
   }
 });
@@ -559,8 +562,15 @@ export function fetchChatTasks(signal: AbortSignal): Promise<z.infer<typeof matr
   return getJson(tasksEndpoint, matraixChatTasksResponseSchema, signal);
 }
 
-export function fetchChatEvaluations(signal: AbortSignal): Promise<z.infer<typeof chatEvaluationsResponseSchema>> {
-  return getJson(evaluationsEndpoint, chatEvaluationsResponseSchema, signal);
+export function fetchChatEvaluations(
+  page: number,
+  signal: AbortSignal,
+): Promise<z.infer<typeof chatEvaluationsResponseSchema>> {
+  return getJson(
+    `${evaluationsEndpoint}?page=${pageSchema.parse(page)}&page_size=20`,
+    chatEvaluationsResponseSchema,
+    signal,
+  );
 }
 
 export function fetchChatEvaluation(
