@@ -177,6 +177,23 @@ class MatraixLinuxEvaluation(ContractModel):
         return self
 
 
+class MatraixLinuxEvaluationsResponse(ContractModel):
+    items: Annotated[tuple[MatraixLinuxEvaluation, ...], Field(max_length=50)]
+    page: Annotated[int, Field(ge=1)]
+    page_size: Annotated[int, Field(ge=1, le=50)]
+    total: Annotated[int, Field(ge=0)]
+
+    @model_validator(mode="after")
+    def validate_page(self) -> Self:
+        if len(self.items) > self.page_size:
+            raise ValueError("Linux evaluation page exceeds page_size")
+        if self.total == 0 and (self.page != 1 or self.items):
+            raise ValueError("empty Linux evaluation directory must return page one")
+        if self.total > 0 and (self.page - 1) * self.page_size >= self.total:
+            raise ValueError("Linux evaluation page starts beyond total")
+        return self
+
+
 class MatraixLinuxTrialsResponse(ContractModel):
     items: tuple[MatraixLinuxTrial, ...]
     page: Annotated[int, Field(ge=1)]

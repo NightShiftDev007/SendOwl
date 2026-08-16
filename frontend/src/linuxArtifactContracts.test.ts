@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   linuxEvaluationSchema,
+  linuxEvaluationsResponseSchema,
   linuxReadinessSchema,
   linuxTaskSchema,
   linuxTrialSchema,
@@ -106,7 +107,7 @@ describe("Linux artifact contracts", () => {
       result: null,
       error: null,
     } as const;
-    expect(linuxEvaluationSchema.parse({
+    const evaluation = linuxEvaluationSchema.parse({
       id: "36000000-0000-4000-8000-000000000001",
       status: "queued",
       execution_kind: "linux_artifact_runner",
@@ -115,6 +116,13 @@ describe("Linux artifact contracts", () => {
       sealed_at: "2026-08-15T00:00:01Z",
       evaluation_sha256: "1".repeat(64),
       trial,
-    }).trial.id).toBe(trial.id);
+    });
+    expect(evaluation.trial.id).toBe(trial.id);
+    expect(linuxEvaluationsResponseSchema.parse({
+      items: [evaluation],
+      page: 1,
+      page_size: 20,
+      total: 1,
+    }).items[0]?.id).toBe(evaluation.id);
   });
 });

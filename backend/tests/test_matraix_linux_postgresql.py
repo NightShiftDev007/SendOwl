@@ -146,6 +146,22 @@ async def _exercise_linux_retry(database_url: str) -> None:
                     )
                     assert repeated.status_code == 202
                     assert repeated.json()["id"] == retried["id"]
+                    directory = await client.get(
+                        "/api/v2/matraix/linux-evaluations?page=1&page_size=20"
+                    )
+                    assert directory.status_code == 200
+                    directory_payload = directory.json()
+                    assert directory_payload["page"] == 1
+                    assert directory_payload["page_size"] == 20
+                    assert directory_payload["total"] == 2
+                    assert {item["id"] for item in directory_payload["items"]} == {
+                        str(evaluation_id),
+                        retried["id"],
+                    }
+                    invalid_page = await client.get(
+                        "/api/v2/matraix/linux-evaluations?page=2&page_size=20"
+                    )
+                    assert invalid_page.status_code == 422
                     parent = await client.get(f"/api/v2/matraix/linux-evaluations/{evaluation_id}")
                     assert parent.status_code == 200
                     assert parent.json()["trial"]["status"] == "failed"

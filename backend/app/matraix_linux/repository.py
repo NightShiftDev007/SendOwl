@@ -14,6 +14,7 @@ from app.matraix_linux.contracts import (
     LinuxTrialError,
     LinuxTrialResult,
     MatraixLinuxEvaluation,
+    MatraixLinuxEvaluationsResponse,
     MatraixLinuxReadiness,
     MatraixLinuxTask,
     MatraixLinuxTasksResponse,
@@ -541,6 +542,49 @@ async def list_linux_trials(
     )
     return MatraixLinuxTrialsResponse(
         items=tuple(_trial(record) for record in records),
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+async def list_linux_evaluations(
+    session: AsyncSession,
+    page: int,
+    page_size: int,
+) -> MatraixLinuxEvaluationsResponse:
+    total = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(MatraixLinuxEvaluationRecord)
+            .where(MatraixLinuxEvaluationRecord.input_sealed_at.is_not(None))
+        )
+        or 0
+    )
+    if total == 0:
+        return MatraixLinuxEvaluationsResponse(items=(), page=1, page_size=page_size, total=0)
+    if (page - 1) * page_size >= total:
+        raise MatraixLinuxSelectionError("requested Linux evaluation page starts beyond total")
+    rows = tuple(
+        (
+            await session.execute(
+                select(MatraixLinuxEvaluationRecord, MatraixLinuxTrialRecord)
+                .join(
+                    MatraixLinuxTrialRecord,
+                    MatraixLinuxTrialRecord.id == MatraixLinuxEvaluationRecord.trial_id,
+                )
+                .where(MatraixLinuxEvaluationRecord.input_sealed_at.is_not(None))
+                .order_by(
+                    MatraixLinuxEvaluationRecord.created_at.desc(),
+                    MatraixLinuxEvaluationRecord.id.asc(),
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).all()
+    )
+    return MatraixLinuxEvaluationsResponse(
+        items=tuple(_evaluation(evaluation, trial) for evaluation, trial in rows),
         page=page,
         page_size=page_size,
         total=total,

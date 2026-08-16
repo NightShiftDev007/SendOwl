@@ -241,6 +241,7 @@ def build_system_capabilities() -> SystemCapabilities:
                 contracts=(
                     "MatraixLinuxTask",
                     "MatraixLinuxEvaluation",
+                    "MatraixLinuxEvaluationsResponse",
                     "MatraixLinuxTrial",
                     "LinuxTrialResult",
                     "ParentProgress",

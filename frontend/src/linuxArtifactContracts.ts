@@ -5,6 +5,7 @@ import { sha256DigestSchema } from "./mediaContracts";
 import { parentProgressSchema, type ParentProgress } from "./parentProgress";
 
 const uuidSchema = z.string().uuid();
+const pageSchema = z.number().int().positive();
 const textSchema = z.string().trim().min(1);
 const timestampSchema = z.string().datetime({ offset: true });
 const statusSchema = z.enum(["queued", "running", "succeeded", "failed"]);
@@ -147,6 +148,13 @@ const trialsResponseSchema = z.object({
   total: z.number().int().nonnegative(),
 }).strict();
 
+export const linuxEvaluationsResponseSchema = z.object({
+  items: z.array(linuxEvaluationSchema).max(50),
+  page: z.number().int().positive(),
+  page_size: z.number().int().min(1).max(50),
+  total: z.number().int().nonnegative(),
+}).strict();
+
 export type LinuxTask = z.infer<typeof linuxTaskSchema>;
 export type LinuxTrial = z.infer<typeof linuxTrialSchema>;
 export type LinuxEvaluation = z.infer<typeof linuxEvaluationSchema>;
@@ -163,6 +171,17 @@ export async function fetchLinuxReadiness(signal: AbortSignal): Promise<LinuxRea
 
 export async function fetchLinuxTrials(page: number, signal: AbortSignal): Promise<z.infer<typeof trialsResponseSchema>> {
   return getJson(`/api/v2/matraix/linux-trials?page=${page}&page_size=20`, trialsResponseSchema, signal);
+}
+
+export async function fetchLinuxEvaluations(
+  page: number,
+  signal: AbortSignal,
+): Promise<z.infer<typeof linuxEvaluationsResponseSchema>> {
+  return getJson(
+    `/api/v2/matraix/linux-evaluations?page=${pageSchema.parse(page)}&page_size=20`,
+    linuxEvaluationsResponseSchema,
+    signal,
+  );
 }
 
 export async function fetchLinuxTrial(id: string, signal: AbortSignal): Promise<LinuxTrial> {

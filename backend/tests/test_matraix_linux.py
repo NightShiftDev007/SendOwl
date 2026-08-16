@@ -128,6 +128,7 @@ def test_linux_task_is_public_and_runtime_routes_require_database() -> None:
 
     trial_id = uuid4()
     responses = (
+        client.get("/api/v2/matraix/linux-evaluations"),
         client.get("/api/v2/matraix/linux-trials"),
         client.get(f"/api/v2/matraix/linux-trials/{trial_id}"),
         client.get(f"/api/v2/matraix/linux-evaluations/{trial_id}"),

@@ -4,6 +4,7 @@ import {
   fetchLinuxReadiness,
   fetchLinuxEvaluation,
   fetchLinuxEvaluationProgress,
+  fetchLinuxEvaluations,
   fetchLinuxTasks,
   fetchLinuxTrial,
   fetchLinuxTrials,
@@ -56,6 +57,16 @@ export function useLinuxTasks(): ReturnType<typeof useResource<readonly LinuxTas
 
 export function useLinuxTrials(page: number): ReturnType<typeof useResource<Awaited<ReturnType<typeof fetchLinuxTrials>>>> {
   return useResource(useCallback((signal: AbortSignal) => fetchLinuxTrials(page, signal), [page]), false, null);
+}
+
+export function useLinuxEvaluations(
+  page: number,
+): ReturnType<typeof useResource<Awaited<ReturnType<typeof fetchLinuxEvaluations>>>> {
+  return useResource(
+    useCallback((signal: AbortSignal) => fetchLinuxEvaluations(page, signal), [page]),
+    false,
+    null,
+  );
 }
 
 export function useLinuxTrial(id: string | null): ReturnType<typeof useResource<LinuxTrial | null>> {

@@ -174,7 +174,7 @@ Run Studio 使用以下 API：
 - `GET /api/v2/semantic-trials/{trial_id}/events`：按 sequence 增量读取类型化事件；
 - `GET /api/v2/simulations/oasis/semantic-readiness`：读取 worker、版本和不含密钥的配置身份。
 
-Survey、Chat、Web 的父资源目录和 Linux Trial 目录共享严格、有界的 `page/page_size` 查询语义；未知、重复、越界或超出总数的页码都会明确失败。Survey、Chat、Web、Linux 的 sealed parent 另提供各自的 `/{id}/progress` 轻量读取。四条路由共享严格的 `ParentProgress` 语义：父 attempt、queued/running/succeeded/failed Trial 计数、append-only 事件计数和不包含观测时间的稳定 `progress_sha256`。前端持续轮询该投影，只在修订摘要变化或进入终态时重读 typed detail；这不是详情增量传输，也不替代各领域的完整内容校验。
+Survey、Chat、Web、Linux 四类 sealed parent 目录共享严格、有界的 `page/page_size` 查询语义；未知、重复、越界或超出总数的页码都会明确失败。Linux 的目录项封存一个真实 Trial，Trial 详情与产物路径继续独立存在。四类 parent 另提供各自的 `/{id}/progress` 轻量读取，并共享严格的 `ParentProgress` 语义：父 attempt、queued/running/succeeded/failed Trial 计数、append-only 事件计数和不包含观测时间的稳定 `progress_sha256`。前端持续轮询该投影，只在修订摘要变化或进入终态时重读 typed detail；这不是详情增量传输，也不替代各领域的完整内容校验。
 
 语义 worker 的 OpenAI-compatible 连接只由 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME` 三项显式配置。三项全空会禁用语义执行但保留 platform smoke；部分配置会让 worker 明确启动失败。完整配置不会立即被视为 ready：worker 先对真实 provider 发起一次有界的 `do_nothing` tool-call 启动探测，严格核验响应只有一个预期工具调用；探测成功后才更新为 semantic-ready heartbeat，探测失败则在有界 provider 重试后使 worker 启动失败。API key 不进入 heartbeat、内容摘要或业务表。
 

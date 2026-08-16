@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import DatabaseConnector
 from app.matraix_linux.contracts import (
     MatraixLinuxEvaluation,
+    MatraixLinuxEvaluationsResponse,
     MatraixLinuxReadiness,
     MatraixLinuxTasksResponse,
     MatraixLinuxTrial,
@@ -32,6 +33,7 @@ from app.matraix_linux.repository import (
     get_linux_evaluation_progress,
     get_linux_readiness,
     get_linux_trial,
+    list_linux_evaluations,
     list_linux_tasks,
     list_linux_trials,
     retry_linux_evaluation,
@@ -84,6 +86,24 @@ def create_matraix_linux_router() -> APIRouter:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except MatraixLinuxUnavailableError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @router.get(
+        "/api/v2/matraix/linux-evaluations",
+        response_model=MatraixLinuxEvaluationsResponse,
+    )
+    async def linux_evaluations(
+        request: Request,
+        session: LinuxSession,
+    ) -> MatraixLinuxEvaluationsResponse:
+        pagination = parse_page_request(request, 20, 50)
+        try:
+            return await list_linux_evaluations(
+                session,
+                pagination.page,
+                pagination.page_size,
+            )
+        except MatraixLinuxSelectionError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @router.post(
         "/api/v2/matraix/linux-evaluations",
