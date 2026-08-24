@@ -2,7 +2,7 @@
 
 > M16 当前边界（优先于下文历史章节）：新工作走 `Native Media → WorldSnapshot + Semantic Graph → Research Project + AgendaContext → Cohort → SimulationContext / SimulationPlan → Simulation Run + Graph Memory → ReportAgent / Agent Interaction / Persona Interview → Project-bound Evaluation`。Scenario、Semantic Experiment、Decision Thread、DecisionReport、旧 Persona Interview、旧 Scenario Preference Survey 和 platform-smoke 均为显式历史只读。
 
-> 状态基准：2026-08-20；分支 `main`；代码迁移 head `20260820_core_0061`。M11–M15 工程主链已完成；M16 第一阶段完成 Harbor retry lineage、错误可见性、全量验证与文档收口，下一 Gate 是 Owner 零提示中文复测。
+> 状态基准：2026-08-24；分支 `main`；代码迁移 head `20260820_core_0061`。M11–M15 工程主链与 M16 发布收口均已完成：Harbor retry lineage、错误可见性、全页面响应式/可访问性加固、全量验证和 CI 已建立。Owner 选择不执行零提示中文复测，因此仍不得标记为真人或外部用户验证通过。
 
 本文是接手 SandOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 

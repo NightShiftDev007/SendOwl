@@ -257,4 +257,4 @@ MatrAIx Task Gallery 作为独立“评测”入口。Decision Workspace、决�
 - 从空 PostgreSQL 完整迁移到 `20260820_core_0061`，执行本地、Worker、前端、生产构建和独立 PostgreSQL 集成验证；
 - 只把工程走查记为 engineering pass，Owner 零提示复测和外部参与者继续作为独立 Gate。
 
-状态：M16 第一阶段完成。根 Harbor Job 与重试 attempt 的内容身份和父子关系已由契约与数据库约束固定；真实失败 attempt 1 已通过页面创建 attempt 2 并成功封存产物。当前不继续扩展三方功能面，下一步是 Owner 零提示中文复测，再根据真实观察决定性能、来源治理和任务模板优先级。
+状态：M16 工程阶段完成。根 Harbor Job 与重试 attempt 的内容身份和父子关系已由契约与数据库约束固定；真实失败 attempt 1 已通过页面创建 attempt 2 并成功封存产物。2026-08-24 又完成 22 个页面状态在桌面与 320px 手机宽度下的语义、触控、溢出、对比度和控制台复验，并建立前端、后端、OASIS Worker 与独立 PostgreSQL 的并行 CI。Owner 选择不执行本轮零提示复测，因此仍不扩展三方功能面；如后续恢复真人 Pilot，应新建独立 session，再根据真实观察决定性能、来源治理和任务模板优先级。

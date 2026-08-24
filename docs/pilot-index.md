@@ -1,6 +1,6 @@
 # SandOwl 原生 Pilot Index
 
-当前状态：M16 工程纵向验收及开发者页面自查已完成。M11–M15 的新主链、ReportAgent/Interaction、Persona 访谈、Survey、Rootless Harbor Evaluation 及失败重试均已通过页面真实运行；Owner 选择不执行 Session 004，因此仍不能记为真实用户验证通过。
+当前状态：M16 工程纵向验收、开发者页面自查和全页面响应式/可访问性加固已完成。M11–M15 的新主链、ReportAgent/Interaction、Persona 访谈、Survey、Rootless Harbor Evaluation 及失败重试均已通过页面真实运行；Owner 选择不执行 Session 004，因此仍不能记为真实用户验证通过。
 
 ## 当前材料
 

@@ -1,6 +1,6 @@
 # SandOwl Core Integration
 
-> M16 工程基线（2026-08-20）：M11–M15 三方主链已完成真实 UI 纵向验收；Alembic head 为 `20260820_core_0061`。Project-bound Harbor Job 现提供最多五次、保留旧失败记录的不可变 retry lineage，并在 UI 显示错误、attempt、父哈希、trajectory、artifact、verifier 与 reward。当前 Gate 是 Owner 零提示中文复测，尚未记为外部用户验证通过。
+> M16 工程基线（2026-08-24）：M11–M15 三方主链、Project-bound Harbor 不可变重试谱系和全量前端响应式加固均已通过工程验收；Alembic head 为 `20260820_core_0061`。Owner 选择不执行零提示中文复测，因此当前状态是 engineering pass，不是外部用户验证通过。仓库 CI 已覆盖前端、后端、OASIS Worker 与独立 PostgreSQL 集成套件。
 
 SandOwl 整合 AgendaScope、MiroFish/OASIS 与 MatrAIx。历史上的 `ai-decision-center` 是基于 MiroFish 的研究性二开，是当前仓库的工程血缘而不是第四个产品来源；SandOwl 会保留其中属于三方整合和通用工程的能力，并逐步退出其多方案决策产品层。
 
@@ -165,5 +165,7 @@ pnpm test:backend:postgres
 ```
 
 该命令启动不暴露宿主机端口的 `postgres-test`，数据目录使用 tmpfs；测试镜像先把该库迁移到当前 Alembic head，再将仅在 Compose 网络内可见的 `TEST_POSTGRES_DATABASE_URL` 传给 pytest。它不会连接 `postgres` 应用服务或 `sandowl-postgres-data` 数据卷。
+
+仓库 CI 位于 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)。向 `main` 推送或创建 Pull Request 时会并行执行前端测试、类型检查与生产构建，后端测试与 Ruff，Python 3.11 OASIS Worker 测试与 Ruff，以及独立 PostgreSQL 16.8 迁移/触发器集成套件。CI 只授予 `contents: read`，不读取本地 `.env`，也不连接 SandOwl 开发数据卷。
 
 接手开发前先阅读 [项目交接与上下文](./docs/handoff.md)。产品原则见 [PRODUCT.md](./PRODUCT.md)，当前领域边界见 [架构文档](./docs/architecture.md)。
