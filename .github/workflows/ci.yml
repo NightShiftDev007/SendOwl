@@ -160,4 +160,4 @@ jobs:
 
       - name: Run isolated PostgreSQL suite
         working-directory: backend
-        run: sh tests/run_postgresql.sh
+        run: uv run sh tests/run_postgresql.sh
