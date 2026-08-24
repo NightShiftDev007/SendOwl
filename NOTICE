@@ -1,6 +1,6 @@
 # Third-Party Notices and Provenance
 
-SandOwl AI Decision Center V2 is a new unified implementation informed by the
+SandOwl V2 is a new unified implementation informed by the
 projects below. Retain this file with distributions and record the exact source
 commit whenever code is migrated.
 
@@ -10,7 +10,7 @@ commit whenever code is migrated.
 - Audited baseline: `396a7ed852a781d0698d3e8eea36a63d4a8faa56`
 - Public license: CC BY-NC 4.0
 - Project status: commercial authorization has been obtained separately for
-  AI Decision Center use. The authorization record is not stored in this
+  SandOwl use. The authorization record is not stored in this
   repository and must be verified before a commercial distribution.
 - V2 migration scope: media collection, article evidence, topic analysis, and
   agenda detection. The AgendaScope product frontend and account system are not
@@ -33,10 +33,12 @@ commit whenever code is migrated.
 - Source: https://github.com/666ghj/MiroFish
 - Frozen provenance baseline: `b5b53acc57189a4a42e44a23e149dc655c98fe82`
 - Public license: AGPL-3.0
-- Project status: commercial dual-license obtained for the AI Decision Center
+- Project status: commercial dual-license obtained for the SandOwl
   derivative work. The separate grant must be verified before distribution.
-- MiroFish is a reference upstream, not a runtime repository or bidirectional
-  synchronization target for V2.
+- The predecessor `ai-decision-center` was a MiroFish-derived research fork.
+  The current V2 worker calls OASIS/CAMEL directly, while Project, Graph,
+  Simulation, ReportAgent, and Interaction capabilities must retain explicit
+  MiroFish provenance when they are migrated or reworked.
 
 ## OASIS / CAMEL-AI
 

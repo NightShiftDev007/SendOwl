@@ -19,9 +19,14 @@ from app.matraix_surveys import models as matraix_survey_models
 from app.matraix_web import models as matraix_web_models
 from app.media import models as media_models
 from app.media import sync_models as media_sync_models
+from app.media.collection import models as media_collection_models
 from app.persona_interviews import models as persona_interview_models
 from app.populations import models as population_models
 from app.report_questions import models as report_question_models
+from app.research_evaluations import models as research_evaluation_models
+from app.research_interviews import models as research_interview_models
+from app.research_projects import models as research_project_models
+from app.research_surveys import models as research_survey_models
 from app.scenarios import models as scenario_models
 from app.semantic_experiments import models as semantic_experiment_models
 from app.simulations import models as simulation_models
@@ -30,6 +35,7 @@ from app.world_models import models as world_model_models
 
 del (
     media_models,
+    media_collection_models,
     media_sync_models,
     matraix_chat_models,
     matraix_batch_models,
@@ -41,6 +47,10 @@ del (
     population_models,
     persona_interview_models,
     report_question_models,
+    research_project_models,
+    research_interview_models,
+    research_evaluation_models,
+    research_survey_models,
     scenario_models,
     semantic_experiment_models,
     simulation_models,

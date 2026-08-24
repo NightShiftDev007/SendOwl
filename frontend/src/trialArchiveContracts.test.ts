@@ -5,6 +5,7 @@ import {
   trialIntegrityVerificationSchema,
   trialArchiveResponseSchema,
   trialArchiveItemSchema,
+  surveyTrialArchiveItemSchema,
 } from "./trialArchiveContracts";
 
 const digest = "a".repeat(64);
@@ -110,6 +111,18 @@ const queuedLinux = {
 } as const;
 
 describe("MatrAIx Trial Archive contracts", () => {
+  it("accepts a native Research Survey trial linked to its parent detail", () => {
+    expect(surveyTrialArchiveItemSchema.parse({
+      ...succeededSurvey,
+      task: { title: "Native research project", version: "single-context-observation/v1" },
+      provenance: {
+        ...succeededSurvey.provenance,
+        prompt_schema_version: "sandowl-research-survey/v1",
+      },
+      source_detail_path: `/api/v2/research-surveys/${succeededSurvey.parent_id}`,
+    }).task.version).toBe("single-context-observation/v1");
+  });
+
   it("parses kind-discriminated Survey and Chat provenance", () => {
     expect(trialArchiveItemSchema.parse(succeededSurvey).kind).toBe("survey");
     expect(trialArchiveItemSchema.parse(failedChat).kind).toBe("chat");

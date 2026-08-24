@@ -41,7 +41,7 @@ async def _insert_ready_worker(connection: AsyncConnection) -> None:
         text(
             """
             INSERT INTO simulation_worker_heartbeats (
-                worker_id,engine,engine_version,camel_version,mode,
+                worker_id,worker_domain,engine,engine_version,camel_version,mode,
                 platform_runtime_ready,semantic_runtime_ready,
                 semantic_model_name,semantic_config_sha256,
                 semantic_prompt_schema_version,web_runtime_ready,
@@ -49,8 +49,8 @@ async def _insert_ready_worker(connection: AsyncConnection) -> None:
                 web_executor_schema_version,web_executor_spec_sha256,
                 started_at,last_seen_at
             ) VALUES (
-                :worker_id,'camel-oasis','0.2.5','0.2.78','reddit_manual_smoke',
-                true,true,'qwen-plus',:semantic_sha,'matraix-semantic-profile/v1',
+                :worker_id,'evaluation','camel-oasis','0.2.5','0.2.78','reddit_manual_smoke',
+                false,false,NULL,NULL,NULL,
                 true,'qwen-plus',:web_sha,'matraix-web-quotes-choice/v1',
                 'matraix-web-browser-executor/v1',:executor_sha,
                 clock_timestamp(),clock_timestamp()
@@ -104,7 +104,7 @@ async def _exercise_web_api(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0038"
+                assert revision == "20260820_core_0061"
                 cohort_id = await _insert_population(connection)
                 await _insert_ready_worker(connection)
 

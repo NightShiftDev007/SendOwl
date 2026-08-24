@@ -25,7 +25,7 @@
   letter-spacing: 0.08em;
 }
 
-.population-context-heading h4,
+.population-context-heading h3,
 .population-cohort-detail h5 {
   margin: 4px 0 0;
   color: var(--run-ink);

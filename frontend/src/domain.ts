@@ -1,5 +1,6 @@
 export type SectionId =
   | "overview"
+  | "projects"
   | "threads"
   | "media"
   | "policy"
@@ -28,15 +29,22 @@ export interface ModuleDefinition {
 
 export type MigratingSectionId = Exclude<
   SectionId,
-  "overview" | "threads" | "media" | "policy" | "world" | "decisions" | "personas" | "tasks" | "runs" | "reports"
+  "overview" | "projects" | "threads" | "media" | "policy" | "world" | "decisions" | "personas" | "tasks" | "runs" | "reports"
 >;
 
 export const navigationItems: readonly NavigationItem[] = [
   {
     id: "overview",
-    marker: "DC",
-    label: "决策工作台",
+    marker: "SO",
+    label: "态势总览",
     description: "Overview",
+    state: "available",
+  },
+  {
+    id: "projects",
+    marker: "PJ",
+    label: "研究项目",
+    description: "单次群体模拟研究",
     state: "available",
   },
   {
@@ -49,7 +57,7 @@ export const navigationItems: readonly NavigationItem[] = [
   {
     id: "media",
     marker: "MI",
-    label: "媒体情报",
+    label: "媒体证据",
     description: "Media intelligence",
     state: "available",
   },
@@ -63,43 +71,43 @@ export const navigationItems: readonly NavigationItem[] = [
   {
     id: "world",
     marker: "WM",
-    label: "世界模型",
+    label: "世界与图谱",
     description: "World model",
     state: "available",
   },
   {
     id: "decisions",
     marker: "DX",
-    label: "决策实验",
-    description: "Decision experiments",
+    label: "历史实验",
+    description: "旧版实验档案",
     state: "available",
   },
   {
     id: "personas",
     marker: "PW",
-    label: "Persona World",
-    description: "Population workspace",
+    label: "模拟人群",
+    description: "合成人群工作区",
     state: "available",
   },
   {
     id: "tasks",
     marker: "TG",
-    label: "Task Gallery",
+    label: "评测中心",
     description: "Capability catalog",
     state: "available",
   },
   {
     id: "runs",
     marker: "RN",
-    label: "Playground",
-    description: "Experiment cockpit",
+    label: "模拟运行",
+    description: "群体模拟运行",
     state: "available",
   },
   {
     id: "reports",
     marker: "RP",
-    label: "报告",
-    description: "Reports",
+    label: "报告与交互",
+    description: "研究报告",
     state: "available",
   },
 ];

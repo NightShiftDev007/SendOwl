@@ -127,9 +127,8 @@ def test_native_launch_request_is_strict_ordered_and_unique() -> None:
             "items": [
                 {
                     "kind": "survey",
-                    "scenario_id": "23000000-0000-4000-8000-000000000001",
-                    "cohort_id": "24000000-0000-4000-8000-000000000001",
-                    "alternative_id": "25000000-0000-4000-8000-000000000001",
+                    "research_project_id": "23000000-0000-4000-8000-000000000001",
+                    "research_simulation_run_id": "25000000-0000-4000-8000-000000000001",
                 },
                 {
                     "kind": "chat",

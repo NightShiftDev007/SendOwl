@@ -1,5 +1,5 @@
 [project]
-name = "ai-decision-center-oasis-worker"
+name = "sandowl-oasis-worker"
 version = "0.1.0"
 description = "Isolated OASIS 0.2.5 manual-action smoke worker"
 requires-python = ">=3.11,<3.12"

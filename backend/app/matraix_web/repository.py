@@ -73,7 +73,7 @@ READINESS_LIMITATIONS = (
     "Readiness requires a recent worker heartbeat after both the provider tool-call probe "
     "and the fixed Playwright executor identity probe.",
     "The executor can browse only the fixed Quotes to Scrape origin and writes screenshots "
-    "to the SendOwl Web artifact volume.",
+    "to the SandOwl Web artifact volume.",
     "The selected quote and rating are synthetic Persona output, not a benchmark reward or "
     "human preference claim.",
 )
@@ -146,8 +146,7 @@ async def _live_config(session: AsyncSession) -> tuple[str, str]:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
-                    SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
-                    SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                     SimulationWorkerHeartbeatRecord.web_runtime_ready.is_(True),
                     SimulationWorkerHeartbeatRecord.web_executor_schema_version
                     == EXECUTOR_SCHEMA_VERSION,
@@ -785,6 +784,7 @@ async def get_web_readiness(session: AsyncSession) -> MatraixWebReadiness:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                 )
             )
         )
@@ -800,9 +800,7 @@ async def get_web_readiness(session: AsyncSession) -> MatraixWebReadiness:
             heartbeat.web_executor_spec_sha256,
         )
         for heartbeat in heartbeats
-        if heartbeat.platform_runtime_ready
-        and heartbeat.semantic_runtime_ready
-        and heartbeat.web_runtime_ready
+        if heartbeat.worker_domain == "evaluation" and heartbeat.web_runtime_ready
     }
     conflict = len(configs) > 1
     complete = next(iter(configs)) if len(configs) == 1 else None

@@ -13,7 +13,7 @@
   --pw-soft-line: oklch(0.225 0.018 252);
   --pw-ink: oklch(0.94 0.009 245);
   --pw-muted: oklch(0.69 0.02 245);
-  --pw-faint: oklch(0.54 0.018 245);
+  --pw-faint: oklch(0.64 0.018 245);
   --pw-cyan: oklch(0.76 0.12 205);
   --pw-mint: oklch(0.78 0.12 158);
   --pw-amber: oklch(0.79 0.12 78);
@@ -46,7 +46,7 @@
   letter-spacing: 0.09em;
 }
 
-.persona-world-hero h2 {
+.persona-world-hero h1 {
   max-width: 800px;
   margin: 8px 0 0;
   color: var(--pw-ink);
@@ -732,7 +732,7 @@
 }
 
 @media (max-width: 390px) {
-  .persona-world-hero h2 {
+  .persona-world-hero h1 {
     font-size: 1.35rem;
   }
 

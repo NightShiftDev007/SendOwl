@@ -191,7 +191,7 @@ def _runtime_config(trial: ClaimedChatTrial) -> ChatRuntimeConfig:
         model_name=trial.evaluation.model_name,
         config_sha256=trial.evaluation.chat_config_sha256,
         prompt_schema_version=trial.evaluation.prompt_schema_version,
-        sut_task_id="sendowl/matraix-acme-rest-mcp-suite",
+        sut_task_id="sandowl/matraix-acme-rest-mcp-suite",
         sut_task_version="1.0.0",
         sut_spec_sha256="0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a",
     )

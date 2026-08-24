@@ -3,7 +3,7 @@
 .web-eval-kicker { display: flex; align-items: center; gap: 12px; }
 .web-eval-kicker > button { min-height: 40px; padding: 0; color: var(--run-cyan); font: inherit; background: transparent; border: 0; cursor: pointer; }
 .web-eval-hero span, .web-eval-layout header span { color: var(--run-cyan); font-family: var(--font-mono); font-size: .625rem; letter-spacing: .08em; }
-.web-eval-hero h2, .web-eval-layout h3, .web-eval-layout h4 { margin: 5px 0 0; color: var(--run-ink); }
+.web-eval-hero h1, .web-eval-layout h3, .web-eval-layout h4 { margin: 5px 0 0; color: var(--run-ink); }
 .web-eval-hero p { max-width: 780px; margin: 8px 0 0; color: var(--run-muted); line-height: 1.6; }
 .web-eval-hero dl { display: grid; grid-template-columns: repeat(3, minmax(90px, 1fr)); margin: 0; border: 1px solid var(--run-line); }
 .web-eval-hero dl div { padding: 12px; border-left: 1px solid var(--run-line); }

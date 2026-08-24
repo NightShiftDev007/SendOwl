@@ -36,8 +36,8 @@ function normalizedError(error: unknown): Error {
 }
 
 export function useSemanticWorldGraphs(
-  worldModelId: string,
-  snapshotId: string,
+  worldModelId: string | null,
+  snapshotId: string | null,
 ): {
   readonly state: SemanticWorldGraphsState;
   readonly enqueueState: "idle" | "submitting";
@@ -56,6 +56,10 @@ export function useSemanticWorldGraphs(
   const enqueueController = useRef<AbortController | null>(null);
 
   useEffect(() => {
+    if (worldModelId === null || snapshotId === null) {
+      setState({ status: "success", data: { items: [], total: 0 } });
+      return undefined;
+    }
     const controller = new AbortController();
     setState((current) => ({ status: "loading", data: current.data }));
     void fetchSemanticWorldGraphs(worldModelId, snapshotId, controller.signal)
@@ -91,7 +95,7 @@ export function useSemanticWorldGraphs(
   }, []);
 
   const enqueue = useCallback(async (): Promise<void> => {
-    if (enqueueController.current !== null) return;
+    if (enqueueController.current !== null || worldModelId === null || snapshotId === null) return;
     const controller = new AbortController();
     enqueueController.current = controller;
     setEnqueueState("submitting");

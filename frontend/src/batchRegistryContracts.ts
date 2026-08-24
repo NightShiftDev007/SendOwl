@@ -84,8 +84,11 @@ const batchRegistryItemBaseSchema = z.object({
 const surveyBatchRegistryItemSchema = batchRegistryItemBaseSchema.extend({
   position: z.number().int().min(0).max(19),
   kind: z.literal("survey"),
-  version: z.literal("scenario-preference/v1"),
-  prompt_schema_version: z.literal("matraix-survey-scenario-preference/v1"),
+  version: z.enum(["scenario-preference/v1", "single-context-observation/v1"]),
+  prompt_schema_version: z.enum([
+    "matraix-survey-scenario-preference/v1",
+    "sandowl-research-survey/v1",
+  ]),
 }).strict();
 
 const chatBatchRegistryItemSchema = batchRegistryItemBaseSchema.extend({
@@ -120,8 +123,11 @@ const linuxBatchRegistryItemSchema = batchRegistryItemBaseSchema.extend({
 
 const surveyBatchRegistryCandidateObjectSchema = batchRegistryItemBaseSchema.extend({
   kind: z.literal("survey"),
-  version: z.literal("scenario-preference/v1"),
-  prompt_schema_version: z.literal("matraix-survey-scenario-preference/v1"),
+  version: z.enum(["scenario-preference/v1", "single-context-observation/v1"]),
+  prompt_schema_version: z.enum([
+    "matraix-survey-scenario-preference/v1",
+    "sandowl-research-survey/v1",
+  ]),
 }).strict();
 
 const chatBatchRegistryCandidateObjectSchema = batchRegistryItemBaseSchema.extend({
@@ -181,11 +187,14 @@ function refineTypedSourcePath(
     readonly kind: z.infer<typeof kindSchema>;
     readonly parent_id: string;
     readonly source_detail_path: string;
+    readonly version: string;
   },
   context: z.RefinementCtx,
 ): void {
   const expectedPath = item.kind === "survey"
-    ? `/api/v2/matraix/survey-experiments/${item.parent_id}`
+    ? item.version === "single-context-observation/v1"
+      ? `/api/v2/research-surveys/${item.parent_id}`
+      : `/api/v2/matraix/survey-experiments/${item.parent_id}`
     : item.kind === "chat"
       ? `/api/v2/matraix/chat-evaluations/${item.parent_id}`
       : item.kind === "web"
@@ -385,9 +394,8 @@ export const matraixBatchRegistryCreateRequestSchema = z.object({
 
 const nativeSurveyLaunchItemSchema = z.object({
   kind: z.literal("survey"),
-  scenario_id: identifierSchema,
-  cohort_id: identifierSchema,
-  alternative_id: identifierSchema,
+  research_project_id: identifierSchema,
+  research_simulation_run_id: identifierSchema,
 }).strict();
 
 const nativeChatLaunchItemSchema = z.object({

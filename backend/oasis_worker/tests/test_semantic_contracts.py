@@ -6,7 +6,8 @@ import pytest
 from pydantic import ValidationError
 from semantic_fixtures import CONFIG_SHA256, build_trial
 
-from oasis_worker.semantic_contracts import SemanticEvent
+from oasis_worker.research_contracts import ClaimedResearchRun
+from oasis_worker.semantic_contracts import SemanticEvent, SocialSimulationExecution
 from oasis_worker.semantic_hashing import experiment_sha256, scenario_sha256
 from oasis_worker.semantic_queue import (
     _claimed_semantic_trial_from_row,
@@ -27,6 +28,39 @@ def test_full_scenario_hash_remains_valid_when_experiment_selects_one_of_three_a
     assert experiment_sha256(trial.experiment) == trial.experiment.experiment_sha256
     assert trial.dataset.persona_count == 1_000_000
     assert len(trial.cohort.personas) == 1
+
+
+def test_native_research_execution_has_no_comparison_contract() -> None:
+    legacy_fixture = build_trial(persona_count=1, selected_position=1)
+    execution = SocialSimulationExecution(
+        id=UUID("70000000-0000-4000-8000-000000000001"),
+        context_id=UUID("70000000-0000-4000-8000-000000000002"),
+        context_kind="research_project",
+        decision_question="观察一次有界合成人群运行会产生哪些事件？",
+        actor_user_name="sandowl_scenario",
+        actor_name="SandOwl 研究情境",
+        actor_bio="只发布研究项目中冻结的一条合成初始说明。",
+        seed=7,
+        rounds=1,
+        minutes_per_round=60,
+        model_name="provider-model",
+        semantic_config_sha256=CONFIG_SHA256,
+        prompt_schema_version="matraix-semantic-profile/v1",
+        initial_posts=legacy_fixture.selected_variant.interventions,
+        cohort=legacy_fixture.cohort,
+    )
+    claimed = ClaimedResearchRun(run_spec_sha256="f" * 64, execution=execution)
+
+    assert claimed.execution.context_kind == "research_project"
+    assert len(claimed.execution.initial_posts) == 1
+    assert {
+        "scenario",
+        "experiment",
+        "variant_role",
+        "variant_hypothesis",
+        "baseline",
+        "alternatives",
+    }.isdisjoint(SocialSimulationExecution.model_fields)
 
 
 def test_profile_projection_is_deterministic_bounded_and_excludes_known_sentinels() -> None:
@@ -87,6 +121,20 @@ def test_semantic_config_digest_covers_profile_projection_behavior(
     maximum_changed = semantic_hashing.semantic_config_sha256(base_url, model_name)
 
     assert len({baseline, template_changed, sentinels_changed, maximum_changed}) == 4
+
+
+def test_report_domain_config_has_a_distinct_bounded_output_budget() -> None:
+    from oasis_worker.semantic_hashing import (
+        report_domain_config_sha256,
+        semantic_config_sha256,
+    )
+
+    base_url = "https://provider.example/v1"
+    model_name = "provider-model"
+
+    assert report_domain_config_sha256(base_url, model_name) != semantic_config_sha256(
+        base_url, model_name
+    )
 
 
 def test_semantic_event_rejects_action_specific_extra_fields_and_maps_public_positions() -> None:

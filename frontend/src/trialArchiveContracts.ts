@@ -50,7 +50,10 @@ const surveyProvenanceSchema = z.object({
   runner_version: z.literal("1.0.0").nullable(),
   model_name: singleLineTextSchema.max(200),
   parent_config_sha256: sha256DigestSchema,
-  prompt_schema_version: z.literal("matraix-survey-scenario-preference/v1"),
+  prompt_schema_version: z.enum([
+    "matraix-survey-scenario-preference/v1",
+    "sandowl-research-survey/v1",
+  ]),
   answers_sha256: sha256DigestSchema.nullable(),
 }).strict();
 
@@ -85,7 +88,7 @@ const linuxProvenanceSchema = z.object({
 const surveyTrialArchiveItemObjectSchema = archiveItemCommonSchema.extend({
   kind: z.literal("survey"),
   task: archiveTaskBaseSchema.extend({
-    version: z.literal("scenario-preference/v1"),
+    version: z.enum(["scenario-preference/v1", "single-context-observation/v1"]),
   }).strict(),
   provenance: surveyProvenanceSchema,
   source_detail_path: z.string(),
@@ -225,7 +228,10 @@ function refineArchiveState(
 
 export const surveyTrialArchiveItemSchema = surveyTrialArchiveItemObjectSchema
   .superRefine((item, context) => {
-    if (item.source_detail_path !== `/api/v2/matraix/survey-trials/${item.id}`) {
+    const expectedPath = item.task.version === "single-context-observation/v1"
+      ? `/api/v2/research-surveys/${item.parent_id}`
+      : `/api/v2/matraix/survey-trials/${item.id}`;
+    if (item.source_detail_path !== expectedPath) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["source_detail_path"],

@@ -73,6 +73,11 @@ class DecisionThreadCreateRequest(DecisionThreadContextCreate):
     decision_question: DecisionQuestion
 
 
+class DecisionThreadDraftCreateRequest(DecisionThreadRequestModel):
+    title: DecisionThreadTitle
+    decision_question: DecisionQuestion
+
+
 class DecisionThreadRevision(ContractModel):
     id: UUID
     version: Annotated[int, Field(ge=1)]
@@ -108,17 +113,21 @@ class DecisionThreadSummary(ContractModel):
     title: DecisionThreadTitle
     decision_question: DecisionQuestion
     created_at: AwareDatetime
-    latest_revision: DecisionThreadRevision
+    latest_revision: DecisionThreadRevision | None
 
 
 class DecisionThreadDetail(DecisionThreadSummary):
-    revisions: Annotated[tuple[DecisionThreadRevision, ...], Field(min_length=1)]
+    revisions: tuple[DecisionThreadRevision, ...]
 
     @model_validator(mode="after")
     def validate_history(self) -> Self:
         versions = tuple(revision.version for revision in self.revisions)
         if versions != tuple(range(1, len(self.revisions) + 1)):
             raise ValueError("decision thread revision versions must be contiguous from one")
+        if not self.revisions:
+            if self.latest_revision is not None:
+                raise ValueError("draft decision thread cannot expose a latest revision")
+            return self
         if self.latest_revision != self.revisions[-1]:
             raise ValueError("latest_revision must equal the final history revision")
         return self

@@ -10,6 +10,7 @@ import {
   type EvidenceBundleSummary,
 } from "./evidenceBundleContracts";
 import { formatMediaTimestamp } from "./mediaPresentation";
+import { ReportAgentEvidencePanel } from "./ReportAgentEvidencePanel";
 import { useEvidenceBundle, useEvidenceBundles } from "./useEvidenceBundles";
 import "./evidenceBundles.css";
 
@@ -170,6 +171,7 @@ function BundleDetail({ bundle }: { readonly bundle: EvidenceBundleDetail }): JS
         </div>
         <div><dt>创建时间</dt><dd>{formatMediaTimestamp(bundle.created_at)}</dd></div>
       </dl>
+      <ReportAgentEvidencePanel bundle={bundle} />
       <ol>
         {bundle.items.map((item) => (
           <li key={item.article_id}>

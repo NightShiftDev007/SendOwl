@@ -81,15 +81,8 @@ function personaById(
   return personas.find((persona) => persona.id === personaId) ?? null;
 }
 
-function cohortRunStudioHref(cohortId: string): string {
-  return createRunStudioHash({
-    mode: "semantic",
-    cohortId,
-    scenarioId: null,
-    experimentId: null,
-    trialId: null,
-    panel: null,
-  });
+function cohortRunStudioHref(): string {
+  return createRunStudioHash({ mode: "native", projectId: null, runId: null });
 }
 
 function DatasetLedger({ dataset }: { readonly dataset: PopulationDatasetSummary }): JSX.Element {
@@ -335,8 +328,8 @@ export function PersonaWorldPage(): JSX.Element {
     <div className="persona-world-page">
       <header className="persona-world-hero">
         <div>
-          <span>MatrAIx / PERSONA WORLD</span>
-          <h2>从公开 Persona 数据构造可复核的人群上下文</h2>
+          <span>合成人群 / PERSONA WORLD</span>
+          <h1>从公开 Persona 数据构造可复核的人群上下文</h1>
           <p>浏览真实导入的数据集、核对完整属性、跨页选择成员，并将选择封存为可进入语义实验的 Cohort。</p>
         </div>
         <div className="persona-world-boundary" role="note">
@@ -356,7 +349,7 @@ export function PersonaWorldPage(): JSX.Element {
               <div className="persona-world-skeleton" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div>
             ) : null}
             {datasetsState.data !== null && datasets.length === 0 ? (
-              <div className="persona-world-empty-compact"><strong>没有可用数据集</strong><p>先导入 MatrAIx Persona 数据集。</p></div>
+              <div className="persona-world-empty-compact"><strong>没有可用数据集</strong><p>先导入合成人物数据集。</p></div>
             ) : null}
             {datasets.length > 0 ? (
               <label htmlFor="persona-world-dataset">
@@ -376,7 +369,7 @@ export function PersonaWorldPage(): JSX.Element {
           </section>
         </aside>
 
-        <main className="persona-world-center" aria-labelledby="persona-directory-title">
+        <section className="persona-world-center" aria-labelledby="persona-directory-title">
           <header>
             <div><span>CATALOG / PERSONAS</span><h3 id="persona-directory-title">Persona 目录</h3><p>{dataset === null ? "先明确选择一个数据集。" : `${dataset.display_name} · ${formatMediaCount(personasResponse?.total ?? dataset.persona_count)} 人`}</p></div>
             <div className="persona-world-selection-count"><strong>{selectedPersonaIds.length}</strong><span>/ 100 已选</span></div>
@@ -412,7 +405,7 @@ export function PersonaWorldPage(): JSX.Element {
             </ul>
           ) : null}
           {personasResponse !== null && personasResponse.total > 0 ? <nav className="persona-world-pagination" aria-label="Persona 分页"><button type="button" disabled={page <= 1 || personasState.status === "loading"} onClick={() => { setPage(page - 1); setInspectedPersonaId(null); }}>上一页</button><span>第 {page} / {totalPages} 页</span><button type="button" disabled={page >= totalPages || personasState.status === "loading"} onClick={() => { setPage(page + 1); setInspectedPersonaId(null); }}>下一页</button></nav> : null}
-        </main>
+        </section>
 
         <aside className="persona-world-right" aria-label="Persona 核验与 Cohort 冻结">
           <PersonaInspector persona={inspectedPersona} />
@@ -423,13 +416,13 @@ export function PersonaWorldPage(): JSX.Element {
             {currentTitleError !== null ? <p className="persona-world-field-error" role="alert">{currentTitleError}</p> : null}
             <button className="persona-world-freeze-action" type="button" disabled={!canFreeze} aria-busy={isSubmitting} onClick={() => void freezeCohort()}>{isSubmitting ? "正在封存…" : `冻结 ${selectedPersonaIds.length} 人 Cohort`}</button>
             {freezeState.status === "error" ? <div className="persona-world-message" data-status="error" role="alert"><strong>{isAmbiguousPostResultError(freezeState.error) ? "冻结结果未知，请先刷新目录核对" : "Cohort 没有冻结"}</strong><p>{freezeState.error.message}</p></div> : null}
-            {freezeState.status === "success" ? <div className="persona-world-message" data-status="success" role="status"><strong>已冻结，可进入语义实验</strong><p>{freezeState.cohort.title} · {freezeState.cohort.persona_count} 人</p><code>{freezeState.cohort.cohort_sha256}</code><a href={cohortRunStudioHref(freezeState.cohort.id)}>带着这个 Cohort 进入 Run Studio →</a></div> : null}
+            {freezeState.status === "success" ? <div className="persona-world-message" data-status="success" role="status"><strong>已冻结，可进入模拟运行</strong><p>{freezeState.cohort.title} · {freezeState.cohort.persona_count} 人</p><code>{freezeState.cohort.cohort_sha256}</code><a href={cohortRunStudioHref()}>进入模拟运行工作台 →</a></div> : null}
           </section>
           {selectedCohortId !== null ? (
             <section className="persona-world-cohort-detail" aria-labelledby="persona-cohort-detail-title">
               <header><span>COHORT / INSPECTOR</span><h3 id="persona-cohort-detail-title">{selectedCohort?.title ?? "正在核验 Cohort"}</h3></header>
               {cohortDetailState.status === "error" ? <ApiErrorPanel title="无法读取 Cohort 详情" error={cohortDetailState.error} isRetrying={cohortDetailState.isRetrying} onRetry={reloadCohortDetail} /> : null}
-              {selectedCohort !== null ? <><dl><div><dt>成员</dt><dd>{selectedCohort.persona_count}</dd></div><div><dt>dataset</dt><dd>{selectedCohort.dataset.slug}</dd></div><div><dt>hash</dt><dd><code>{selectedCohort.cohort_sha256}</code></dd></div></dl><ol>{selectedCohort.members.map((member) => <li key={member.persona.id}><span>{member.position + 1}</span><strong>{member.persona.display_name}</strong><small>{member.persona.persona_id}</small></li>)}</ol><a href={cohortRunStudioHref(selectedCohort.id)}>在语义实验中使用 →</a></> : null}
+              {selectedCohort !== null ? <><dl><div><dt>成员</dt><dd>{selectedCohort.persona_count}</dd></div><div><dt>dataset</dt><dd>{selectedCohort.dataset.slug}</dd></div><div><dt>hash</dt><dd><code>{selectedCohort.cohort_sha256}</code></dd></div></dl><ol>{selectedCohort.members.map((member) => <li key={member.persona.id}><span>{member.position + 1}</span><strong>{member.persona.display_name}</strong><small>{member.persona.persona_id}</small></li>)}</ol><a href={cohortRunStudioHref()}>进入模拟运行工作台 →</a></> : null}
             </section>
           ) : null}
         </aside>

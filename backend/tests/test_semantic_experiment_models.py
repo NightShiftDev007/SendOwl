@@ -25,6 +25,7 @@ def test_semantic_schema_is_normalized_and_heartbeat_has_no_secret_columns() -> 
         events.columns.keys()
     )
     assert {
+        "worker_domain",
         "semantic_runtime_ready",
         "semantic_model_name",
         "semantic_config_sha256",
@@ -34,3 +35,11 @@ def test_semantic_schema_is_normalized_and_heartbeat_has_no_secret_columns() -> 
     assert "api_key" not in heartbeats.columns
     assert "base_url" not in heartbeats.columns
     assert str(heartbeats.c.semantic_runtime_ready.server_default.arg) == "false"
+    assert any(
+        constraint.name == "ck_simulation_worker_heartbeats_domain"
+        for constraint in heartbeats.constraints
+    )
+    assert any(
+        index.name == "ix_simulation_worker_heartbeats_domain_last_seen"
+        for index in heartbeats.indexes
+    )

@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import type {
@@ -12,6 +12,8 @@ import {
 } from "./mediaPresentation";
 import { useMediaSources } from "./useMediaSources";
 import "./mediaSourceHealth.css";
+
+const sourcesPerPage = 25;
 
 function MediaSourceHealthLoading(): JSX.Element {
   return (
@@ -177,12 +179,26 @@ function MediaSourceHealthContent({
 }): JSX.Element {
   const [query, setQuery] = useState<string>("");
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+  const [page, setPage] = useState<number>(1);
   const titleId = useId();
   const queryId = useId();
   const sources = useMemo(
     () => visibleSources(response.items, query, selectedStatus),
     [query, response.items, selectedStatus],
   );
+  const pageCount = Math.max(1, Math.ceil(sources.length / sourcesPerPage));
+  const visiblePage = Math.min(page, pageCount);
+  const pageSources = sources.slice(
+    (visiblePage - 1) * sourcesPerPage,
+    visiblePage * sourcesPerPage,
+  );
+
+  useEffect(() => {
+    const selectedIndex = selectedSourceId === null
+      ? -1
+      : sources.findIndex((source) => source.id === selectedSourceId);
+    setPage(selectedIndex < 0 ? 1 : Math.floor(selectedIndex / sourcesPerPage) + 1);
+  }, [selectedSourceId, sources]);
 
   return (
     <section className="media-source-health" aria-labelledby={titleId}>
@@ -214,7 +230,8 @@ function MediaSourceHealthContent({
           />
         </label>
         <p role="status" aria-live="polite">
-          显示 {formatMediaCount(sources.length)} / {formatMediaCount(response.total)} 个来源
+          找到 {formatMediaCount(sources.length)} / {formatMediaCount(response.total)} 个来源
+          {sources.length === 0 ? null : ` · 第 ${visiblePage} / ${pageCount} 页`}
         </p>
       </div>
 
@@ -238,7 +255,7 @@ function MediaSourceHealthContent({
             <span>原站</span>
           </div>
           <ul aria-label="媒体源健康目录">
-            {sources.map((source) => (
+            {pageSources.map((source) => (
               <SourceRow
                 key={source.id}
                 source={source}
@@ -247,6 +264,25 @@ function MediaSourceHealthContent({
               />
             ))}
           </ul>
+          {pageCount <= 1 ? null : (
+            <nav className="media-source-health__pagination" aria-label="媒体源目录分页">
+              <button
+                type="button"
+                disabled={visiblePage === 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+              >
+                上一页
+              </button>
+              <span aria-current="page">第 {visiblePage} / {pageCount} 页</span>
+              <button
+                type="button"
+                disabled={visiblePage === pageCount}
+                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+              >
+                下一页
+              </button>
+            </nav>
+          )}
         </div>
       )}
     </section>

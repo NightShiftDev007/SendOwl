@@ -47,6 +47,13 @@ export function evaluateTaskAvailability(
     };
   }
 
+  if (capabilityState === "legacy_readonly") {
+    return {
+      availability: "contract",
+      reason: "该能力只保留历史读取，新建入口已停用。",
+    };
+  }
+
   if (capabilityState !== "runtime_ready") {
     return {
       availability: "contract",

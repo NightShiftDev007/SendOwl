@@ -58,18 +58,19 @@ from app.matraix_linux.repository import (
     verify_linux_trial_record,
 )
 from app.matraix_linux.tasks import build_linux_task
-from app.matraix_surveys.contracts import MatraixSurveyCreateRequest, SurveyPersonaRef
+from app.matraix_surveys.contracts import SurveyPersonaRef
 from app.matraix_surveys.hashing import calculate_survey_trial_sha256
 from app.matraix_surveys.models import MatraixSurveyExperimentRecord, MatraixSurveyTrialRecord
-from app.matraix_surveys.repository import (
-    ensure_matraix_survey_experiment_record,
-    verify_survey_experiment_record,
-)
+from app.matraix_surveys.repository import verify_survey_experiment_record
 from app.matraix_web.contracts import WebPersonaRef
 from app.matraix_web.hashing import calculate_trial_sha256 as calculate_web_trial_sha256
 from app.matraix_web.models import MatraixWebEvaluationRecord, MatraixWebTrialRecord
 from app.matraix_web.repository import verify_web_evaluation_record
 from app.matraix_web.tasks import build_web_task
+from app.research_surveys.contracts import ResearchSurveyCreateRequest
+from app.research_surveys.hashing import trial_sha256 as research_survey_trial_sha256
+from app.research_surveys.models import ResearchSurveyRecord, ResearchSurveyTrialRecord
+from app.research_surveys.repository import ensure_research_survey_record
 
 SUPPORTED_STATUSES = frozenset({"queued", "running", "succeeded", "failed"})
 
@@ -142,6 +143,34 @@ def _verify_survey_trials(
         ):
             raise MatraixBatchRegistryIntegrityError(
                 f"MatrAIx Survey trial {trial.id} does not match its sealed parent"
+            )
+        statuses.append(_validated_status(trial.status, trial.id))
+    return tuple(statuses)
+
+
+def _verify_research_survey_trials(
+    parent: ResearchSurveyRecord,
+    trials: tuple[ResearchSurveyTrialRecord, ...],
+) -> tuple[MatraixObservedTrialStatus, ...]:
+    if len(trials) != parent.persona_count:
+        raise MatraixBatchRegistryIntegrityError(
+            f"SandOwl Research Survey {parent.id} trial count is inconsistent"
+        )
+    if tuple(trial.persona_position for trial in trials) != tuple(range(parent.persona_count)):
+        raise MatraixBatchRegistryIntegrityError(
+            f"SandOwl Research Survey {parent.id} trial positions are not contiguous"
+        )
+    statuses: list[MatraixObservedTrialStatus] = []
+    for trial in trials:
+        expected_sha = research_survey_trial_sha256(
+            parent.survey_sha256,
+            trial.persona_position,
+            trial.persona_id,
+            trial.persona_profile_sha256,
+        )
+        if trial.survey_id != parent.id or trial.trial_sha256 != expected_sha:
+            raise MatraixBatchRegistryIntegrityError(
+                f"SandOwl Research Survey trial {trial.id} does not match its sealed parent"
             )
         statuses.append(_validated_status(trial.status, trial.id))
     return tuple(statuses)
@@ -237,6 +266,8 @@ async def _load_sources(
     linux_ids = tuple(parent_id for kind, parent_id in references if kind == "linux")
     survey_parents: tuple[MatraixSurveyExperimentRecord, ...] = ()
     survey_trials: tuple[MatraixSurveyTrialRecord, ...] = ()
+    research_survey_parents: tuple[ResearchSurveyRecord, ...] = ()
+    research_survey_trials: tuple[ResearchSurveyTrialRecord, ...] = ()
     chat_parents: tuple[MatraixChatEvaluationRecord, ...] = ()
     chat_trials: tuple[MatraixChatTrialRecord, ...] = ()
     web_parents: tuple[MatraixWebEvaluationRecord, ...] = ()
@@ -263,6 +294,32 @@ async def _load_sources(
                     .order_by(
                         MatraixSurveyTrialRecord.experiment_id,
                         MatraixSurveyTrialRecord.persona_position,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        research_survey_parents = tuple(
+            (
+                await session.execute(
+                    select(ResearchSurveyRecord).where(
+                        ResearchSurveyRecord.id.in_(survey_ids),
+                        ResearchSurveyRecord.sealed_at.is_not(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        research_survey_trials = tuple(
+            (
+                await session.execute(
+                    select(ResearchSurveyTrialRecord)
+                    .where(ResearchSurveyTrialRecord.survey_id.in_(survey_ids))
+                    .order_by(
+                        ResearchSurveyTrialRecord.survey_id,
+                        ResearchSurveyTrialRecord.persona_position,
                     )
                 )
             )
@@ -342,6 +399,11 @@ async def _load_sources(
     survey_trials_by_parent: dict[UUID, list[MatraixSurveyTrialRecord]] = defaultdict(list)
     for trial in survey_trials:
         survey_trials_by_parent[trial.experiment_id].append(trial)
+    research_survey_trials_by_parent: dict[UUID, list[ResearchSurveyTrialRecord]] = defaultdict(
+        list
+    )
+    for trial in research_survey_trials:
+        research_survey_trials_by_parent[trial.survey_id].append(trial)
     chat_trials_by_parent: dict[UUID, list[MatraixChatTrialRecord]] = defaultdict(list)
     for trial in chat_trials:
         chat_trials_by_parent[trial.evaluation_id].append(trial)
@@ -370,6 +432,31 @@ async def _load_sources(
             parent_config_sha256=parent.survey_config_sha256,
             prompt_schema_version=parent.prompt_schema_version,
             source_detail_path=f"/api/v2/matraix/survey-experiments/{parent.id}",
+        )
+    for parent in research_survey_parents:
+        key: tuple[MatraixBatchKind, UUID] = ("survey", parent.id)
+        if key in sources:
+            raise MatraixBatchRegistryIntegrityError(
+                f"Survey parent id {parent.id} is ambiguous across native and historical stores"
+            )
+        statuses = _verify_research_survey_trials(
+            parent, tuple(research_survey_trials_by_parent[parent.id])
+        )
+        sources[key] = SourceProjection(
+            kind="survey",
+            parent_id=parent.id,
+            parent_sha256=parent.survey_sha256,
+            title=parent.project_title,
+            version="single-context-observation/v1",
+            observed_status=_observed_status(statuses),
+            created_at=parent.created_at,
+            trial_count=len(statuses),
+            succeeded_trial_count=sum(status == "succeeded" for status in statuses),
+            failed_trial_count=sum(status == "failed" for status in statuses),
+            model_name=parent.model_name,
+            parent_config_sha256=parent.survey_config_sha256,
+            prompt_schema_version=parent.prompt_schema_version,
+            source_detail_path=f"/api/v2/research-surveys/{parent.id}",
         )
     for parent in chat_parents:
         task = build_chat_task(parent.task_id)
@@ -660,9 +747,8 @@ def _native_launch_sort_key(
     if item.kind == "survey":
         return (
             item.kind,
-            str(item.scenario_id),
-            str(item.cohort_id),
-            str(item.alternative_id),
+            str(item.research_project_id),
+            str(item.research_simulation_run_id),
         )
     return (item.kind, str(item.cohort_id), item.task_id, item.task_version)
 
@@ -677,12 +763,11 @@ async def create_native_batch_launch(
         indexed_items = tuple(enumerate(request.items))
         for position, item in sorted(indexed_items, key=_native_launch_sort_key):
             if item.kind == "survey":
-                parent = await ensure_matraix_survey_experiment_record(
+                parent = await ensure_research_survey_record(
                     session,
-                    MatraixSurveyCreateRequest(
-                        scenario_id=item.scenario_id,
-                        cohort_id=item.cohort_id,
-                        alternative_id=item.alternative_id,
+                    ResearchSurveyCreateRequest(
+                        research_project_id=item.research_project_id,
+                        research_simulation_run_id=item.research_simulation_run_id,
                     ),
                 )
             else:
@@ -806,6 +891,11 @@ async def list_batch_registry_candidates(
     SELECT 'survey'::text AS kind, id, created_at
     FROM matraix_survey_experiments
     WHERE input_sealed_at IS NOT NULL
+      AND (CAST(:kind AS text) IS NULL OR CAST(:kind AS text)='survey')
+    UNION ALL
+    SELECT 'survey'::text AS kind, id, created_at
+    FROM research_surveys
+    WHERE sealed_at IS NOT NULL
       AND (CAST(:kind AS text) IS NULL OR CAST(:kind AS text)='survey')
     UNION ALL
     SELECT 'web'::text AS kind, id, created_at

@@ -54,7 +54,7 @@
   letter-spacing: 0.1em;
 }
 
-.batch-registry-header h2 {
+.batch-registry-header h1 {
   margin: 5px 0;
   font-size: 1.65rem;
   text-wrap: balance;
@@ -118,6 +118,8 @@
 .batch-native-fields { display: grid; gap: 11px; margin-top: 12px; }
 .batch-native-fields label { display: grid; gap: 6px; color: var(--batch-muted); font-size: 0.68rem; }
 .batch-native-fields select { min-width: 0; width: 100%; min-height: 40px; padding: 0 9px; color: var(--batch-ink); border: 1px solid var(--batch-line); background: rgba(8, 14, 18, 0.72); }
+.batch-native-inherited { display: grid; gap: 6px; padding: 10px; color: var(--batch-muted); font-size: 0.68rem; border: 1px solid var(--batch-line); background: rgba(8, 14, 18, 0.42); }
+.batch-native-inherited strong { color: var(--batch-ink); font: 500 0.68rem "JetBrains Mono", monospace; }
 .batch-native-add { width: 100%; min-height: 40px; margin-top: 12px; color: var(--batch-amber); border: 1px solid rgba(229, 165, 90, 0.35); background: rgba(229, 165, 90, 0.05); }
 .batch-native-plan { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--batch-line); }
 .batch-native-plan > header { display: flex; justify-content: space-between; }

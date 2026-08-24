@@ -1,18 +1,20 @@
-# SendOwl 项目交接与上下文
+# SandOwl 项目交接与上下文
 
-> 状态基准：2026-08-16；分支 `main`；基准提交 `84239b1`；代码迁移 head `20260816_core_0038`。
+> M16 当前边界（优先于下文历史章节）：新工作走 `Native Media → WorldSnapshot + Semantic Graph → Research Project + AgendaContext → Cohort → SimulationContext / SimulationPlan → Simulation Run + Graph Memory → ReportAgent / Agent Interaction / Persona Interview → Project-bound Evaluation`。Scenario、Semantic Experiment、Decision Thread、DecisionReport、旧 Persona Interview、旧 Scenario Preference Survey 和 platform-smoke 均为显式历史只读。
 
-本文是接手 SendOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
+> 状态基准：2026-08-20；分支 `main`；代码迁移 head `20260820_core_0061`。M11–M15 工程主链已完成；M16 第一阶段完成 Harbor retry lineage、错误可见性、全量验证与文档收口，下一 Gate 是 Owner 零提示中文复测。
+
+本文是接手 SandOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 
 产品原则见 [PRODUCT.md](../PRODUCT.md)，领域和运行架构见 [architecture.md](./architecture.md)，视觉规范见 [design.md](./design.md)。本文不复制各模块的字段级契约，字段与约束始终以代码、OpenAPI 和 Alembic 迁移为准。
 
 ## 1. 一句话定位
 
-SendOwl 将 AgendaScope、原 AI Decision Center、MatrAIx 与 MiroFish/OASIS 的可复用能力整合为一个证据驱动的决策实验工作台：
+SandOwl 将 AgendaScope、原 `ai-decision-center`、MatrAIx 与 MiroFish/OASIS 的可复用能力整合为一个证据驱动的决策实验工作台：
 
 ```text
 外部现实证据
-  → SendOwl 自有媒体副本
+  → SandOwl 自有媒体副本
   → 人工确认并冻结的 WorldSnapshot
   → Baseline / Alternative Scenario
   → 冻结 Persona Cohort
@@ -26,15 +28,15 @@ SendOwl 将 AgendaScope、原 AI Decision Center、MatrAIx 与 MiroFish/OASIS �
 
 ### 2.1 唯一开发目标
 
-- 所有新代码、迁移、服务、数据库表、数据卷和文档都只能位于 `/Users/ssyb/Workspace/web/SendOwl`。
+- 所有新代码、迁移、服务、数据库表、数据卷和文档都只能位于 `/Users/ssyb/Workspace/web/SandOwl`。
 - `ai-decision-center` 是正在运行的旧演示项目。不得在其中开发，不得重启、迁移、删除或修改其数据。
-- AgendaScope、MatrAIx、MiroFish 和旧 AI Decision Center 可以作为只读来源，用于核对代码、契约和数据；不得修改其仓库、数据库或运行状态。
+- AgendaScope、MatrAIx、MiroFish 和旧 SandOwl 可以作为只读来源，用于核对代码、契约和数据；不得修改其仓库、数据库或运行状态。
 
 ### 2.2 数据隔离
 
-- PostgreSQL、Redis、OASIS artifacts、Web screenshots 和 Linux artifacts 都使用 `sendowl-*` 独立卷。
-- Compose project 固定为 `sendowl`；默认入口为前端 `127.0.0.1:3200`、后端 `127.0.0.1:8210`。
-- AgendaScope 媒体同步只能使用显式提供的只读源 DSN。源事务是 `REPEATABLE READ READ ONLY`，目标写入只发生在 SendOwl PostgreSQL。
+- PostgreSQL、Redis、OASIS artifacts、Web screenshots 和 Linux artifacts 都使用 `sandowl-*` 独立卷。
+- Compose project 固定为 `sandowl`；默认入口为前端 `127.0.0.1:3200`、后端 `127.0.0.1:8210`。
+- AgendaScope 媒体同步只能使用显式提供的只读源 DSN。源事务是 `REPEATABLE READ READ ONLY`，目标写入只发生在 SandOwl PostgreSQL。
 - 不得复用旧项目的数据库卷、Compose project、镜像名、端口或迁移谱系。
 - 任何跨项目导入必须先验证源/目标数据库身份不同；凭据不得进入日志、API 响应、业务表或 Git。
 
@@ -49,12 +51,12 @@ SendOwl 将 AgendaScope、原 AI Decision Center、MatrAIx 与 MiroFish/OASIS �
 
 合成输出不得回写为现实事实，不得表述为预测、因果结论、真人研究、benchmark reward 或决策推荐。
 
-## 3. 来源项目能力如何进入 SendOwl
+## 3. 来源项目能力如何进入 SandOwl
 
-| 来源 | 已整合进 SendOwl | 明确没有直接搬入 |
+| 来源 | 已整合进 SandOwl | 明确没有直接搬入 |
 |---|---|---|
 | AgendaScope | 来源、文章、议题、快照、传播 follower、首发表述观察；只读周期刷新；媒体地图和议题/来源档案 | 原后台账号体系；对源库的写操作；真正 CDC；所有源对象删除同步 |
-| 原 AI Decision Center | WorldSnapshot、Scenario、Run、Decision Thread、Decision Report 的领域语义 | 企业主体、企业别名、coverage、产业链、股权链、GTV 和旧企业数据库 |
+| 原 SandOwl | WorldSnapshot、Scenario、Run、Decision Thread、Decision Report 的领域语义 | 企业主体、企业别名、coverage、产业链、股权链、GTV 和旧企业数据库 |
 | MatrAIx | Persona dataset/Cohort、Playground 信息架构、固定 Survey、REST/MCP Chat、Web、Linux source samples、Trial Archive、Batch Registry、地球渲染原语 | 通用 Harbor runtime、任意任务/网址/MCP、桌面 OS/Computer Use、完整 verifier/reward/artifact 平面 |
 | MiroFish / OASIS | OASIS 执行、关系图交互、证据图、报告问答模式、Persona 访谈模式 | Zep Cloud 必选依赖、完整自主 ReAct ReportAgent、运行中 Agent IPC、双平台长期 Agent 状态 |
 
@@ -88,7 +90,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 
 ### 5.2 AgendaScope 媒体整合
 
-- 只读幂等导入到 SendOwl 自有 `media_*` 表。
+- 只读幂等导入到 SandOwl 自有 `media_*` 表。
 - 默认关闭、显式启用的周期快照刷新，带并发锁、逐表计数、失败保留上次成功结果和脱敏错误。
 - 来源、文章、议题、议题时间线、地域聚合、传播边、首发观察和来源证据档案 API/UI。
 - 首页 3D 地球包含真实大陆纹理、真实国家节点和真实传播线；2D 地图使用同一 API 数据。
@@ -99,6 +101,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 - 1～50 篇文章的人工阅读确认和证据修订冲突保护。
 - 不可变 WorldModel / WorldSnapshot，多版本读取和冻结正文哈希。
 - Evidence Bundle 是 sealed WorldSnapshot 的一等只读投影，不复制第二份事实。
+- bounded ReportAgent evidence run 把一个 sealed WorldSnapshot、分析目标、2～6 段有序大纲和 1～20 次工具预算内容寻址；三种只读工具只能列举该快照证据或读取其中的媒体/政策正文，每次调用追加不可变输入、结果和调用哈希。
 - PostgreSQL 直接证据图：Snapshot、Article、Source、Country 及可证明关系。
 - 千问 evidence-backed 语义图：实体和关系必须附带冻结正文中的精确引用。
 - 有向 1～3 跳 World Slice、证据发布时间线、图搜索、关系历史、Persona 匹配和图谱来源 Cohort。
@@ -122,7 +125,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 - Web：固定 Quotes to Scrape Playwright source sample、真实 DOM、三页 screenshot、引用约束选择和最多五次不可变 retry lineage。
 - Linux：固定 note-to-CSV source sample、隔离非特权 runner、允许清单 artifacts、typed verifier 结果和最多五次不可变 retry lineage。
 - Trial Archive：Survey、Chat、Web、Linux 四类 Trial 的统一有界目录、状态统计和 typed detail 深链。
-- Batch Registry：Survey/Chat/Web/Linux sealed parent 的不可变登记，以及 SendOwl-native Survey/Chat 原子入队并立即登记；Web/Linux 不进入 native launch。Linux parent 只封存一个真实固定 Trial，不复用 Cohort 充当运行。
+- Batch Registry：Survey/Chat/Web/Linux sealed parent 的不可变登记，以及 SandOwl-native Survey/Chat 原子入队并立即登记；Web/Linux 不进入 native launch。Linux parent 只封存一个真实固定 Trial，不复用 Cohort 充当运行。
 
 ## 6. 当前运行环境快照
 
@@ -131,11 +134,11 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 ### 6.1 服务与迁移
 
 - 后端 `/health` 和 `/readyz` 正常；数据库已连接。
-- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0038` 需在下次 SendOwl 专属迁移后生效。
+- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0040` 需在下次 SandOwl 专属迁移后生效。
 - OASIS worker 在线；platform smoke ready。
 - Compose 还包含 Acme REST/MCP、固定 Chromium executor、Linux artifact runner 和 Nginx frontend。
 
-### 6.2 SendOwl 自有数据
+### 6.2 SandOwl 自有数据
 
 | 数据 | 当前数量/状态 |
 |---|---|
@@ -155,7 +158,7 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 ### 6.3 媒体同步
 
 - 最近一次 scheduled refresh 成功，源观察时间为 2026-08-16 01:17:50 UTC，完成时间为 01:43:43 UTC。
-- 该轮只读扫描 41,666 篇源文章和 29,584 个源议题，并把差异写入 SendOwl。
+- 该轮只读扫描 41,666 篇源文章和 29,584 个源议题，并把差异写入 SandOwl。
 - 当前实现是“全表扫描 + changed-row upsert”，不是 CDC；除文章存在性外，其他源对象删除不传播。
 
 ### 6.4 LLM readiness
@@ -209,11 +212,12 @@ backend/app/semantic_experiments/ OASIS 语义实验控制面
 backend/app/decision_threads/    持久决策上下文
 backend/app/decision_reports/    固定 Findings 与导出
 backend/app/report_questions/    证据问答与追问链
+backend/app/report_agents/       单快照受控证据运行与工具审计
 backend/app/persona_interviews/  合成 Persona 报告访谈
 backend/app/matraix_*            Survey、Chat、Web、Linux、Trial Archive、Batch Registry
 backend/oasis_worker/            Python 3.11 OASIS 与各 LLM 任务执行器
-backend/migrations/versions/     0001～0038 独立 Core 迁移链
-compose.yaml                     sendowl 独立运行拓扑
+backend/migrations/versions/     0001～0039 独立 Core 迁移链
+compose.yaml                     sandowl 独立运行拓扑
 ```
 
 前端真实一级工作区以 `frontend/src/domain.ts` 为准；后端实际路由注册以 `backend/app/main.py` 为准；能力目录以 `backend/app/system/service.py` 为准。
@@ -223,7 +227,7 @@ compose.yaml                     sendowl 独立运行拓扑
 ### 9.1 高优先级断链
 
 1. **完整演示数据链尚未形成**：已有媒体和 Persona，但没有 Cohort、World、Scenario、实验和报告。先配置千问并走通一条完整真实链，比继续增加空页面更有价值。
-2. **命名仍不统一**：仓库、Compose 和用户目标使用 `SendOwl`，部分标题和 package description 仍写 `SandOwl`，后端 health/product 仍沿用 `AI Decision Center V2`。应先确定最终品牌，再一次性修改，不要零散替换。
+2. **品牌已确定，技术标识保留**：对外产品名确定为 `SandOwl`。仓库目录、Compose project、镜像、数据卷和环境变量中的 `SandOwl` / `sandowl` 继续作为内部技术标识，避免破坏运行环境；后端 health/product 中残留的 `SandOwl` 应在独立的小范围兼容改动中统一，不做零散替换。
 
 ### 9.2 MatrAIx 未完成范围
 
@@ -233,7 +237,8 @@ compose.yaml                     sendowl 独立运行拓扑
 
 ### 9.3 MiroFish 未完成范围
 
-- 完整自主 ReAct ReportAgent、动态大纲、工具规划与章节生成。
+- bounded ReportAgent 的单快照作用域、冻结大纲、显式预算、媒体/政策只读工具、不可变调用审计，以及基于冻结正文读取前缀的异步逐条引用章节草稿已接通；自动受控规划尚未接通。
+- 完整自主 ReAct ReportAgent 与开放式工具循环。
 - Zep insight/panorama/quick-search 等上游工具的同等 PostgreSQL 实现仍不完整。
 - 运行中 Agent IPC、长期记忆、Twitter/Reddit 双平台状态和对活跃 Agent 的真实访谈。
 - 当前 Report QA 和 Persona Interview 是有证据边界的安全子集，不能标成完整 ReportAgent。
@@ -257,7 +262,7 @@ compose.yaml                     sendowl 独立运行拓扑
 
 ### 阶段 A：先把现有能力真实跑通
 
-1. 确定最终品牌名是 SendOwl 还是 SandOwl，并统一 UI、README、package metadata 和 API product/service 名称。
+1. 已确定对外品牌名为 SandOwl；UI、README 和 package metadata 已主要使用该名称，后续只需在保持 API 兼容的前提下清理残余 product/service 文案。
 2. 配置独立的千问/OpenAI-compatible 凭据，确认 semantic、Survey、Chat、Web、Linux 五种 readiness 真实变为 ready。
 3. 用现有 200 Persona 创建一个 1～4 人 Cohort。
 4. 从真实媒体创建 WorldSnapshot → Scenario → semantic experiment → Decision Report。
@@ -273,7 +278,7 @@ compose.yaml                     sendowl 独立运行拓扑
 三个方向互补且都纳入目标路线，但禁止同时铺开；每一层必须形成通过真实 PostgreSQL 验证的纵向切片后再进入下一层：
 
 1. **Policy evidence（证据层，基础闭环已完成）**：政策来源、稳定文档身份、不可变版本、发布/施行/失效时间、内容哈希、人工确认工作区，以及显式政策版本与 WorldSnapshot/Evidence Bundle 的冻结绑定已接通，并通过真实 PostgreSQL 验证。政策是外部现实证据，不能被 Agent 输出或执行结果替代；自动摄取和效力层级属于后续增强。
-2. **PostgreSQL evidence tools + bounded ReportAgent（分析编排层，下一步）**：在媒体与政策证据上增加有界工具计划、动态但受约束的大纲、逐条引用和可审计生成记录。Agent 输出是分析，不自动成为事实。
+2. **PostgreSQL evidence tools + bounded ReportAgent（分析编排层，进行中）**：已完成单快照作用域、2～6 段冻结大纲、1～20 次预算、媒体/政策只读工具、不可变调用审计，以及冻结已读证据前缀后异步生成并逐字校验引用的章节草稿。下一切片在该边界上增加自动但受约束的规划。Agent 输出是分析，不自动成为事实。
 3. **隔离 Harbor-compatible executor（执行层）**：最后建设通用 job、worker plane、cancel/retry、verifier、trajectory、artifact、授权下载和资源治理。执行结果是观测或 verifier 产物，不自动升级为现实证据。
 
 跨层连接必须保留来源、版本、时间、内容哈希和运行身份；ReportAgent 可以读取 Policy evidence 并提交 Harbor 任务，但任何下游结果进入 World 或 Report 前仍需显式、类型化引用。
@@ -306,13 +311,13 @@ pnpm stack
 非本机环境必须使用独立、gitignored 的环境文件：
 
 ```bash
-SENDOWL_ENV_FILE=/absolute/path/to/sendowl.env pnpm stack
+SANDOWL_ENV_FILE=/absolute/path/to/sandowl.env pnpm stack
 ```
 
 媒体同步是显式 profile，默认栈不会自动连接 AgendaScope：
 
 ```bash
-SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
+SANDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 ```
 
 ### 11.3 变更验证
@@ -322,8 +327,8 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 - 后端领域变更：对应测试文件 + Ruff check/format。
 - Worker 变更：对应 worker test + Ruff。
 - 前端契约/UI：对应 Vitest + typecheck；跨构建边界时再 build。
-- 迁移/数据库触发器：临时或 SendOwl 专属 PostgreSQL 真实升级和行为测试。
-- 跨服务能力：重建受影响的 SendOwl 服务，核验 readiness/API/桌面与 390px；不得重启旧项目。
+- 迁移/数据库触发器：临时或 SandOwl 专属 PostgreSQL 真实升级和行为测试。
+- 跨服务能力：重建受影响的 SandOwl 服务，核验 readiness/API/桌面与 390px；不得重启旧项目。
 
 真实 PostgreSQL 集成测试使用 `pnpm test:backend:postgres`。该命令只启动 Compose `test` profile 中不映射端口、使用 tmpfs 的 `postgres-test`，测试容器先升级到当前 head，再通过内部 `TEST_POSTGRES_DATABASE_URL` 运行 pytest；禁止把应用数据库 `DATABASE_URL` 改作测试 DSN。
 
@@ -333,11 +338,11 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 开始任何新开发前：
 
-- [ ] 当前目录是 `/Users/ssyb/Workspace/web/SendOwl`。
+- [ ] 当前目录是 `/Users/ssyb/Workspace/web/SandOwl`。
 - [ ] 没有计划修改或重启 `ai-decision-center`、AgendaScope、MatrAIx 或 MiroFish。
 - [ ] `git status` 已阅读；当前工作树包含大量未提交整合改动，不得覆盖或 reset。
 - [ ] 需求被归类为“补断链”还是“新增大能力”，并有清晰验收边界。
-- [ ] 外部数据只读，所有新持久化都进入 SendOwl。
+- [ ] 外部数据只读，所有新持久化都进入 SandOwl。
 - [ ] API 使用严格类型和运行时验证，没有 `Any`/松散字典/假数据 fallback。
 - [ ] sealed 内容、哈希、provenance 和数据库守卫在同一切片内完成。
 - [ ] UI 明确显示 runtime readiness、synthetic 边界和未接能力。
@@ -348,7 +353,7 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 - 当前 `main` 已提交到 `84239b1`；其后的 Chat transcript 增量游标是已通过聚焦验证的未提交切片，禁止整体 reset。
 - 系统 capability 的 `runtime_ready` 表示能力代码已存在；真正是否允许执行仍要读取对应实时 readiness。当前需要 LLM 的五类执行均未就绪。
-- 媒体同步当前处于显式启用状态；任何调整源 DSN、schema revision 或同步周期的操作都必须保持源只读并只影响 SendOwl。
+- 媒体同步当前处于显式启用状态；任何调整源 DSN、schema revision 或同步周期的操作都必须保持源只读并只影响 SandOwl。
 - 固定 source sample 的成功只证明该受约束纵向链路，不代表通用 Chat/Web/Linux/Harbor 能力。
 - Trial `succeeded` 表示协议与产物封存成功，不等于任务效果优秀、Persona 满意或 verifier reward 为正。
 
@@ -356,7 +361,7 @@ SENDOWL_ENV_FILE=/absolute/path/to/media-sync.env pnpm stack:media-sync
 
 新的维护者能够在不接触旧项目的前提下：
 
-1. 启动 SendOwl 独立栈并确认 migration、health 和 readiness。
+1. 启动 SandOwl 独立栈并确认 migration、health 和 readiness。
 2. 解释现实证据、人工确认、实验假设和合成输出的区别。
 3. 从 Media → World → Scenario → Cohort → Run → Report 追踪全部 ID、版本和内容哈希。
 4. 说明当前代码已接通但 LLM 环境未就绪的任务。

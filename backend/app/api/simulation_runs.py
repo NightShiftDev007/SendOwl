@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
+from app.legacy_adc import reject_legacy_adc_write
 from app.scenarios.errors import ScenarioNotFoundError
 from app.simulations.contracts import (
     OasisReadiness,
@@ -54,6 +55,7 @@ def create_simulation_runs_router() -> APIRouter:
         "/api/v2/simulation-runs/platform-smoke",
         response_model=PlatformSmokeRunDetail,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue_platform_smoke(
         request: PlatformSmokeCreateRequest,

@@ -123,11 +123,10 @@ class MatraixBatchRegistryCreateRequest(ContractModel):
 
 class MatraixNativeSurveyLaunchItem(ContractModel):
     kind: Literal["survey"]
-    scenario_id: UUID
-    cohort_id: UUID
-    alternative_id: UUID
+    research_project_id: UUID
+    research_simulation_run_id: UUID
 
-    @field_validator("scenario_id", "cohort_id", "alternative_id", mode="before")
+    @field_validator("research_project_id", "research_simulation_run_id", mode="before")
     @classmethod
     def parse_resource_ids(cls, value: object, info: object) -> UUID:
         field_name = getattr(info, "field_name", "resource_id")
@@ -156,7 +155,7 @@ type MatraixNativeBatchLaunchItem = Annotated[
 
 
 class MatraixNativeBatchLaunchRequest(ContractModel):
-    """An ordered, atomic native enqueue plan over supported SendOwl runtimes."""
+    """An ordered, atomic native enqueue plan over supported SandOwl runtimes."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -184,7 +183,7 @@ class SurveyBatchRegistryItem(ContractModel):
     parent_id: UUID
     parent_sha256: Sha256Digest
     title: SourceTitle
-    version: Literal["scenario-preference/v1"]
+    version: Literal["scenario-preference/v1", "single-context-observation/v1"]
     observed_status: MatraixObservedTrialStatus
     created_at: AwareDatetime
     trial_count: Annotated[int, Field(ge=1, le=8)]
@@ -192,7 +191,9 @@ class SurveyBatchRegistryItem(ContractModel):
     failed_trial_count: Annotated[int, Field(ge=0, le=8)]
     model_name: ModelName
     parent_config_sha256: Sha256Digest
-    prompt_schema_version: Literal["matraix-survey-scenario-preference/v1"]
+    prompt_schema_version: Literal[
+        "matraix-survey-scenario-preference/v1", "sandowl-research-survey/v1"
+    ]
     source_detail_path: SourceDetailPath
 
     @model_validator(mode="after")
@@ -203,7 +204,12 @@ class SurveyBatchRegistryItem(ContractModel):
             self.succeeded_trial_count,
             self.failed_trial_count,
         )
-        if self.source_detail_path != f"/api/v2/matraix/survey-experiments/{self.parent_id}":
+        expected_path = (
+            f"/api/v2/research-surveys/{self.parent_id}"
+            if self.version == "single-context-observation/v1"
+            else f"/api/v2/matraix/survey-experiments/{self.parent_id}"
+        )
+        if self.source_detail_path != expected_path:
             raise ValueError("Survey source_detail_path must address the source parent")
         return self
 
@@ -309,7 +315,7 @@ class SurveyBatchRegistryCandidate(ContractModel):
     parent_id: UUID
     parent_sha256: Sha256Digest
     title: SourceTitle
-    version: Literal["scenario-preference/v1"]
+    version: Literal["scenario-preference/v1", "single-context-observation/v1"]
     observed_status: MatraixObservedTrialStatus
     created_at: AwareDatetime
     trial_count: Annotated[int, Field(ge=1, le=8)]
@@ -317,7 +323,9 @@ class SurveyBatchRegistryCandidate(ContractModel):
     failed_trial_count: Annotated[int, Field(ge=0, le=8)]
     model_name: ModelName
     parent_config_sha256: Sha256Digest
-    prompt_schema_version: Literal["matraix-survey-scenario-preference/v1"]
+    prompt_schema_version: Literal[
+        "matraix-survey-scenario-preference/v1", "sandowl-research-survey/v1"
+    ]
     source_detail_path: SourceDetailPath
 
     @model_validator(mode="after")
@@ -328,7 +336,12 @@ class SurveyBatchRegistryCandidate(ContractModel):
             self.succeeded_trial_count,
             self.failed_trial_count,
         )
-        if self.source_detail_path != f"/api/v2/matraix/survey-experiments/{self.parent_id}":
+        expected_path = (
+            f"/api/v2/research-surveys/{self.parent_id}"
+            if self.version == "single-context-observation/v1"
+            else f"/api/v2/matraix/survey-experiments/{self.parent_id}"
+        )
+        if self.source_detail_path != expected_path:
             raise ValueError("Survey source_detail_path must address the source parent")
         return self
 

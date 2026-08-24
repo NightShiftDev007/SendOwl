@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import load_runtime_settings
+from app.legacy_adc import LEGACY_ADC_WRITE_RETIRED_DETAIL
 from app.main import create_app
 from app.persona_interviews.contracts import (
     PersonaInterview,
@@ -119,13 +120,24 @@ def test_persona_interview_endpoints_return_explicit_503_without_database() -> N
     report_id = uuid4()
     interview_id = uuid4()
 
-    responses = (
+    read_responses = (
+        client.get(f"/api/v2/decision-reports/{report_id}/persona-interviews"),
+        client.get(f"/api/v2/persona-interviews/{interview_id}"),
+        client.get(f"/api/v2/decision-reports/{report_id}/persona-interview-sessions"),
+        client.get(f"/api/v2/persona-interview-sessions/{uuid4()}"),
+    )
+
+    for response in read_responses:
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Persona interviews are unavailable because DATABASE_URL is not configured"
+        }
+
+    write_responses = (
         client.post(
             f"/api/v2/decision-reports/{report_id}/persona-interviews",
             json={"persona_id": str(uuid4()), "question": "What matters to you?"},
         ),
-        client.get(f"/api/v2/decision-reports/{report_id}/persona-interviews"),
-        client.get(f"/api/v2/persona-interviews/{interview_id}"),
         client.post(
             f"/api/v2/decision-reports/{report_id}/persona-interview-sessions",
             json={
@@ -133,12 +145,7 @@ def test_persona_interview_endpoints_return_explicit_503_without_database() -> N
                 "question": "What matters to this group?",
             },
         ),
-        client.get(f"/api/v2/decision-reports/{report_id}/persona-interview-sessions"),
-        client.get(f"/api/v2/persona-interview-sessions/{uuid4()}"),
     )
-
-    for response in responses:
-        assert response.status_code == 503
-        assert response.json() == {
-            "detail": "Persona interviews are unavailable because DATABASE_URL is not configured"
-        }
+    for response in write_responses:
+        assert response.status_code == 410
+        assert response.json() == {"detail": LEGACY_ADC_WRITE_RETIRED_DETAIL}

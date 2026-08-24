@@ -123,8 +123,7 @@ async def _live_chat_config(session: AsyncSession) -> tuple[str, str]:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
-                    SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
-                    SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                     SimulationWorkerHeartbeatRecord.chat_runtime_ready.is_(True),
                     SimulationWorkerHeartbeatRecord.chat_sut_task_id == CHAT_SUITE_ID,
                     SimulationWorkerHeartbeatRecord.chat_sut_task_version == CHAT_SUITE_VERSION,
@@ -922,6 +921,7 @@ async def get_chat_readiness(session: AsyncSession) -> MatraixChatReadiness:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                 )
             )
         )
@@ -938,9 +938,7 @@ async def get_chat_readiness(session: AsyncSession) -> MatraixChatReadiness:
             heartbeat.chat_sut_spec_sha256,
         )
         for heartbeat in heartbeats
-        if heartbeat.platform_runtime_ready
-        and heartbeat.semantic_runtime_ready
-        and heartbeat.chat_runtime_ready
+        if heartbeat.worker_domain == "evaluation" and heartbeat.chat_runtime_ready
     }
     conflict = len(configs) > 1
     complete = next(iter(configs)) if len(configs) == 1 else None

@@ -49,7 +49,7 @@ function InterviewSessionResult({ item, report }: { readonly item: PersonaInterv
         <time dateTime={item.created_at}>{formatMediaTimestamp(item.created_at)}</time>
       </header>
       <h4>{item.question}</h4>
-      <div className="persona-interview-progress" aria-label={`访谈进度 ${completed}/${item.persona_count}`}><span style={{ width: `${(completed / item.persona_count) * 100}%` }} /></div>
+      <div className="persona-interview-progress" aria-label={`访谈进度 ${completed}/${item.persona_count}`}><span style={{ transform: `scaleX(${completed / item.persona_count})` }} /></div>
       <div className="persona-interview-session-grid">
         {item.interviews.map((interview) => <InterviewResult key={interview.id} item={interview} report={report} />)}
       </div>

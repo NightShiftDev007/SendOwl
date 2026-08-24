@@ -161,7 +161,7 @@ describe("MatrAIx Chat Evaluation contracts", () => {
 
   it("accepts an exact ATIF-v1.7 transcript projection without invented telemetry", () => {
     const projection = {
-      projection_schema_version: "sendowl-chat-atif-projection/v1",
+      projection_schema_version: "sandowl-chat-atif-projection/v1",
       projection_sha256: digest,
       completeness: "complete",
       source_trial_sha256: otherDigest,

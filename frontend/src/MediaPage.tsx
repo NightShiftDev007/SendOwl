@@ -3,7 +3,7 @@ import { lazy, Suspense, useMemo, useState, type FormEvent } from "react";
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import { MediaArticleRow } from "./MediaArticleRow";
 import { MediaSourceDossier } from "./MediaSourceDossier";
-import { MediaSyncFreshness } from "./MediaSyncFreshness";
+import { NativeMediaCollectionPanel } from "./NativeMediaCollectionPanel";
 import { MediaTopicDirectory } from "./MediaTopicDirectory";
 import type {
   MediaArticle,
@@ -605,18 +605,18 @@ export function MediaPage({
         aria-labelledby="media-page-title"
       >
         <div className="evidence-lens-stage">
-          <span>Decision Workspace · 媒体证据</span>
+          <span>SandOwl · 媒体证据</span>
           <strong>现实证据</strong>
         </div>
         <div className="evidence-lens-title">
-          <h2 id="media-page-title">Evidence Lens</h2>
+          <h1 id="media-page-title">媒体证据工作台</h1>
           <p>从已采集的媒体报道中定位事件与政策线索。先读来源，再把可核验事实带入世界快照。</p>
         </div>
         <div className="evidence-lens-boundary">
           <strong>边界</strong>
           <p>这里是报道索引与原文入口，不是对事件真伪、现实影响或未来走势的自动结论。</p>
         </div>
-        <MediaSyncFreshness />
+        <NativeMediaCollectionPanel />
       </header>
 
       <div className="evidence-lens-workbench">

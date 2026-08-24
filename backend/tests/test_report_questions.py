@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.config import load_runtime_settings
+from app.legacy_adc import LEGACY_ADC_WRITE_RETIRED_DETAIL
 from app.main import create_app
 from app.report_questions.contracts import (
     ReportAnswerCitation,
@@ -87,18 +88,21 @@ def test_report_question_endpoints_return_explicit_503_without_database() -> Non
     report_id = uuid4()
     question_id = uuid4()
 
-    responses = (
-        client.post(
-            f"/api/v2/decision-reports/{report_id}/questions",
-            json={"question": "What does the evidence establish?"},
-        ),
+    read_responses = (
         client.get(f"/api/v2/decision-reports/{report_id}/questions"),
         client.get(f"/api/v2/report-questions/{question_id}"),
         client.get(f"/api/v2/report-questions/{question_id}/context"),
     )
 
-    for response in responses:
+    for response in read_responses:
         assert response.status_code == 503
         assert response.json() == {
             "detail": "Report questions are unavailable because DATABASE_URL is not configured"
         }
+
+    write_response = client.post(
+        f"/api/v2/decision-reports/{report_id}/questions",
+        json={"question": "What does the evidence establish?"},
+    )
+    assert write_response.status_code == 410
+    assert write_response.json() == {"detail": LEGACY_ADC_WRITE_RETIRED_DETAIL}

@@ -4,7 +4,7 @@ import { resolveSectionFromHash } from "./App";
 import { requireNavigationItem } from "./domain";
 
 describe("hash route resolution", () => {
-  it.each(["", "#", "#/overview", "#/threads", "#/media", "#/policy", "#/world", "#/decisions", "#/personas", "#/tasks", "#/runs", "#/reports"])(
+  it.each(["", "#", "#/overview", "#/projects", "#/threads", "#/media", "#/policy", "#/world", "#/decisions", "#/personas", "#/tasks", "#/runs", "#/reports"])(
     "resolves the legal route %s",
     (hash) => {
       expect(resolveSectionFromHash(hash).status).toBe("resolved");
@@ -20,6 +20,25 @@ describe("hash route resolution", () => {
       runStudioRoute: {
         mode: "semantic",
         experimentId: "2ce907de-4709-4eb6-b702-abac631607c7",
+      },
+    });
+  });
+
+  it("routes the default Run Studio and Project / Run deep links to the native workspace", () => {
+    expect(resolveSectionFromHash("#/runs")).toMatchObject({
+      status: "resolved",
+      section: "runs",
+      runStudioRoute: { mode: "native", projectId: null, runId: null },
+    });
+    expect(resolveSectionFromHash(
+      "#/runs?project_id=748de69e-3192-496d-9b2c-6ca72ac85575&run_id=32f4e1ed-985e-4786-b965-4e37436bda9f",
+    )).toMatchObject({
+      status: "resolved",
+      section: "runs",
+      runStudioRoute: {
+        mode: "native",
+        projectId: "748de69e-3192-496d-9b2c-6ca72ac85575",
+        runId: "32f4e1ed-985e-4786-b965-4e37436bda9f",
       },
     });
   });
@@ -105,6 +124,19 @@ describe("hash route resolution", () => {
     });
   });
 
+  it("preserves an exact frozen WorldSnapshot handoff to Research Projects", () => {
+    expect(resolveSectionFromHash(
+      "#/projects?world_model_id=2ce907de-4709-4eb6-b702-abac631607c7&snapshot_id=ff51bd82-385d-48ad-aa3c-9277dd927380",
+    )).toMatchObject({
+      status: "resolved",
+      section: "projects",
+      researchProjectRoute: {
+        worldModelId: "2ce907de-4709-4eb6-b702-abac631607c7",
+        snapshotId: "ff51bd82-385d-48ad-aa3c-9277dd927380",
+      },
+    });
+  });
+
   it("resolves persistent decision and report resource deep links", () => {
     const identity = "2ce907de-4709-4eb6-b702-abac631607c7";
     expect(resolveSectionFromHash(`#/threads?thread_id=${identity}`)).toMatchObject({
@@ -115,7 +147,27 @@ describe("hash route resolution", () => {
     expect(resolveSectionFromHash(`#/reports?experiment_id=${identity}`)).toMatchObject({
       status: "resolved",
       section: "reports",
-      resourceId: identity,
+      reportWorkspaceRoute: {
+        mode: "legacy",
+        experimentId: identity,
+      },
+    });
+  });
+
+  it("resolves native single-run report deep links and the explicit legacy archive", () => {
+    const projectId = "2ce907de-4709-4eb6-b702-abac631607c7";
+    const runId = "ff51bd82-385d-48ad-aa3c-9277dd927380";
+    expect(resolveSectionFromHash(
+      `#/reports?project_id=${projectId}&run_id=${runId}`,
+    )).toMatchObject({
+      status: "resolved",
+      section: "reports",
+      reportWorkspaceRoute: { mode: "native", projectId, runId },
+    });
+    expect(resolveSectionFromHash("#/reports?legacy=1")).toMatchObject({
+      status: "resolved",
+      section: "reports",
+      reportWorkspaceRoute: { mode: "legacy", experimentId: null },
     });
   });
 
@@ -191,8 +243,15 @@ describe("hash route resolution", () => {
     "#/world?snapshot_id=ff51bd82-385d-48ad-aa3c-9277dd927380",
     "#/world?world_model_id=broken",
     "#/world?world_model_id=2ce907de-4709-4eb6-b702-abac631607c7&unknown=true",
+    "#/projects?world_model_id=2ce907de-4709-4eb6-b702-abac631607c7",
+    "#/projects?snapshot_id=ff51bd82-385d-48ad-aa3c-9277dd927380",
+    "#/projects?world_model_id=broken&snapshot_id=broken",
+    "#/projects?unknown=true",
     "#/threads?thread_id=broken",
     "#/reports?unknown=true",
+    "#/reports?project_id=2ce907de-4709-4eb6-b702-abac631607c7",
+    "#/reports?legacy=0",
+    "#/reports?legacy=1&project_id=2ce907de-4709-4eb6-b702-abac631607c7&run_id=ff51bd82-385d-48ad-aa3c-9277dd927380",
     "#/tasks?task=harbor",
     "#/tasks?unknown=survey",
     "#/tasks?task=survey&task=survey",

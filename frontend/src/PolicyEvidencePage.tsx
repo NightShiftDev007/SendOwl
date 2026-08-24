@@ -89,7 +89,7 @@ export function PolicyEvidencePage(): JSX.Element {
   return (
     <div className="policy-page">
       <header className="policy-hero">
-        <div><span>REALITY / POLICY</span><h2>政策证据库</h2></div>
+        <div><span>REALITY / POLICY</span><h1>政策证据库</h1></div>
         <p>人工确认外部政策原文，保存稳定文档身份、不可变版本、效力日期和内容哈希。政策证据不是 Agent 叙事或执行结果。</p>
       </header>
       <div className="policy-layout">
@@ -115,7 +115,7 @@ export function PolicyEvidencePage(): JSX.Element {
           {capture.status === "error" ? <div role="alert"><strong>捕获失败</strong><p>{capture.error.message}</p></div> : null}
         </aside>
 
-        <main className="policy-detail">
+        <section className="policy-detail">
           <header><div><span>DOCUMENT / VERSIONS</span><h3>不可变政策版本</h3></div>{selectedDetail !== null ? <code>{shortHash(selectedDetail.document_sha256)}</code> : null}</header>
           {selectedDocumentId === null ? <div className="policy-empty"><strong>选择一份政策文档</strong><p>目录不会自动打开历史证据，避免把旧上下文带入当前判断。</p></div> : null}
           {detail.state.status === "error" ? <ApiErrorPanel title="无法读取政策文档" error={detail.state.error} isRetrying={false} onRetry={detail.reload} /> : null}
@@ -126,7 +126,7 @@ export function PolicyEvidencePage(): JSX.Element {
             {content.status === "error" ? <div className="policy-empty" role="alert"><strong>正文读取失败</strong><p>{content.error.message}</p></div> : null}
             {content.data !== null ? <article className="policy-content"><header><span>CAPTURED TEXT</span><code>{shortHash(content.data.content_sha256)}</code></header><pre>{content.data.captured_text}</pre></article> : null}
           </> : null}
-        </main>
+        </section>
 
         <aside className="policy-directory">
           <header><div><span>INDEX / POLICY</span><h3>政策目录</h3></div><button type="button" onClick={directory.reload}>刷新</button></header>

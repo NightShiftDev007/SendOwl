@@ -189,7 +189,7 @@ export const mediaPropagationEdgeSchema = z
     first_published_at: isoTimestampSchema.nullable(),
     source_follower_id: z.string().uuid().nullable(),
     follower_source_id: z.string().uuid().nullable(),
-    observation_source: z.enum(["legacy_projection", "structured_followers"]),
+    observation_source: z.enum(["legacy_projection", "structured_followers", "native_collection"]),
   })
   .strict()
   .superRefine((edge, context) => {
@@ -206,6 +206,15 @@ export const mediaPropagationEdgeSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "legacy propagation edges cannot claim a structured follower id",
+      });
+    }
+    if (
+      edge.observation_source === "native_collection"
+      && (edge.source_follower_id !== null || edge.follower_source_id === null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "native collection edge source identity is incomplete",
       });
     }
   });

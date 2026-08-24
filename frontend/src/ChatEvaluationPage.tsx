@@ -530,22 +530,22 @@ export function ChatEvaluationPage({
     taskMatchesReadiness ? null : "所选任务尚未通过实时 readiness 核验",
     cohort === null ? "明确选择一个冻结 Cohort" : null,
     cohort !== null && cohort.persona_count > 8 ? "首个切片只接受 1–8 Persona Cohort" : null,
-    confirmed ? null : "确认 source sample 与合成 Persona 边界",
+    confirmed ? null : "确认固定样例与合成人物边界",
   ].filter((item): item is string => item !== null);
 
   return (
     <div className="chat-eval-page">
       <header className="chat-eval-header">
-        <button type="button" onClick={onBack}>← Task Gallery</button>
+        <button type="button" onClick={onBack}>← 返回评测中心</button>
         <div>
-          <span>MATRAIX / CHATBOT EVALUATION</span>
-          <h2>Acme Support 多通道 Persona 评测</h2>
-          <p>显式选择 REST 或 MCP source sample，冻结 1–8 人 Cohort，让每个合成 Persona 完成真实多轮对话，再查看逐条 transcript、自述反馈和可复核运行结果。</p>
+          <span>对话系统评测</span>
+          <h1>固定客服样例多通道评测</h1>
+          <p>显式选择 REST 或 MCP 固定样例，冻结 1–8 人合成人群，让每个人物完成真实多轮对话，再查看逐条记录、自述反馈和可复核运行结果。</p>
         </div>
         <div data-ready={runtimeReady}>
           <strong>{runtimeReady ? "CHAT READY" : "RUNTIME LOCKED"}</strong>
           <small>{readinessData?.model_name ?? "等待一致模型配置"}</small>
-          <span>MatrAIx · source_sample · 非生产 SUT</span>
+          <span>固定样例 · 非生产系统</span>
         </div>
       </header>
 
@@ -573,7 +573,7 @@ export function ChatEvaluationPage({
               disabled={isSubmitting}
               onChange={(event) => setTaskId(event.target.value || null)}
             >
-              <option value="">明确选择 source sample</option>
+              <option value="">明确选择固定样例</option>
               {tasks.items.map((item) => (
                 <option key={`${item.task_id}@${item.version}`} value={item.task_id}>
                   {item.title} · {item.transport === "mcp_streamable_http" ? "MCP" : "REST"} · v{item.version}
@@ -583,7 +583,7 @@ export function ChatEvaluationPage({
           </label>
 
           <label htmlFor="chat-eval-cohort">
-            <span>冻结 Cohort</span>
+            <span>冻结人群</span>
             <select
               id="chat-eval-cohort"
               name="chat_evaluation_cohort"
@@ -591,21 +591,21 @@ export function ChatEvaluationPage({
               disabled={isSubmitting}
               onChange={(event) => setCohortId(event.target.value || null)}
             >
-              <option value="">明确选择 1–8 Persona</option>
+              <option value="">明确选择 1–8 个合成人物</option>
               {cohorts.data?.items.map((item) => (
                 <option key={item.id} value={item.id} disabled={item.persona_count > 8}>
-                  {item.title} · {item.persona_count} Persona
+                  {item.title} · {item.persona_count} 人
                 </option>
               ))}
             </select>
           </label>
 
           {task !== null ? (
-            <section className="chat-eval-task-spec" aria-label="所选 source sample 规格">
-              <header><span>SOURCE SAMPLE</span><strong>{task.title}</strong></header>
+            <section className="chat-eval-task-spec" aria-label="所选固定样例规格">
+              <header><span>固定评测样例</span><strong>{task.title}</strong></header>
               <p>{task.instruction}</p>
               <dl>
-                <div><dt>来源</dt><dd>{task.source.project} / {task.source.canonical_path}</dd></div>
+                <div><dt>固定样例</dt><dd>{task.source.canonical_path}</dd></div>
                 <div><dt>SUT</dt><dd>{task.source.production_sut ? "生产" : "非生产 sidecar sample"}</dd></div>
                 <div><dt>Transport</dt><dd>{task.transport}</dd></div>
                 <div><dt>最低轮次</dt><dd>{task.minimum_customer_turns} customer / {task.minimum_total_messages} messages</dd></div>
@@ -621,7 +621,7 @@ export function ChatEvaluationPage({
               disabled={!runtimeReady || !taskMatchesReadiness || cohort === null || isSubmitting}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
-            <span>我确认这是 MatrAIx source sample 与合成 Persona 的评测，不代表生产客服、真人用户或总体服务质量。</span>
+            <span>我确认这是固定非生产样例与合成人物的评测，不代表生产客服、真人用户或总体服务质量。</span>
           </label>
 
           <button className="chat-eval-launch" type="button" disabled={!canSubmit} onClick={submit}>
@@ -656,7 +656,7 @@ export function ChatEvaluationPage({
           ) : null}
         </aside>
 
-        <main className="chat-eval-stage" aria-labelledby="chat-eval-stage-title">
+        <section className="chat-eval-stage" aria-labelledby="chat-eval-stage-title">
           <header>
             <div><span>TRANSCRIPT / EVIDENCE</span><h3 id="chat-eval-stage-title">逐 Persona 对话与反馈</h3></div>
             {evaluation !== null ? (
@@ -700,7 +700,7 @@ export function ChatEvaluationPage({
               onSelectTrial={(trialId) => onSelectionChange(page, evaluation.id, trialId)}
             />
           ) : null}
-        </main>
+        </section>
 
         <div className="chat-eval-directory-slot">
           {directory.status === "error" ? (

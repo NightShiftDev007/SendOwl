@@ -18,6 +18,8 @@ from app.matraix_trial_archive.contracts import (
     MatraixTrialArchiveResponse,
     MatraixTrialArchiveStatistics,
     MatraixTrialIntegrityVerification,
+    SurveyTrialArchiveItem,
+    SurveyTrialArchiveProvenance,
 )
 
 
@@ -100,6 +102,35 @@ def test_archive_contract_enforces_state_path_and_ordering() -> None:
             total=2,
             statistics=_statistics(2),
         )
+
+
+def test_native_research_survey_archive_contract_uses_parent_detail_path() -> None:
+    trial_id = UUID("14000000-0000-4000-8000-000000000003")
+    parent_id = UUID("13000000-0000-4000-8000-000000000003")
+    item = SurveyTrialArchiveItem(
+        kind="survey",
+        id=trial_id,
+        status="queued",
+        parent_id=parent_id,
+        parent_sha256="b" * 64,
+        trial_sha256="c" * 64,
+        task={"title": "Native research project", "version": "single-context-observation/v1"},
+        persona=_persona(),
+        created_at=datetime(2026, 8, 17, 12, tzinfo=UTC),
+        started_at=None,
+        completed_at=None,
+        error=None,
+        provenance=SurveyTrialArchiveProvenance(
+            runner_version=None,
+            model_name="qwen-plus",
+            parent_config_sha256="d" * 64,
+            prompt_schema_version="sandowl-research-survey/v1",
+            answers_sha256=None,
+        ),
+        source_detail_path=f"/api/v2/research-surveys/{parent_id}",
+    )
+
+    assert item.task.version == "single-context-observation/v1"
 
 
 def test_archive_route_is_explicitly_unavailable_without_database() -> None:

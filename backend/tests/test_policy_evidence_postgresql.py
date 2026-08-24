@@ -60,7 +60,7 @@ async def _exercise_policy_evidence(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0038"
+                assert revision == "20260820_core_0061"
                 application = FastAPI()
                 application.include_router(create_policy_evidence_router())
 

@@ -158,7 +158,7 @@ export function useBatchRegistries(query: MatraixBatchRegistriesQuery): {
           queryKey,
           state: {
             status: "error",
-            error: normalizeError(error, "读取 MatrAIx Batch Registry 目录"),
+            error: normalizeError(error, "读取批量试验目录"),
             isRetrying: false,
             data: current.queryKey === queryKey ? directoryData(current.state) : null,
           },
@@ -202,7 +202,7 @@ export function useBatchRegistry(registryId: string | null): {
         if (isAbortError(error)) return;
         setState((current) => ({
           status: "error",
-          error: normalizeError(error, "读取 MatrAIx Batch Registry 详情"),
+          error: normalizeError(error, "读取批量试验详情"),
           isRetrying: false,
           data: current.status === "idle" ? null : current.data,
         }));

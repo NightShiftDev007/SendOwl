@@ -42,7 +42,7 @@
 }
 
 .media-source-health__header .button {
-  min-height: 36px;
+  min-height: 44px;
   flex: 0 0 auto;
   border-radius: 5px;
 }
@@ -78,7 +78,8 @@
 .media-source-health__status-filters button:focus-visible,
 .media-source-health__toolbar input:focus-visible,
 .media-source-health__source button:focus-visible,
-.media-source-health__homepage:focus-visible {
+.media-source-health__homepage:focus-visible,
+.media-source-health__pagination button:focus-visible {
   outline: 2px solid var(--evidence-cyan, #5bd5d4);
   outline-offset: -2px;
 }
@@ -198,8 +199,10 @@
 
 .media-source-health__source button {
   width: fit-content;
+  min-width: 44px;
   max-width: 100%;
-  padding: 0;
+  min-height: 44px;
+  padding: 7px 0;
   overflow: hidden;
   color: var(--evidence-ink, #e8f1f3);
   font: inherit;
@@ -226,11 +229,51 @@
 }
 
 .media-source-health__homepage {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
   justify-self: end;
   color: var(--evidence-muted, #8ea6ad);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.6rem;
   text-decoration: none;
+}
+
+.media-source-health__pagination {
+  display: flex;
+  min-height: 60px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 8px 24px;
+  color: var(--evidence-muted, #8ea6ad);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .64rem;
+  border-top: 1px solid var(--evidence-line, rgba(167, 208, 221, 0.17));
+}
+
+.media-source-health__pagination button {
+  min-width: 72px;
+  min-height: 44px;
+  padding: 8px 12px;
+  color: var(--evidence-ink-soft, #bdcbd0);
+  font: inherit;
+  background: transparent;
+  border: 1px solid var(--evidence-line-strong, rgba(167, 208, 221, 0.32));
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.media-source-health__pagination button:hover:not(:disabled) {
+  color: var(--evidence-cyan, #5bd5d4);
+  border-color: var(--evidence-cyan, #5bd5d4);
+}
+
+.media-source-health__pagination button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }
 
 .media-source-health__homepage:hover {
@@ -347,7 +390,7 @@
   height: 58px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 820px) {
   .media-source-health__header {
     display: grid;
     padding-right: 18px;

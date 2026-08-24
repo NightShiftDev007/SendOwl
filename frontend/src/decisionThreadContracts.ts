@@ -34,6 +34,11 @@ export const decisionThreadCreateRequestSchema = z.object({
   }
 });
 
+export const decisionThreadDraftCreateRequestSchema = z.object({
+  title: singleLineSchema,
+  decision_question: z.string().trim().min(1).max(2_000),
+}).strict();
+
 export const decisionThreadRevisionSchema = z.object({
   id: uuidSchema,
   version: z.number().int().positive(),
@@ -63,16 +68,19 @@ export const decisionThreadSummarySchema = z.object({
   title: singleLineSchema,
   decision_question: z.string().trim().min(1).max(2_000),
   created_at: timestampSchema,
-  latest_revision: decisionThreadRevisionSchema,
+  latest_revision: decisionThreadRevisionSchema.nullable(),
 }).strict();
 
 export const decisionThreadDetailSchema = decisionThreadSummarySchema.extend({
-  revisions: z.array(decisionThreadRevisionSchema).min(1),
+  revisions: z.array(decisionThreadRevisionSchema),
 }).strict().superRefine((value, context) => {
   if (value.revisions.some((revision, index) => revision.version !== index + 1)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Revision versions must be contiguous" });
   }
-  if (value.revisions.at(-1)?.id !== value.latest_revision.id) {
+  if (value.revisions.length === 0 && value.latest_revision !== null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Draft cannot expose a latest revision" });
+  }
+  if (value.revisions.length > 0 && value.revisions.at(-1)?.id !== value.latest_revision?.id) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Latest revision must close history" });
   }
 });
@@ -84,6 +92,7 @@ export const decisionThreadsResponseSchema = z.object({
 
 export type DecisionThreadContextRequest = z.infer<typeof decisionThreadContextRequestSchema>;
 export type DecisionThreadCreateRequest = z.infer<typeof decisionThreadCreateRequestSchema>;
+export type DecisionThreadDraftCreateRequest = z.infer<typeof decisionThreadDraftCreateRequestSchema>;
 export type DecisionThreadDetail = z.infer<typeof decisionThreadDetailSchema>;
 export type DecisionThreadsResponse = z.infer<typeof decisionThreadsResponseSchema>;
 
@@ -97,6 +106,10 @@ export function fetchDecisionThread(id: string, signal: AbortSignal): Promise<De
 
 export function createDecisionThread(request: DecisionThreadCreateRequest, signal: AbortSignal): Promise<DecisionThreadDetail> {
   return postJson(endpoint, decisionThreadCreateRequestSchema.parse(request), decisionThreadDetailSchema, signal);
+}
+
+export function createDecisionThreadDraft(request: DecisionThreadDraftCreateRequest, signal: AbortSignal): Promise<DecisionThreadDetail> {
+  return postJson(`${endpoint}/drafts`, decisionThreadDraftCreateRequestSchema.parse(request), decisionThreadDetailSchema, signal);
 }
 
 export function appendDecisionThreadRevision(id: string, request: DecisionThreadContextRequest, signal: AbortSignal): Promise<DecisionThreadDetail> {

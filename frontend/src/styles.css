@@ -6,7 +6,7 @@
   -webkit-font-smoothing: antialiased;
 
   --brand: oklch(0.65 0.24 36);
-  --brand-action: oklch(0.52 0.2 36);
+  --brand-action: oklch(0.72 0.14 55);
   --brand-soft: oklch(0.96 0.026 36);
   --nav-bg: oklch(0.18 0.012 255);
   --nav-bg-hover: oklch(0.23 0.014 255);
@@ -2529,7 +2529,7 @@ a:focus-visible {
   border-bottom: 1px solid var(--border-strong);
 }
 
-.world-model-intro h2 {
+.world-model-intro h1 {
   max-width: 30ch;
   margin: 0;
   font-size: 2.2rem;
@@ -2894,6 +2894,13 @@ a:focus-visible {
   color: var(--ink-secondary);
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+.world-evidence-search label > small {
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  line-height: 1.55;
+  text-wrap: pretty;
 }
 
 .world-evidence-search > div {
@@ -3277,6 +3284,42 @@ a:focus-visible {
   font-size: 0.62rem;
 }
 
+.world-project-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 0;
+  border-bottom: 1px solid rgba(113, 188, 204, .16);
+}
+
+.world-project-handoff > div {
+  display: grid;
+  gap: 4px;
+}
+
+.world-project-handoff span {
+  color: #6ac4d3;
+  font-size: .68rem;
+}
+
+.world-project-handoff strong {
+  color: #dcebed;
+  font-size: .88rem;
+}
+
+.world-project-handoff p {
+  max-width: 66ch;
+  margin: 0;
+  color: #91a7ae;
+  font-size: .74rem;
+  line-height: 1.55;
+}
+
+.world-project-handoff .button {
+  flex: none;
+}
+
 .world-snapshot-hash code {
   color: var(--nav-ink);
   overflow-wrap: anywhere;
@@ -3549,7 +3592,7 @@ a:focus-visible {
   border-bottom: 1px solid var(--border-strong);
 }
 
-.scenario-page-intro h2 {
+.scenario-page-intro h1 {
   max-width: 30ch;
   margin: 0;
   font-size: 2.2rem;
@@ -4751,6 +4794,7 @@ a:focus-visible {
 
   .world-evidence-toolbar,
   .world-snapshot-appender-heading,
+  .world-project-handoff,
   .world-snapshot-source,
   .world-snapshot-evidence footer {
     align-items: flex-start;
@@ -4765,6 +4809,11 @@ a:focus-visible {
   .world-snapshot-append-action {
     width: 100%;
     justify-self: stretch;
+    justify-content: center;
+  }
+
+  .world-project-handoff .button {
+    width: 100%;
     justify-content: center;
   }
 
@@ -4950,8 +4999,8 @@ a:focus-visible {
 
   .media-page-intro h2,
   .media-overview-intro h2,
-  .world-model-intro h2,
-  .scenario-page-intro h2 {
+  .world-model-intro h1,
+  .scenario-page-intro h1 {
     font-size: 1.7rem;
   }
 

@@ -1,36 +1,33 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
-import { isAmbiguousPostResultError } from "./apiClient";
+import { DecisionReportV2Document } from "./DecisionReportV2Page";
+import {
+  createDecisionReportV2MarkdownUrl,
+  type DecisionReportV2,
+} from "./decisionReportV2Contracts";
 import {
   createDecisionReportMarkdownUrl,
-  generateDecisionReport,
   type DecisionReport,
   type DecisionReportMetric,
 } from "./decisionReportContracts";
 import { formatMediaTimestamp } from "./mediaPresentation";
-import { PersonaInterviewPanel } from "./PersonaInterviewPanel";
 import { createRunStudioHash } from "./runStudioRoute";
 import {
-  createReportQuestion,
-  fetchReportQuestionContext,
   type ReportQuestion,
-  type ReportQuestionContext,
 } from "./reportQuestionContracts";
 import type {
   SemanticExperimentComparison,
   SemanticExperimentDetail,
   SemanticExperimentSummary,
 } from "./semanticExperimentContracts";
-import { fetchSemanticReadiness } from "./semanticExperimentContracts";
 import {
   useSemanticComparison,
   useSemanticExperimentDetail,
   useSemanticExperiments,
-  useSemanticReadiness,
-  type SemanticReadinessLoadState,
 } from "./useSemanticExperiments";
 import { useDecisionReports } from "./useDecisionReports";
+import { useDecisionReportsV2 } from "./useDecisionReportsV2";
 import { useReportQuestions } from "./useReportQuestions";
 import "./decisionReports.css";
 
@@ -40,19 +37,6 @@ const metricLabels = {
   reaction_count: "反应",
   do_nothing_count: "未采取动作",
 } as const;
-
-const narrativePrompts = [
-  {
-    id: "evidence-thread",
-    label: "证据脉络",
-    question: "请用不超过400个中文字符，把这份报告整理为“已观察到的证据脉络”和“尚不能证明的事项”两部分。每个事实都必须由本轮候选原文引用支持，不预测、不补全因果、不推荐胜者。",
-  },
-  {
-    id: "comparison-boundary",
-    label: "对照与边界",
-    question: "请用不超过400个中文字符，解释报告中基线与备选方案的可复算观测差异，以及这些观测不能推出的现实结论。每个事实都必须引用本轮冻结证据，不推断立场、因果或最佳方案。",
-  },
-] as const;
 
 function abbreviatedDigest(digest: string): string {
   return `${digest.slice(0, 10)}…${digest.slice(-8)}`;
@@ -95,7 +79,7 @@ function ReportDirectory({
             <span data-status={item.status}>
               {reportsByExperiment.has(item.id)
                 ? "已封存"
-                : item.status === "succeeded" ? "可生成" : "待核验"}
+                : item.status === "succeeded" ? "未封存" : "运行未完成"}
             </span>
             <strong>{item.scenario.title}</strong>
             <small>{item.cohort.title} · {item.trial_count} Trials</small>
@@ -240,11 +224,11 @@ function ComparisonBoard({
 function ReportProvenance({
   experiment,
   report,
-  readinessState,
+  reportV2,
 }: {
   readonly experiment: SemanticExperimentDetail;
   readonly report: DecisionReport | null;
-  readonly readinessState: SemanticReadinessLoadState;
+  readonly reportV2: DecisionReportV2 | null;
 }): JSX.Element {
   const trials = experiment.variants.flatMap((variant) => variant.trials);
   const succeeded = trials.filter((trial) => trial.status === "succeeded").length;
@@ -265,11 +249,17 @@ function ReportProvenance({
         <div><dt>矩阵</dt><dd>{experiment.variant_count} 方案 × {experiment.seeds.length} seeds</dd></div>
         <div><dt>Trial 完整性</dt><dd>{succeeded} 成功 · {failed} 失败</dd></div>
         <div><dt>Experiment</dt><dd><code>{experiment.experiment_sha256}</code></dd></div>
-        {report !== null ? <div><dt>Report</dt><dd>{report.generator_version}<code>{report.report_sha256}</code></dd></div> : null}
+        {report !== null ? <div><dt>Report V1</dt><dd>{report.generator_version}<small>ID</small><code>{report.id}</code><small>SHA-256</small><code>{report.report_sha256}</code></dd></div> : null}
+        {reportV2 !== null ? <div><dt>Report V2</dt><dd>{reportV2.generator_version}<small>ID</small><code>{reportV2.id}</code><small>SHA-256</small><code>{reportV2.report_sha256}</code></dd></div> : null}
       </dl>
       {report !== null ? (
         <a className="button button-primary" href={createDecisionReportMarkdownUrl(report.id)} download>
-          下载 Markdown
+          下载 V1 Markdown
+        </a>
+      ) : null}
+      {reportV2 !== null ? (
+        <a className="button button-secondary" href={createDecisionReportV2MarkdownUrl(reportV2.id)} download>
+          下载 V2 Markdown
         </a>
       ) : null}
       <a
@@ -285,24 +275,12 @@ function ReportProvenance({
       >
         返回 Playground 核验 Trial →
       </a>
-      {report !== null ? <ReportQuestionPanel report={report} readinessState={readinessState} /> : null}
-      {report !== null ? (
-        <PersonaInterviewPanel
-          report={report}
-          runtimeReady={readinessState.data?.semantic_runtime_ready === true}
-        />
-      ) : null}
+      {report !== null ? <ReportQuestionPanel report={report} /> : null}
     </aside>
   );
 }
 
-function ReportQuestionResult({
-  item,
-  onFollowUp,
-}: {
-  readonly item: ReportQuestion;
-  readonly onFollowUp: (item: ReportQuestion) => void;
-}): JSX.Element {
+function ReportQuestionResult({ item }: { readonly item: ReportQuestion }): JSX.Element {
   return (
     <article className="report-question-result" data-status={item.status}>
       <header>
@@ -340,194 +318,22 @@ function ReportQuestionResult({
               <div><dt>Model</dt><dd>{item.model_name}</dd></div>
             </dl>
           </details>
-          {item.conversation_depth < 4 ? (
-            <button className="button button-secondary" type="button" onClick={() => onFollowUp(item)}>
-              继续追问
-            </button>
-          ) : null}
         </>
       ) : null}
     </article>
   );
 }
 
-function ReportQuestionPanel({
-  report,
-  readinessState,
-}: {
-  readonly report: DecisionReport;
-  readonly readinessState: SemanticReadinessLoadState;
-}): JSX.Element {
-  const [question, setQuestion] = useState<string>("");
-  const [submissionError, setSubmissionError] = useState<Error | null>(null);
-  const activeController = useRef<AbortController | null>(null);
-  const contextController = useRef<AbortController | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [parent, setParent] = useState<ReportQuestion | null>(null);
-  const [context, setContext] = useState<ReportQuestionContext | null>(null);
-  const [contextError, setContextError] = useState<Error | null>(null);
+function ReportQuestionPanel({ report }: { readonly report: DecisionReport }): JSX.Element {
   const { state, reload } = useReportQuestions(report.id);
-  const normalizedQuestion = question.trim();
-  const runtimeReady = readinessState.data?.semantic_runtime_ready === true;
-
-  useEffect(() => {
-    setParent(null);
-    setContext(null);
-    setContextError(null);
-  }, [report.id]);
-
-  useEffect(() => () => {
-    activeController.current?.abort();
-    contextController.current?.abort();
-  }, []);
-
-  const selectParent = (item: ReportQuestion): void => {
-    contextController.current?.abort();
-    const controller = new AbortController();
-    contextController.current = controller;
-    setParent(item);
-    setContext(null);
-    setContextError(null);
-    void fetchReportQuestionContext(item.id, controller.signal)
-      .then(setContext)
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          setContextError(error instanceof Error ? error : new Error("读取追问线程失败。"));
-        }
-      })
-      .finally(() => {
-        if (contextController.current === controller) {
-          contextController.current = null;
-        }
-      });
-  };
-
-  const submitQuestion = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    if (
-      normalizedQuestion.length < 2
-      || normalizedQuestion.length > 1000
-      || activeController.current !== null
-    ) {
-      return;
-    }
-    const controller = new AbortController();
-    activeController.current = controller;
-    setIsSubmitting(true);
-    setSubmissionError(null);
-    void fetchSemanticReadiness(controller.signal)
-      .then((readiness) => {
-        if (!readiness.semantic_runtime_ready) {
-          throw new Error("语义 Worker 尚未通过模型启动探测；报告追问 POST 尚未发送。");
-        }
-        return createReportQuestion(
-          report.id,
-          normalizedQuestion,
-          parent?.id ?? null,
-          controller.signal,
-        );
-      })
-      .then(() => {
-        setQuestion("");
-        setParent(null);
-        setContext(null);
-        reload();
-      })
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          const normalized = error instanceof Error
-            ? error
-            : new Error("报告追问返回了非标准错误。");
-          setSubmissionError(new Error(
-            isAmbiguousPostResultError(normalized)
-              ? `追问提交结果未知，请刷新问答记录核对。${normalized.message}`
-              : normalized.message,
-          ));
-        }
-      })
-      .finally(() => {
-        if (activeController.current === controller) {
-          activeController.current = null;
-          setIsSubmitting(false);
-        }
-      });
-  };
 
   return (
     <section className="report-question-panel" aria-labelledby="report-question-title">
       <header>
-        <span>EVIDENCE Q&amp;A / QWEN</span>
-        <h3 id="report-question-title">追问这份报告</h3>
-        <p>回答只能使用同一现实快照的语义图与精确原文引用；证据不足时必须明确说不知道。</p>
-        <strong data-ready={runtimeReady}>
-          {runtimeReady ? "Qwen Worker 可提交" : "Qwen Worker 配置阻塞"}
-        </strong>
+        <span>LEGACY Q&amp;A / READ-ONLY</span>
+        <h3 id="report-question-title">历史报告问答</h3>
+        <p>保留已经持久化的问题、回答、引用与哈希；新问题请在原生 ReportAgent 报告中使用 Agent Interaction。</p>
       </header>
-      <form onSubmit={submitQuestion}>
-        <fieldset className="report-narrative-presets" disabled={isSubmitting || !runtimeReady}>
-          <legend>MIROFISH NARRATIVE PATTERN / EVIDENCE-BOUND</legend>
-          <p>选择一个固定叙事镜头，再由你确认提交。这里只复用报告追问队列，不启动自主 ReAct、Zep 检索或未来预测。</p>
-          <div>
-            {narrativePrompts.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                aria-pressed={normalizedQuestion === preset.question}
-                onClick={() => {
-                  setParent(null);
-                  setContext(null);
-                  setContextError(null);
-                  setQuestion(preset.question);
-                }}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-        {parent !== null ? (
-          <div className="report-question-parent" role="status">
-            <div>
-              <span>FOLLOW-UP / TURN {parent.conversation_depth + 2}</span>
-              <strong>{parent.question}</strong>
-            </div>
-            <button type="button" onClick={() => { setParent(null); setContext(null); setContextError(null); }}>
-              取消线程
-            </button>
-          </div>
-        ) : null}
-        {context !== null ? (
-          <ol className="report-question-context" aria-label="当前追问线程">
-            {context.items.map((item) => <li key={item.id}>{item.question}</li>)}
-          </ol>
-        ) : null}
-        {contextError !== null ? <div className="report-question-failure" role="alert">{contextError.message}</div> : null}
-        <label htmlFor="report-question-input">问题</label>
-        <textarea
-          id="report-question-input"
-          name="report_question"
-          rows={4}
-          minLength={2}
-          maxLength={1000}
-          value={question}
-          disabled={isSubmitting || !runtimeReady}
-          onChange={(event) => setQuestion(event.target.value)}
-          placeholder="例如：哪些原始证据支持这项观察？报告没有证明什么？"
-        />
-        <div>
-          <small>{normalizedQuestion.length}/1000</small>
-          <button
-            type="submit"
-            className="button button-primary"
-            disabled={normalizedQuestion.length < 2 || isSubmitting || !runtimeReady}
-          >
-            {isSubmitting ? "正在入队…" : "基于证据回答"}
-          </button>
-        </div>
-      </form>
-      {submissionError !== null ? (
-        <div className="report-question-failure" role="alert">{submissionError.message}</div>
-      ) : null}
       {state.status === "error" ? (
         <ApiErrorPanel
           title="无法读取报告追问"
@@ -538,9 +344,9 @@ function ReportQuestionPanel({
       ) : null}
       <div className="report-question-history" aria-live="polite">
         {(state.data?.items ?? []).length === 0 ? (
-          <p className="report-question-empty">还没有追问。这里不会自动生成没有证据的问题。</p>
+          <p className="report-question-empty">这份历史报告没有已保存的问答记录。</p>
         ) : (state.data?.items ?? []).map((item) => (
-          <ReportQuestionResult key={item.id} item={item} onFollowUp={selectParent} />
+          <ReportQuestionResult key={item.id} item={item} />
         ))}
       </div>
     </section>
@@ -557,8 +363,8 @@ export function DecisionReportsPage({
     setSelectedExperimentId(initialExperimentId);
   }, [initialExperimentId]);
   const { state: experimentsState, reload: reloadExperiments } = useSemanticExperiments();
-  const { state: readinessState } = useSemanticReadiness();
   const { state: reportsState, reload: reloadReports } = useDecisionReports();
+  const { state: reportsV2State, reload: reloadReportsV2 } = useDecisionReportsV2();
   const reportsByExperiment = useMemo(
     () => new Map((reportsState.data?.items ?? []).map((report) => [report.experiment_id, report])),
     [reportsState.data],
@@ -566,9 +372,13 @@ export function DecisionReportsPage({
   const persistedReport = selectedExperimentId === null
     ? null
     : reportsByExperiment.get(selectedExperimentId) ?? null;
-  const [generationError, setGenerationError] = useState<Error | null>(null);
-  const generationController = useRef<AbortController | null>(null);
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const reportsV2ByExperiment = useMemo(
+    () => new Map((reportsV2State.data?.items ?? []).map((report) => [report.experiment_id, report])),
+    [reportsV2State.data],
+  );
+  const persistedReportV2 = selectedExperimentId === null
+    ? null
+    : reportsV2ByExperiment.get(selectedExperimentId) ?? null;
   const terminalExperiments = useMemo(
     () => (experimentsState.data?.items ?? []).filter(isTerminal),
     [experimentsState.data],
@@ -582,50 +392,19 @@ export function DecisionReportsPage({
       ? detail.id
       : null,
   );
-  const canGenerate = comparisonState.status === "success"
-    && comparisonState.data.metrics.some((metric) => metric.paired_deltas.length > 0);
-
-  useEffect(() => () => generationController.current?.abort(), []);
-
-  const generateReport = (): void => {
-    if (selectedExperimentId === null || !canGenerate || generationController.current !== null) {
-      return;
-    }
-    const controller = new AbortController();
-    generationController.current = controller;
-    setIsGenerating(true);
-    setGenerationError(null);
-    void generateDecisionReport(selectedExperimentId, controller.signal)
-      .then(() => reloadReports())
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
-          const normalized = error instanceof Error ? error : new Error("报告生成返回了非标准错误。");
-          setGenerationError(new Error(
-            isAmbiguousPostResultError(normalized)
-              ? `报告结果未知，请刷新报告目录核对。${normalized.message}`
-              : normalized.message,
-          ));
-        }
-      })
-      .finally(() => {
-        if (generationController.current === controller) {
-          generationController.current = null;
-          setIsGenerating(false);
-        }
-      });
-  };
 
   return (
     <div className="decision-reports-page">
       <header className="decision-reports-hero">
         <div>
-          <span>DECISION FINDINGS / REAL OUTPUT</span>
-          <h2>把实验差异写回证据链，而不是生成一个“最佳方案”</h2>
-          <p>这里只汇总已观察的 OASIS 计数、按相同 seed 配对的差异、运行来源与限制。它不是现实预测，也不提供伪精确的胜负结论。</p>
+          <span>LEGACY ADC REPORTS / READ-ONLY</span>
+          <h1>历史 DecisionReport 归档</h1>
+          <p>保留旧实验的报告正文、下载、来源哈希和 Trial 深链；不再生成 V1/V2、追问或 Persona Interview。</p>
         </div>
       <div className="decision-reports-boundary" role="note">
-          <strong>当前报告能力</strong>
-          <p>章节式 Findings、内容寻址、持久封存、Markdown 导出、连续追问和 MiroFish 风格的证据叙事镜头已接通。</p>
+          <strong>只读兼容边界</strong>
+          <p>新的报告与追问已经迁移到单次 Simulation Run → ReportAgent → Agent Interaction。</p>
+          <a className="button button-primary" href="#/reports">返回原生报告</a>
         </div>
       </header>
 
@@ -633,40 +412,45 @@ export function DecisionReportsPage({
         <aside className="decision-report-directory" aria-labelledby="decision-report-directory-title">
           <header>
             <div><span>ARCHIVE / TERMINAL</span><h3 id="decision-report-directory-title">实验报告目录</h3></div>
-            <button type="button" onClick={() => { reloadExperiments(); reloadReports(); }}>刷新</button>
+            <button type="button" onClick={() => { reloadExperiments(); reloadReports(); reloadReportsV2(); }}>刷新</button>
           </header>
           {experimentsState.status === "error" ? <ApiErrorPanel title="无法读取实验报告目录" error={experimentsState.error} isRetrying={false} onRetry={reloadExperiments} /> : null}
           {reportsState.status === "error" ? <ApiErrorPanel title="无法读取持久报告目录" error={reportsState.error} isRetrying={false} onRetry={reloadReports} /> : null}
+          {reportsV2State.status === "error" ? <ApiErrorPanel title="无法读取 DecisionReport V2 目录" error={reportsV2State.error} isRetrying={false} onRetry={reloadReportsV2} /> : null}
           <ReportDirectory items={terminalExperiments} reportsByExperiment={reportsByExperiment} selectedId={selectedExperimentId} onSelect={setSelectedExperimentId} />
         </aside>
 
-        <main className="decision-report-stage" aria-label="决策报告正文">
+        <section className="decision-report-stage" aria-label="决策报告正文">
           {selectedExperimentId === null ? <div className="decision-report-stage-empty"><strong>选择一组终态实验</strong><p>系统不会自动选择第一份报告，避免把旧实验当成当前决策上下文。</p></div> : null}
           {detailState.status === "error" ? <ApiErrorPanel title="无法读取报告实验详情" error={detailState.error} isRetrying={false} onRetry={reloadDetail} /> : null}
           {detailState.status === "loading" && detail === null ? <div className="decision-report-skeleton" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div> : null}
-          {persistedReport !== null ? <PersistedReportDocument report={persistedReport} /> : null}
+          {persistedReportV2 !== null ? <DecisionReportV2Document report={persistedReportV2} /> : null}
+          {persistedReportV2 === null && persistedReport !== null ? <PersistedReportDocument report={persistedReport} /> : null}
+          {persistedReportV2 === null && persistedReport !== null ? (
+            <section className="decision-report-archive-note" role="note">
+              <strong>仅保留已有 V1</strong>
+              <p>这条历史记录没有封存 V2；归档不会补生成或改写旧产物。</p>
+            </section>
+          ) : null}
           {persistedReport === null && comparisonState.status === "error" ? <ApiErrorPanel title="无法读取实验计数比较" error={comparisonState.error} isRetrying={false} onRetry={reloadComparison} /> : null}
           {persistedReport === null && detail !== null ? (
             <section className="decision-report-document" aria-labelledby="decision-report-title">
               <header><span>REPORT / {detail.status.toUpperCase()}</span><h3 id="decision-report-title">{detail.scenario.title}</h3><p>{detail.scenario.decision_question}</p><time dateTime={detail.created_at}>{formatMediaTimestamp(detail.created_at)}</time></header>
               {comparisonState.status === "success" ? <ComparisonBoard comparison={comparisonState.data} /> : comparisonState.status === "loading" ? <div className="decision-report-skeleton" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div> : null}
               {comparisonState.status === "success" ? <section className="decision-report-limitations"><h3>解释限制</h3><ul>{comparisonState.data.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}</ul></section> : null}
-              {generationError !== null ? <div className="decision-report-generation-error" role="alert">{generationError.message}</div> : null}
-              <div className="decision-report-generate">
-                <p>生成后会把固定四章节、配对计数、限制和 provenance 封存为不可变报告。</p>
-                <button type="button" className="button button-primary" disabled={!canGenerate || isGenerating} onClick={generateReport}>
-                  {isGenerating ? "正在封存…" : "生成并封存 Findings"}
-                </button>
+              <div className="decision-report-archive-note" role="note">
+                <strong>未封存历史报告</strong>
+                <p>保留实验与只读比较视图，但不会再为旧 ADC 实验创建新报告。</p>
               </div>
             </section>
           ) : null}
-        </main>
+        </section>
 
         {detail !== null ? (
           <ReportProvenance
             experiment={detail}
             report={persistedReport}
-            readinessState={readinessState}
+            reportV2={persistedReportV2}
           />
         ) : <aside className="decision-report-provenance decision-report-provenance-empty"><strong>等待报告选择</strong><p>选中后显示场景、Cohort、模型、配置和 Experiment 哈希。</p></aside>}
       </div>

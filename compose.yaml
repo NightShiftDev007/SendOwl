@@ -1,4 +1,4 @@
-name: sendowl
+name: sandowl
 
 services:
   postgres:
@@ -27,8 +27,8 @@ services:
     image: postgres:16.8-alpine3.21
     restart: "no"
     environment:
-      POSTGRES_DB: ${TEST_POSTGRES_DB:-sendowl_test}
-      POSTGRES_USER: ${TEST_POSTGRES_USER:-sendowl_test}
+      POSTGRES_DB: ${TEST_POSTGRES_DB:-sandowl_test}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:-sandowl_test}
       POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-local-test-postgres-password-change-me}
     tmpfs:
       - /var/lib/postgresql/data
@@ -46,7 +46,7 @@ services:
   backend-postgres-test:
     profiles:
       - test
-    image: sendowl-backend-test:2.0.0-dev
+    image: sandowl-backend-test:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -54,8 +54,8 @@ services:
     restart: "no"
     environment:
       APP_ENV: test
-      DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sendowl_test:local-test-postgres-password-change-me@postgres-test:5432/sendowl_test}
-      TEST_POSTGRES_DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sendowl_test:local-test-postgres-password-change-me@postgres-test:5432/sendowl_test}
+      DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sandowl_test:local-test-postgres-password-change-me@postgres-test:5432/sandowl_test}
+      TEST_POSTGRES_DATABASE_URL: ${TEST_POSTGRES_DATABASE_URL:-postgresql://sandowl_test:local-test-postgres-password-change-me@postgres-test:5432/sandowl_test}
     depends_on:
       postgres-test:
         condition: service_healthy
@@ -93,7 +93,7 @@ services:
       - no-new-privileges:true
 
   migrate:
-    image: sendowl-backend:2.0.0-dev
+    image: sandowl-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -116,7 +116,7 @@ services:
       - no-new-privileges:true
 
   backend:
-    image: sendowl-backend:2.0.0-dev
+    image: sandowl-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -154,7 +154,7 @@ services:
       - no-new-privileges:true
 
   acme-support-sample:
-    image: sendowl-acme-support-sample:1.0.0
+    image: sandowl-acme-support-sample:1.0.0-b3609ac5
     build:
       context: ./backend/acme_support_sample
       dockerfile: Dockerfile
@@ -179,7 +179,7 @@ services:
       - no-new-privileges:true
 
   acme-support-mcp-sample:
-    image: sendowl-acme-support-mcp-sample:1.0.0
+    image: sandowl-acme-support-mcp-sample:1.0.0-5fbc2623
     build:
       context: ./backend/acme_support_mcp_sample
       dockerfile: Dockerfile
@@ -204,7 +204,7 @@ services:
       - no-new-privileges:true
 
   matraix-web-browser:
-    image: sendowl-matraix-web-browser:1.0.0
+    image: sandowl-matraix-web-browser:1.0.0
     build:
       context: ./backend/web_browser_executor
       dockerfile: Dockerfile
@@ -232,7 +232,7 @@ services:
       - no-new-privileges:true
 
   matraix-linux-runner:
-    image: sendowl-matraix-linux-runner:1.0.0
+    image: sandowl-matraix-linux-runner:1.0.0
     build:
       context: ./backend/linux_artifact_runner
       dockerfile: Dockerfile
@@ -260,8 +260,8 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  oasis-worker:
-    image: sendowl-oasis-worker:2.0.0-dev
+  semantic-worker:
+    image: sandowl-oasis-worker:2.0.0-dev
     build:
       context: ./backend
       dockerfile: OasisWorker.Dockerfile
@@ -270,7 +270,43 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OASIS_ARTIFACT_ROOT: /artifacts
-      OASIS_WORKER_ID: sendowl-compose-oasis-worker
+      OASIS_WORKER_ID: sandowl-compose-semantic-worker
+      OASIS_WORKER_DOMAIN: semantic
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
+      DASHSCOPE_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_BASE_URL: ${LLM_BASE_URL:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - daemon
+    working_dir: /tmp
+    volumes:
+      - oasis_artifacts:/artifacts
+    networks:
+      - default
+      - linux_runner
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  evaluation-worker:
+    image: sandowl-oasis-worker:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: OasisWorker.Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OASIS_ARTIFACT_ROOT: /artifacts
+      OASIS_WORKER_ID: sandowl-compose-evaluation-worker
+      OASIS_WORKER_DOMAIN: evaluation
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
@@ -303,10 +339,193 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  report-worker:
+    image: sandowl-oasis-worker:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: OasisWorker.Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OASIS_ARTIFACT_ROOT: /artifacts
+      OASIS_WORKER_ID: sandowl-compose-report-worker
+      OASIS_WORKER_DOMAIN: report
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - daemon
+    working_dir: /tmp
+    volumes:
+      - oasis_artifacts:/artifacts
+    networks:
+      - default
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  media-collector-worker:
+    image: sandowl-backend:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      MEDIA_COLLECTION_SCAN_INTERVAL_SECONDS: ${MEDIA_COLLECTION_SCAN_INTERVAL_SECONDS:-60}
+      MEDIA_COLLECTION_SOURCE_BATCH_SIZE: ${MEDIA_COLLECTION_SOURCE_BATCH_SIZE:-5}
+      MEDIA_COLLECTION_WORKER_ID: ${MEDIA_COLLECTION_WORKER_ID:-sandowl-native-media-collector}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - python
+      - -m
+      - app.media.collection.worker
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
+  harbor-dind:
+    image: docker:27-dind-rootless
+    privileged: true
+    restart: unless-stopped
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command:
+      - --host=tcp://0.0.0.0:2375
+      - --tls=false
+    expose:
+      - "2375"
+    volumes:
+      - harbor_docker_data:/var/lib/docker
+      - harbor_workspace:/workspace
+    networks:
+      - harbor_runtime
+
+  harbor-runner:
+    image: sandowl-harbor-runner:0.1.0-ea16f18
+    build:
+      context: ./backend/harbor_runner
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DOCKER_HOST: tcp://harbor-dind:2375
+      REMOTE_RUNNER_INLINE: "0"
+      REMOTE_RUNNER_HARBOR_COMMAND: harbor run
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-}
+      DASHSCOPE_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_BASE_URL: ${LLM_BASE_URL:-}
+    depends_on:
+      harbor-dind:
+        condition: service_started
+    expose:
+      - "9100"
+    volumes:
+      - harbor_workspace:/workspace
+      - harbor_jobs:/workspace/jobs
+    networks:
+      - default
+      - harbor_runtime
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:9100/health', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+
+  harbor-workspace-init:
+    image: sandowl-backend:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: "no"
+    user: "0:0"
+    depends_on:
+      harbor-runner:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - mkdir -p /harbor-workspace/sandowl_personas /harbor-workspace/sandowl_tasks && chown -R 10001:10001 /harbor-workspace/sandowl_personas /harbor-workspace/sandowl_tasks
+    volumes:
+      - harbor_workspace:/harbor-workspace
+    networks:
+      - default
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  evaluation-job-worker:
+    image: sandowl-backend:2.0.0-dev
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      HARBOR_RUNNER_URL: http://harbor-runner:9100
+      HARBOR_WORKSPACE_PATH: /harbor-workspace
+      HARBOR_RUNNER_WORKSPACE_PATH: /workspace
+      HARBOR_JOBS_PATH: /harbor-jobs
+      HARBOR_MODEL_NAME: ${HARBOR_MODEL_NAME:-dashscope/qwen3.7-plus}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      harbor-runner:
+        condition: service_healthy
+      harbor-workspace-init:
+        condition: service_completed_successfully
+    command:
+      - python
+      - -m
+      - app.research_evaluations.job_worker
+    volumes:
+      - harbor_workspace:/harbor-workspace
+      - harbor_jobs:/harbor-jobs:ro
+    networks:
+      - default
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
   media-sync-worker:
     profiles:
       - media-sync
-    image: sendowl-backend:2.0.0-dev
+    image: sandowl-backend:2.0.0-dev
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -336,7 +555,7 @@ services:
       - no-new-privileges:true
 
   frontend:
-    image: sendowl-frontend:2.0.0-dev
+    image: sandowl-frontend:2.0.0-dev
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -369,16 +588,24 @@ services:
 
 volumes:
   postgres_data:
-    name: sendowl-postgres-data
+    name: sandowl-postgres-data
   redis_data:
-    name: sendowl-redis-data
+    name: sandowl-redis-data
   oasis_artifacts:
-    name: sendowl-oasis-artifacts
+    name: sandowl-oasis-artifacts
   web_artifacts:
-    name: sendowl-web-artifacts
+    name: sandowl-web-artifacts
   linux_artifacts:
-    name: sendowl-linux-artifacts
+    name: sandowl-linux-artifacts
+  harbor_docker_data:
+    name: sandowl-harbor-docker-data
+  harbor_workspace:
+    name: sandowl-harbor-workspace
+  harbor_jobs:
+    name: sandowl-harbor-jobs
 
 networks:
   linux_runner:
+    internal: true
+  harbor_runtime:
     internal: true

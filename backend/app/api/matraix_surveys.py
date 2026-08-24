@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
+from app.legacy_adc import reject_legacy_adc_write
 from app.matraix_surveys.contracts import (
     MatraixSurveyCreateRequest,
     MatraixSurveyExperimentDetail,
@@ -61,6 +62,7 @@ def create_matraix_surveys_router() -> APIRouter:
         "/api/v2/matraix/survey-experiments",
         response_model=MatraixSurveyExperimentDetail,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue_survey_experiment(
         request: MatraixSurveyCreateRequest,
@@ -106,6 +108,7 @@ def create_matraix_surveys_router() -> APIRouter:
         "/api/v2/matraix/survey-experiments/{experiment_id}/retry",
         response_model=MatraixSurveyExperimentDetail,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def retry_survey_experiment(
         experiment_id: UUID,

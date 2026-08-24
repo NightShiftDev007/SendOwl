@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ApiErrorPanel } from "./ApiErrorPanel";
 import { ChatEvaluationPage } from "./ChatEvaluationPage";
@@ -17,19 +17,16 @@ import {
   type TaskRuntimeKind,
 } from "./taskRuntimeReadiness";
 import {
-  useOasisReadiness,
-  type OasisReadinessLoadState,
-} from "./useOasisRuns";
-import {
   useSemanticReadiness,
   type SemanticReadinessLoadState,
 } from "./useSemanticExperiments";
-import { useSurveyReadiness } from "./useSurveyExperiments";
+import { useResearchSurveyReadiness, type ResearchSurveyReadinessLoadState } from "./useResearchSurveys";
 import { useSystemCapabilities } from "./useSystemCapabilities";
 import { SurveyPlaygroundPage } from "./SurveyPlaygroundPage";
 import { TrialArchivePage } from "./TrialArchivePage";
 import { WebEvaluationPage } from "./WebEvaluationPage";
 import { LinuxArtifactPage } from "./LinuxArtifactPage";
+import { ResearchEvaluationTargetsPanel } from "./ResearchEvaluationTargetsPanel";
 import {
   useChatReadiness,
   type ChatReadinessLoadState,
@@ -37,9 +34,13 @@ import {
 import { useWebReadiness, type WebReadinessLoadState } from "./useWebEvaluations";
 import { useLinuxReadiness } from "./useLinuxArtifacts";
 import "./taskGallery.css";
+import {
+  createResearchEvaluationTaskBundle,
+  fetchResearchEvaluationWorkspace,
+  type ResearchEvaluationWorkspace,
+} from "./researchEvaluationContracts";
 
-type TaskKind = "social" | "survey" | "chat" | "archive" | "web" | "linux" | "os_app" | "batch";
-type SurveyReadinessLoadState = ReturnType<typeof useSurveyReadiness>["state"];
+type TaskKind = "survey" | "chat" | "archive" | "web" | "app" | "linux" | "batch";
 
 interface TaskDefinition {
   readonly id: string;
@@ -57,38 +58,12 @@ interface TaskDefinition {
 
 const taskDefinitions: readonly TaskDefinition[] = [
   {
-    id: "semantic-social-experiment",
-    kind: "social",
-    eyebrow: "OASIS / SEMANTIC",
-    title: "基线与备选方案群体实验",
-    summary: "将封存 Scenario 与 MatrAIx Cohort 组成 Variant × Seed 矩阵，运行真实 LLM Persona 动作。",
-    source: "MatrAIx Persona + OASIS",
-    capabilityName: "simulations.oasis",
-    expectedState: "runtime_ready",
-    readinessKind: "semantic",
-    output: "类型化事件 · SQLite artifact · paired counts",
-    href: "#/runs?mode=semantic",
-  },
-  {
-    id: "platform-smoke",
-    kind: "social",
-    eyebrow: "OASIS / PLATFORM",
-    title: "Reddit 平台接线验证",
-    summary: "不读取 Cohort、不调用 LLM，仅验证 OASIS Reddit、队列、SQLite 与手工 CREATE_POST。",
-    source: "OASIS",
-    capabilityName: "simulations.oasis",
-    expectedState: "runtime_ready",
-    readinessKind: "platform",
-    output: "平台生命周期 · artifact integrity",
-    href: "#/runs?mode=platform",
-  },
-  {
     id: "survey-task",
     kind: "survey",
-    eyebrow: "MATRAIX / SURVEY",
-    title: "Survey Persona Trial",
-    summary: "把封存 Scenario 与 1–8 Persona Cohort 编译为固定问卷，由千问逐 Persona 返回严格类型化回答。",
-    source: "MatrAIx Playground",
+    eyebrow: "合成人群 / 问卷",
+    title: "单一研究上下文问卷",
+    summary: "把一次已完成模拟及其冻结人群编译为固定问卷，逐个人物记录清晰度、关注点和未解问题。",
+    source: "SandOwl 原生研究问卷",
     capabilityName: "tasks.matraix.survey",
     expectedState: "runtime_ready",
     readinessKind: "survey",
@@ -98,10 +73,10 @@ const taskDefinitions: readonly TaskDefinition[] = [
   {
     id: "chat-task",
     kind: "chat",
-    eyebrow: "MATRAIX / CHAT",
-    title: "Chatbot Evaluation",
-    summary: "冻结 Cohort，让每个合成 Persona 显式通过 REST 或 MCP Acme source sample 完成真实多轮对话并封存逐条证据。",
-    source: "MatrAIx Playground · Acme REST + MCP source samples",
+    eyebrow: "合成人群 / 对话",
+    title: "对话系统评测",
+    summary: "冻结合成人群，让每个人物通过 REST 或 MCP 固定样例完成真实多轮对话并封存逐条证据。",
+    source: "SandOwl 对话评测",
     capabilityName: "tasks.matraix.chat",
     expectedState: "runtime_ready",
     readinessKind: "chat",
@@ -111,10 +86,10 @@ const taskDefinitions: readonly TaskDefinition[] = [
   {
     id: "trial-archive",
     kind: "archive",
-    eyebrow: "MATRAIX / ARCHIVE",
-    title: "Unified Trial Archive",
-    summary: "统一检索本库已持久化的 Survey、Chat、Web 与 Linux Trial，并逐条核对状态、Persona、错误和运行 provenance。",
-    source: "MatrAIx Survey + Chat + Web + Linux durable records",
+    eyebrow: "统一试验档案",
+    title: "试验档案",
+    summary: "统一检索已持久化的问卷、对话、网页与 Linux 试验，并逐条核对状态、人物、错误和运行来源。",
+    source: "SandOwl 持久试验记录",
     capabilityName: "trials.matraix.archive",
     expectedState: "runtime_ready",
     readinessKind: "archive",
@@ -124,23 +99,23 @@ const taskDefinitions: readonly TaskDefinition[] = [
   {
     id: "persona-interview-task",
     kind: "chat",
-    eyebrow: "MIROFISH / PERSONA INTERVIEW",
-    title: "Persona 证据访谈",
-    summary: "选择报告绑定 Cohort 中的冻结 Persona，进行单人追问或一次封存 2–8 人的同问题会话；回答只引用报告章节。",
-    source: "MiroFish Interaction + MatrAIx Persona + Qwen",
-    capabilityName: "tasks.mirofish.persona_interview",
+    eyebrow: "单次运行 / 报告追问",
+    title: "报告追问",
+    summary: "围绕一份原生单次运行引用报告继续追问；回答必须引用报告中的冻结内容，不创建方案比较。",
+    source: "SandOwl 引用报告",
+    capabilityName: "agent_interactions",
     expectedState: "runtime_ready",
     readinessKind: "semantic",
-    output: "single / group session · section citations · content hashes",
+    output: "cited answer · bounded follow-up · content hashes",
     href: "#/reports",
   },
   {
     id: "web-task",
     kind: "web",
-    eyebrow: "MATRAIX / WEB",
-    title: "Web Agent Evaluation",
-    summary: "固定来源样例由隔离 Chromium 读取真实 DOM 与三页截图，再由冻结 Persona 从实际观察到的引文中完成选择。",
-    source: "MatrAIx Playground",
+    eyebrow: "隔离浏览器 / 网页",
+    title: "网页任务评测",
+    summary: "固定来源样例由隔离 Chromium 读取真实 DOM 与三页截图，再由冻结人物从实际观察到的引文中完成选择。",
+    source: "SandOwl 网页评测",
     capabilityName: "tasks.matraix.web",
     expectedState: "runtime_ready",
     readinessKind: "web",
@@ -150,10 +125,10 @@ const taskDefinitions: readonly TaskDefinition[] = [
   {
     id: "linux-artifact-task",
     kind: "linux",
-    eyebrow: "MATRAIX / LINUX SOURCE SAMPLE",
-    title: "Note → CSV Artifact Evaluation",
+    eyebrow: "隔离运行器 / LINUX",
+    title: "Note → CSV 固定产物评测",
     summary: "千问生成受约束解释与合成反馈，隔离 Runner 写入并校验固定产物，并将单个真实 Trial 封存为可登记的 Evaluation 父资源。",
-    source: "MatrAIx Playground fixed Linux source sample",
+    source: "SandOwl Linux 产物评测",
     capabilityName: "tasks.matraix.linux_artifact",
     expectedState: "runtime_ready",
     readinessKind: "linux",
@@ -161,57 +136,62 @@ const taskDefinitions: readonly TaskDefinition[] = [
     href: "#/tasks?task=linux&page=1",
   },
   {
-    id: "os-app-task",
-    kind: "os_app",
-    eyebrow: "MATRAIX / OS APP",
-    title: "OS App Evaluation",
-    summary: "桌面应用环境、Computer Use 轨迹与录屏产物尚未进入当前部署拓扑。",
-    source: "MatrAIx Playground",
-    capabilityName: "tasks.matraix.os_app",
+    id: "app-task",
+    kind: "app",
+    eyebrow: "隔离应用 / HARBOR",
+    title: "App 任务评测",
+    summary: "把当前研究与受许可的 MatrAIx Harbor Task Package 绑定，在独立 Rootless DinD 中运行并封存轨迹、产物、校验和评分。",
+    source: "SandOwl + MatrAIx Harbor",
+    capabilityName: "tasks.matraix.app",
     expectedState: "runtime_ready",
-    readinessKind: null,
-    output: "待接：actions · recording · result",
+    readinessKind: "archive",
+    output: "trajectory · artifacts · verifier · reward",
     href: null,
   },
   {
     id: "batch-registry",
     kind: "batch",
-    eyebrow: "MATRAIX / BATCH REGISTRY",
-    title: "MatrAIx Batch Registry",
-    summary: "一次原子提交创建 SendOwl-native Survey / Chat 父运行并封存不可变目录，也可登记已有 Web / Linux Evaluation。",
-    source: "MatrAIx durable Survey + Chat + Web + Linux parent records",
+    eyebrow: "批量试验 / 注册表",
+    title: "批量试验注册表",
+    summary: "一次原子提交创建 SandOwl 原生问卷或对话父运行并封存不可变目录，也可登记已有网页或 Linux 评测。",
+    source: "SandOwl 批量试验记录",
     capabilityName: "jobs.matraix.batch_registry",
     expectedState: "runtime_ready",
     readinessKind: "archive",
     output: "atomic native enqueue · sealed membership · exact observed counts",
     href: "#/tasks?task=batch&page=1",
   },
-  {
-    id: "harbor-batch",
-    kind: "batch",
-    eyebrow: "MATRAIX / HARBOR",
-    title: "Harbor 批量 Trial",
-    summary: "完整 Harbor 执行器尚未迁移；原生 Survey/Chat 原子入队不等于 Harbor Docker/Web/OS 执行面。",
-    source: "MatrAIx Harbor",
-    capabilityName: "tasks.matraix.harbor",
-    expectedState: "runtime_ready",
-    readinessKind: null,
-    output: "待接：launch · retry · verifier · artifacts · authorized export",
-    href: null,
-  },
 ];
 
 const taskKindLabels: Readonly<Record<TaskKind | "all", string>> = {
   all: "全部",
-  social: "Social",
-  survey: "Survey",
-  chat: "Chat",
-  archive: "Archive",
-  web: "Web",
+  survey: "问卷",
+  chat: "对话",
+  archive: "档案",
+  web: "网页",
+  app: "App",
   linux: "Linux",
-  os_app: "OS App",
   batch: "批次",
 };
+
+const bundleExecutionLabel = {
+  queued: "排队中",
+  running: "执行中",
+  succeeded: "已完成",
+  failed: "失败",
+} as const;
+
+const bundleVerifierLabel = {
+  pending: "等待校验",
+  passed: "已通过",
+  failed: "未通过",
+} as const;
+
+const bundleArtifactLabel = {
+  unavailable: "尚无产物",
+  partial: "部分产物",
+  sealed: "已封存",
+} as const;
 
 function capabilityByName(
   capabilities: readonly CapabilityDescriptor[],
@@ -230,36 +210,6 @@ function safeReason(reasons: readonly (string | null)[], genericReason: string):
   return presentReasons.length === 0
     ? genericReason
     : `${presentReasons.join("；")}。`;
-}
-
-function platformReadinessProbe(
-  state: OasisReadinessLoadState,
-): RuntimeReadinessProbe {
-  if (state.status === "loading" || (state.status === "error" && state.isRetrying)) {
-    return { status: "loading" };
-  }
-
-  if (state.status === "error") {
-    return {
-      status: "error",
-      reason: `无法完成 OASIS platform readiness 核验：${state.error.message}`,
-    };
-  }
-
-  if (state.data.worker_online && state.data.platform_runtime_ready) {
-    return { status: "ready" };
-  }
-
-  return {
-    status: "unready",
-    reason: safeReason(
-      [
-        state.data.worker_online ? null : "没有在线 OASIS worker",
-        state.data.platform_runtime_ready ? null : "platform_runtime_ready 未通过",
-      ],
-      "OASIS platform runtime 未通过后端 readiness 核验。",
-    ),
-  };
 }
 
 function semanticReadinessProbe(
@@ -288,7 +238,7 @@ function semanticReadinessProbe(
     status: "unready",
     reason: safeReason(
       [
-        state.data.worker_online ? null : "没有在线 OASIS worker",
+        state.data.worker_online ? null : "没有在线的模拟运行 worker",
         state.data.configuration_conflict ? "检测到不一致的语义运行配置" : null,
         hasCompleteConfiguration ? null : "在线 worker 未暴露完整语义模型配置",
       ],
@@ -298,7 +248,7 @@ function semanticReadinessProbe(
 }
 
 function surveyReadinessProbe(
-  state: SurveyReadinessLoadState,
+  state: ResearchSurveyReadinessLoadState,
 ): RuntimeReadinessProbe {
   if (state.status === "loading" || (state.status === "error" && state.isRetrying)) {
     return { status: "loading" };
@@ -315,20 +265,11 @@ function surveyReadinessProbe(
     return { status: "ready" };
   }
 
-  const hasCompleteConfiguration = state.data.model_name !== null
-    && state.data.survey_config_sha256 !== null
-    && state.data.prompt_schema_version !== null;
-
   return {
     status: "unready",
-    reason: safeReason(
-      [
-        state.data.worker_online ? null : "没有在线 Survey worker",
-        state.data.configuration_conflict ? "检测到不一致的 Survey 运行配置" : null,
-        hasCompleteConfiguration ? null : "在线 worker 未暴露完整 Survey 模型配置",
-      ],
-      "survey_runtime_ready 未通过后端核验。",
-    ),
+    reason: state.data.live_worker_count === 0
+      ? "没有在线的原生 Survey evaluation worker。"
+      : "原生 Survey worker 未暴露完整一致的运行配置。",
   };
 }
 
@@ -433,9 +374,14 @@ function lockedTitle(value: TaskAvailability): string {
   return "运行入口未配置";
 }
 
-function TaskGalleryCatalog(): JSX.Element {
+function TaskGalleryCatalog({
+  projectId,
+  runId,
+}: {
+  readonly projectId: string | null;
+  readonly runId: string | null;
+}): JSX.Element {
   const { state, reload: reloadCapabilities } = useSystemCapabilities();
-  const { state: oasisReadinessState, reload: reloadOasisReadiness } = useOasisReadiness();
   const {
     state: semanticReadinessState,
     reload: reloadSemanticReadiness,
@@ -443,7 +389,7 @@ function TaskGalleryCatalog(): JSX.Element {
   const {
     state: surveyReadinessState,
     reload: reloadSurveyReadiness,
-  } = useSurveyReadiness();
+  } = useResearchSurveyReadiness();
   const {
     state: chatReadinessState,
     reload: reloadChatReadiness,
@@ -452,10 +398,56 @@ function TaskGalleryCatalog(): JSX.Element {
   const { state: linuxReadinessState, reload: reloadLinuxReadiness } = useLinuxReadiness();
   const [kind, setKind] = useState<TaskKind | "all">("all");
   const [query, setQuery] = useState<string>("");
+  const [workspace, setWorkspace] = useState<ResearchEvaluationWorkspace | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<Error | null>(null);
+  const [bundleSubmitting, setBundleSubmitting] = useState(false);
+  const [bundleError, setBundleError] = useState<Error | null>(null);
+  const loadWorkspace = useCallback(async (signal: AbortSignal): Promise<void> => {
+    if (projectId === null || runId === null) {
+      setWorkspace(null);
+      setWorkspaceError(null);
+      return;
+    }
+    try {
+      setWorkspace(await fetchResearchEvaluationWorkspace(projectId, runId, signal));
+      setWorkspaceError(null);
+    } catch (reason: unknown) {
+      if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+        setWorkspaceError(
+          reason instanceof Error ? reason : new Error("读取研究评测上下文失败"),
+        );
+      }
+    }
+  }, [projectId, runId]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadWorkspace(controller.signal);
+    return () => controller.abort();
+  }, [loadWorkspace]);
+  const prepareTaskBundle = async (): Promise<void> => {
+    if (projectId === null || runId === null || bundleSubmitting) return;
+    const controller = new AbortController();
+    setBundleSubmitting(true);
+    setBundleError(null);
+    try {
+      await createResearchEvaluationTaskBundle(projectId, runId, controller.signal);
+      await loadWorkspace(controller.signal);
+    } catch (reason: unknown) {
+      setBundleError(
+        reason instanceof Error ? reason : new Error("准备研究评测任务包失败"),
+      );
+    } finally {
+      setBundleSubmitting(false);
+    }
+  };
+  const refreshWorkspace = async (): Promise<void> => {
+    const controller = new AbortController();
+    await loadWorkspace(controller.signal);
+  };
   const capabilities = state.status === "success" ? state.data.capabilities : [];
   const readiness = useMemo<RuntimeReadinessByKind>(
     () => ({
-      platform: platformReadinessProbe(oasisReadinessState),
+      platform: { status: "unready", reason: "历史平台验证入口只读。" },
       semantic: semanticReadinessProbe(semanticReadinessState),
       survey: surveyReadinessProbe(surveyReadinessState),
       chat: chatReadinessProbe(chatReadinessState),
@@ -463,7 +455,7 @@ function TaskGalleryCatalog(): JSX.Element {
       linux: linuxReadinessProbe(linuxReadinessState),
       archive: { status: "ready" },
     }),
-    [chatReadinessState, linuxReadinessState, oasisReadinessState, semanticReadinessState, surveyReadinessState, webReadinessState],
+    [chatReadinessState, linuxReadinessState, semanticReadinessState, surveyReadinessState, webReadinessState],
   );
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const tasks = useMemo(
@@ -478,9 +470,9 @@ function TaskGalleryCatalog(): JSX.Element {
   const runtimeCount = taskDefinitions.filter(
     (task) => availabilityDecision(task, capabilities, readiness).availability === "runtime",
   ).length;
+  const taskBundle = workspace?.task_bundles.at(0) ?? null;
   const isVerifying = state.status === "loading"
     || (state.status === "error" && state.isRetrying)
-    || readiness.platform.status === "loading"
     || readiness.semantic.status === "loading"
     || readiness.survey.status === "loading"
     || readiness.chat.status === "loading"
@@ -488,7 +480,6 @@ function TaskGalleryCatalog(): JSX.Element {
     || readiness.linux.status === "loading";
   const reloadAll = useCallback((): void => {
     reloadCapabilities();
-    reloadOasisReadiness();
     reloadSemanticReadiness();
     reloadSurveyReadiness();
     reloadChatReadiness();
@@ -496,7 +487,6 @@ function TaskGalleryCatalog(): JSX.Element {
     reloadLinuxReadiness();
   }, [
     reloadCapabilities,
-    reloadOasisReadiness,
     reloadSemanticReadiness,
     reloadSurveyReadiness,
     reloadChatReadiness,
@@ -508,8 +498,8 @@ function TaskGalleryCatalog(): JSX.Element {
     <div className="task-gallery-page">
       <header className="task-gallery-hero">
         <div>
-          <span>MATRAIX / TASK GALLERY</span>
-          <h2>选择一个真实可执行的评测任务</h2>
+          <span>SANDOWL / 评测中心</span>
+          <h1>选择一个真实可执行的评测任务</h1>
           <p>任务卡同时核验后端 capability、在线 worker 与对应运行时 readiness。任何一层未通过时都会保留安全原因，但不会显示假启动按钮。</p>
         </div>
         <dl>
@@ -519,7 +509,34 @@ function TaskGalleryCatalog(): JSX.Element {
         </dl>
       </header>
 
-      <section className="task-gallery-controls" aria-label="Task Gallery 筛选">
+      {projectId !== null && runId !== null ? (
+        <section className="task-gallery-research-scope" aria-label="当前研究评测上下文">
+          {workspaceError !== null ? (
+            <ApiErrorPanel title="无法核验当前研究评测上下文" error={workspaceError} isRetrying={false} onRetry={() => window.location.reload()} />
+          ) : workspace === null ? (
+            <p role="status">正在核验 Project / Run / Cohort…</p>
+          ) : (
+            <>
+              <div><span>当前研究主链</span><h3>{workspace.project.title}</h3><p>成功 Run 与 {workspace.cohort.persona_count} 人冻结 Cohort 已通过身份核验。</p></div>
+              <dl><div><dt>可原生启动</dt><dd>{workspace.capabilities.filter((item) => item.can_launch_for_scope).length} / {workspace.capabilities.length}</dd></div><div><dt>Persona 可用档案</dt><dd>{workspace.persona_quality.populated_profile_count} / {workspace.persona_quality.profile_count}<small>每人 {workspace.persona_quality.minimum_dimension_count}–{workspace.persona_quality.maximum_dimension_count} 个有效维度</small></dd></div></dl>
+              <p className="task-gallery-scope-warning">Chat / Web / App 必须先封存当前研究的被测对象或 Harbor Task；提交后由独立 Rootless DinD 执行。旧 Acme、Quotes 与 Linux 固定样例仍只用于历史验证。</p>
+              <section className="task-gallery-task-bundle" aria-label="当前研究评测任务包">
+                {taskBundle === null ? <>
+                  <div><strong>Survey 任务包尚未封存</strong><p>先把当前 Project、Run、Cohort、Persona 档案哈希和固定问卷编译成不可变输入。此操作不调用模型，也不启动评测。</p></div>
+                  <button type="button" disabled={bundleSubmitting} onClick={() => { void prepareTaskBundle(); }}>{bundleSubmitting ? "正在准备…" : "准备 Survey 任务包"}</button>
+                </> : <>
+                  <div><strong>已封存 Survey 任务包 · {taskBundle.payload.persona_profile_sha256s.length} 人</strong><p>结构校验、观察轨迹、类型化产物和“不适用评分”政策均已固定。</p></div>
+                  <dl><div><dt>执行</dt><dd>{taskBundle.execution === null ? "尚未启动" : bundleExecutionLabel[taskBundle.execution.status]}</dd></div><div><dt>校验</dt><dd>{taskBundle.execution === null ? "等待执行" : bundleVerifierLabel[taskBundle.execution.verifier_state]}</dd></div><div><dt>产物</dt><dd>{taskBundle.execution === null ? "等待执行" : bundleArtifactLabel[taskBundle.execution.artifact_state]}</dd></div></dl>
+                </>}
+                {bundleError !== null ? <p className="task-gallery-task-bundle-error" role="alert">{bundleError.message}</p> : null}
+              </section>
+              <ResearchEvaluationTargetsPanel projectId={workspace.project.id} runId={workspace.run.id} targets={workspace.targets} jobs={workspace.jobs} onChanged={refreshWorkspace} />
+            </>
+          )}
+        </section>
+      ) : null}
+
+      <section className="task-gallery-controls" aria-label="评测任务筛选">
         <label htmlFor="task-gallery-query"><span>搜索任务</span><input id="task-gallery-query" name="task_query" type="search" value={query} placeholder="名称、能力或来源" onChange={(event) => setQuery(event.target.value)} /></label>
         <nav aria-label="任务类型">
           {(Object.keys(taskKindLabels) as readonly (TaskKind | "all")[]).map((item) => (
@@ -532,7 +549,7 @@ function TaskGalleryCatalog(): JSX.Element {
       {state.status === "error" ? <ApiErrorPanel title="无法核验任务能力" error={state.error} isRetrying={state.isRetrying} onRetry={reloadAll} /> : null}
       {state.status === "loading" ? <div className="task-gallery-loading" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div> : null}
 
-      <main className="task-gallery-stage" aria-labelledby="task-gallery-stage-title">
+      <section className="task-gallery-stage" aria-labelledby="task-gallery-stage-title">
         <header><div><span>CATALOG / VERIFIED</span><h3 id="task-gallery-stage-title">跨类型任务目录</h3></div><p>{tasks.length} / {taskDefinitions.length} 项</p></header>
         {state.status === "success" && tasks.length > 0 ? (
           <ul className="task-gallery-grid">
@@ -542,20 +559,32 @@ function TaskGalleryCatalog(): JSX.Element {
               const capability = capabilityByName(capabilities, task.capabilityName);
               const canInspectLinuxBoundary = task.id === "linux-artifact-task"
                 && capability?.state === "runtime_ready";
+              const scopedCapability = workspace?.capabilities.find((item) => item.kind === task.kind) ?? null;
+              const blockedByResearchScope = workspace !== null
+                && ["chat-task", "web-task", "app-task", "linux-artifact-task"].includes(task.id)
+                && scopedCapability?.can_launch_for_scope !== true;
+              const scopedHref = workspace !== null && task.id === "persona-interview-task"
+                  ? `#/reports?project_id=${encodeURIComponent(workspace.project.id)}&run_id=${encodeURIComponent(workspace.run.id)}`
+                  : workspace !== null && task.kind === "app"
+                    ? `#/tasks?project_id=${encodeURIComponent(workspace.project.id)}&run_id=${encodeURIComponent(workspace.run.id)}`
+                    : workspace !== null && task.href !== null
+                      ? `${task.href}&project_id=${encodeURIComponent(workspace.project.id)}&run_id=${encodeURIComponent(workspace.run.id)}`
+                      : task.href;
               return (
                 <li key={task.id} data-availability={taskAvailability}>
                   <header><span>{task.eyebrow}</span><strong>{statusLabel(taskAvailability)}</strong></header>
                   <h4>{task.title}</h4>
                   <p>{task.summary}</p>
-                  <dl><div><dt>来源</dt><dd>{task.source}</dd></div><div><dt>输出</dt><dd>{task.output}</dd></div><div><dt>Capability</dt><dd><code>{task.capabilityName}</code></dd></div>{capability !== null ? <div><dt>Contracts</dt><dd>{capability.contracts.join(" · ")}</dd></div> : null}</dl>
-                  {(taskAvailability === "runtime" || canInspectLinuxBoundary) && task.href !== null ? <a href={task.href}>{task.id === "trial-archive" ? "打开 Trial Archive →" : task.id === "batch-registry" ? "打开 Batch Registry →" : canInspectLinuxBoundary && taskAvailability !== "runtime" ? "查看固定任务边界 →" : "打开 Playground →"}</a> : <div className="task-gallery-locked" role="note"><strong>{lockedTitle(taskAvailability)}</strong><small>{decision.reason}</small></div>}
+                  <dl><div><dt>来源</dt><dd>{task.source}</dd></div><div><dt>输出</dt><dd>{task.output}</dd></div></dl>
+                  <details><summary>技术契约</summary><dl><div><dt>运行能力</dt><dd><code>{task.capabilityName}</code></dd></div>{capability !== null ? <div><dt>数据契约</dt><dd>{capability.contracts.join(" · ")}</dd></div> : null}</dl></details>
+                  {blockedByResearchScope ? <div className="task-gallery-locked" role="note"><strong>尚未绑定当前研究</strong><small>{scopedCapability?.explanation}</small></div> : (taskAvailability === "runtime" || canInspectLinuxBoundary) && scopedHref !== null ? <a href={scopedHref}>{task.id === "trial-archive" ? "打开试验档案 →" : task.id === "batch-registry" ? "打开批量注册表 →" : task.id === "persona-interview-task" && workspace !== null ? "打开当前报告追问 →" : task.kind === "app" && workspace !== null ? "打开当前研究执行区 →" : canInspectLinuxBoundary && taskAvailability !== "runtime" ? "查看固定任务边界 →" : task.kind === "survey" && workspace !== null ? "用当前 Run 启动 Survey →" : "打开评测 →"}</a> : <div className="task-gallery-locked" role="note"><strong>{lockedTitle(taskAvailability)}</strong><small>{decision.reason}</small></div>}
                 </li>
               );
             })}
           </ul>
         ) : null}
         {state.status === "success" && tasks.length === 0 ? <div className="task-gallery-empty"><strong>没有匹配任务</strong><p>调整任务类型或搜索词。</p></div> : null}
-      </main>
+      </section>
     </div>
   );
 }
@@ -567,16 +596,26 @@ export function TaskGalleryPage({
   readonly route: TaskGalleryRoute;
   readonly onRouteChange: (route: TaskGalleryRoute) => void;
 }): JSX.Element {
+  const scopedRootRoute = (): TaskGalleryRoute => ({
+    ...taskGalleryRootRoute(),
+    projectId: route.projectId ?? null,
+    runId: route.runId ?? null,
+  });
+
   if (route.task === "survey") {
     return (
       <SurveyPlaygroundPage
+        initialProjectId={route.projectId ?? null}
+        initialRunId={route.runId ?? null}
         page={route.page ?? 1}
         initialExperimentId={route.experimentId}
         initialTrialId={route.trialId}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
+        onBack={() => onRouteChange({ ...taskGalleryRootRoute(), projectId: route.projectId ?? null, runId: route.runId ?? null })}
         onSelectionChange={(page, experimentId, trialId) => {
           onRouteChange({
             task: "survey",
+            projectId: route.projectId ?? null,
+            runId: route.runId ?? null,
             experimentId,
             evaluationId: null,
             trialId,
@@ -596,10 +635,12 @@ export function TaskGalleryPage({
         page={route.page ?? 1}
         initialEvaluationId={route.evaluationId}
         initialTrialId={route.trialId}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
+        onBack={() => onRouteChange(scopedRootRoute())}
         onSelectionChange={(page, evaluationId, trialId) => {
           onRouteChange({
             task: "chat",
+            projectId: route.projectId ?? null,
+            runId: route.runId ?? null,
             experimentId: null,
             evaluationId,
             trialId,
@@ -619,10 +660,12 @@ export function TaskGalleryPage({
         page={route.page ?? 1}
         initialEvaluationId={route.evaluationId}
         initialTrialId={route.trialId}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
+        onBack={() => onRouteChange(scopedRootRoute())}
         onSelectionChange={(page, evaluationId, trialId) => {
           onRouteChange({
             task: "web",
+            projectId: route.projectId ?? null,
+            runId: route.runId ?? null,
             experimentId: null,
             evaluationId,
             trialId,
@@ -640,8 +683,12 @@ export function TaskGalleryPage({
     return (
       <TrialArchivePage
         route={route}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
-        onRouteChange={onRouteChange}
+        onBack={() => onRouteChange(scopedRootRoute())}
+        onRouteChange={(nextRoute) => onRouteChange({
+          ...nextRoute,
+          projectId: route.projectId ?? null,
+          runId: route.runId ?? null,
+        })}
       />
     );
   }
@@ -652,10 +699,12 @@ export function TaskGalleryPage({
         page={route.page ?? 1}
         initialEvaluationId={route.evaluationId}
         initialTrialId={route.trialId}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
+        onBack={() => onRouteChange(scopedRootRoute())}
         onSelectionChange={(page, evaluationId, trialId) => {
           onRouteChange({
             task: "linux",
+            projectId: route.projectId ?? null,
+            runId: route.runId ?? null,
             experimentId: null,
             evaluationId,
             trialId,
@@ -673,11 +722,15 @@ export function TaskGalleryPage({
     return (
       <BatchRegistryPage
         route={route}
-        onBack={() => onRouteChange(taskGalleryRootRoute())}
-        onRouteChange={onRouteChange}
+        onBack={() => onRouteChange(scopedRootRoute())}
+        onRouteChange={(nextRoute) => onRouteChange({
+          ...nextRoute,
+          projectId: route.projectId ?? null,
+          runId: route.runId ?? null,
+        })}
       />
     );
   }
 
-  return <TaskGalleryCatalog />;
+  return <TaskGalleryCatalog projectId={route.projectId ?? null} runId={route.runId ?? null} />;
 }

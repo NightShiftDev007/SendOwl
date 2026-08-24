@@ -67,6 +67,8 @@ from app.matraix_web.repository import get_web_trial
 from app.matraix_web.tasks import RUNNER_VERSION as WEB_RUNNER_VERSION
 from app.matraix_web.tasks import build_web_task
 from app.populations.models import CohortRecord
+from app.research_surveys.hashing import trial_sha256 as research_survey_trial_sha256
+from app.research_surveys.models import ResearchSurveyRecord, ResearchSurveyTrialRecord
 
 INTEGRITY_LIMITATIONS = (
     "Verification proves stored parent, Trial, state, and output content-address integrity.",
@@ -85,6 +87,13 @@ SELECT 'survey'::text AS kind, trial.id, trial.created_at, trial.status
 FROM matraix_survey_trials AS trial
 JOIN matraix_survey_experiments AS parent ON parent.id = trial.experiment_id
 WHERE parent.input_sealed_at IS NOT NULL
+  AND (CAST(:kind AS text) IS NULL OR CAST(:kind AS text) = 'survey')
+  AND (CAST(:status AS text) IS NULL OR trial.status = CAST(:status AS text))
+UNION ALL
+SELECT 'survey'::text AS kind, trial.id, trial.created_at, trial.status
+FROM research_survey_trials AS trial
+JOIN research_surveys AS parent ON parent.id = trial.survey_id
+WHERE parent.sealed_at IS NOT NULL
   AND (CAST(:kind AS text) IS NULL OR CAST(:kind AS text) = 'survey')
   AND (CAST(:status AS text) IS NULL OR trial.status = CAST(:status AS text))
 UNION ALL
@@ -152,32 +161,69 @@ async def verify_trial_integrity(
 ) -> MatraixTrialIntegrityVerification:
     """Recompute one Trial's existing immutable addresses and state invariants."""
     if kind == "survey":
-        record = await session.scalar(
+        legacy_record = await session.scalar(
             select(MatraixSurveyTrialRecord).where(MatraixSurveyTrialRecord.id == trial_id)
         )
-        if record is None:
-            raise MatraixSurveyTrialNotFoundError(f"MatrAIx Survey trial {trial_id} was not found")
-        parent = await session.scalar(
-            select(MatraixSurveyExperimentRecord).where(
-                MatraixSurveyExperimentRecord.id == record.experiment_id,
-                MatraixSurveyExperimentRecord.input_sealed_at.is_not(None),
-            )
+        native_record = await session.scalar(
+            select(ResearchSurveyTrialRecord).where(ResearchSurveyTrialRecord.id == trial_id)
         )
-        if parent is None:
+        if legacy_record is not None and native_record is not None:
             raise MatraixTrialArchiveIntegrityError(
-                f"MatrAIx Survey trial {trial_id} references a missing sealed parent"
+                f"Survey trial id {trial_id} is ambiguous across native and historical stores"
             )
-        trial = await get_matraix_survey_trial(session, trial_id)
-        checks = (
-            _check("sealed_parent", parent.experiment_sha256, True),
-            _check("trial_address", trial.trial_sha256, True),
-            _check("state_shape", None, True),
-            _check(
-                "survey_answers",
-                trial.result.answers_sha256 if trial.result is not None else None,
-                trial.result is not None,
-            ),
-        )
+        if legacy_record is None and native_record is None:
+            raise MatraixSurveyTrialNotFoundError(f"MatrAIx Survey trial {trial_id} was not found")
+        if native_record is not None:
+            native_parent = await session.scalar(
+                select(ResearchSurveyRecord).where(
+                    ResearchSurveyRecord.id == native_record.survey_id,
+                    ResearchSurveyRecord.sealed_at.is_not(None),
+                )
+            )
+            if native_parent is None:
+                raise MatraixTrialArchiveIntegrityError(
+                    f"SandOwl Survey trial {trial_id} references a missing sealed parent"
+                )
+            expected_sha = research_survey_trial_sha256(
+                native_parent.survey_sha256,
+                native_record.persona_position,
+                native_record.persona_id,
+                native_record.persona_profile_sha256,
+            )
+            if native_record.trial_sha256 != expected_sha:
+                raise MatraixTrialArchiveIntegrityError(
+                    f"SandOwl Survey trial {trial_id} does not match trial_sha256"
+                )
+            trial = native_record
+            checks = (
+                _check("sealed_parent", native_parent.survey_sha256, True),
+                _check("trial_address", trial.trial_sha256, True),
+                _check("state_shape", None, True),
+                _check("survey_answers", trial.answers_sha256, trial.answers_sha256 is not None),
+            )
+        else:
+            assert legacy_record is not None
+            parent = await session.scalar(
+                select(MatraixSurveyExperimentRecord).where(
+                    MatraixSurveyExperimentRecord.id == legacy_record.experiment_id,
+                    MatraixSurveyExperimentRecord.input_sealed_at.is_not(None),
+                )
+            )
+            if parent is None:
+                raise MatraixTrialArchiveIntegrityError(
+                    f"MatrAIx Survey trial {trial_id} references a missing sealed parent"
+                )
+            trial = await get_matraix_survey_trial(session, trial_id)
+            checks = (
+                _check("sealed_parent", parent.experiment_sha256, True),
+                _check("trial_address", trial.trial_sha256, True),
+                _check("state_shape", None, True),
+                _check(
+                    "survey_answers",
+                    trial.result.answers_sha256 if trial.result is not None else None,
+                    trial.result is not None,
+                ),
+            )
     elif kind == "chat":
         record = await session.scalar(
             select(MatraixChatTrialRecord).where(MatraixChatTrialRecord.id == trial_id)
@@ -498,6 +544,60 @@ def _survey_archive_item(
     )
 
 
+def _research_survey_archive_item(
+    trial: ResearchSurveyTrialRecord,
+    parent: ResearchSurveyRecord,
+) -> SurveyTrialArchiveItem:
+    expected_trial_sha256 = research_survey_trial_sha256(
+        parent.survey_sha256,
+        trial.persona_position,
+        trial.persona_id,
+        trial.persona_profile_sha256,
+    )
+    if trial.survey_id != parent.id or expected_trial_sha256 != trial.trial_sha256:
+        raise MatraixTrialArchiveIntegrityError(
+            f"SandOwl Research Survey trial {trial.id} does not match its sealed parent"
+        )
+    if trial.status == "succeeded" and (
+        trial.runner_version != "1.0.0"
+        or trial.model_name != parent.model_name
+        or trial.survey_config_sha256 != parent.survey_config_sha256
+        or trial.prompt_schema_version != parent.prompt_schema_version
+        or trial.answers_sha256 is None
+    ):
+        raise MatraixTrialArchiveIntegrityError(
+            f"SandOwl Research Survey trial {trial.id} provenance does not match its parent"
+        )
+    return SurveyTrialArchiveItem(
+        kind="survey",
+        id=trial.id,
+        status=trial.status,
+        parent_id=parent.id,
+        parent_sha256=parent.survey_sha256,
+        trial_sha256=trial.trial_sha256,
+        task={"title": parent.project_title, "version": "single-context-observation/v1"},
+        persona=_archive_persona(
+            trial.persona_id,
+            trial.persona_position,
+            trial.persona_external_id,
+            trial.persona_display_name,
+            trial.persona_profile_sha256,
+        ),
+        created_at=trial.created_at,
+        started_at=trial.started_at,
+        completed_at=trial.completed_at,
+        error=_archive_error(trial.id, trial.error_code, trial.error_message),
+        provenance=SurveyTrialArchiveProvenance(
+            runner_version=trial.runner_version,
+            model_name=parent.model_name,
+            parent_config_sha256=parent.survey_config_sha256,
+            prompt_schema_version=parent.prompt_schema_version,
+            answers_sha256=trial.answers_sha256,
+        ),
+        source_detail_path=f"/api/v2/research-surveys/{parent.id}",
+    )
+
+
 def _web_archive_item(
     trial: MatraixWebTrialRecord,
     parent: MatraixWebEvaluationRecord,
@@ -708,6 +808,28 @@ async def _load_archive_items(
         )
         for trial, parent in survey_rows:
             items[("survey", trial.id)] = _survey_archive_item(trial, parent)
+        research_survey_rows = tuple(
+            (
+                await session.execute(
+                    select(ResearchSurveyTrialRecord, ResearchSurveyRecord)
+                    .join(
+                        ResearchSurveyRecord,
+                        ResearchSurveyRecord.id == ResearchSurveyTrialRecord.survey_id,
+                    )
+                    .where(
+                        ResearchSurveyTrialRecord.id.in_(survey_ids),
+                        ResearchSurveyRecord.sealed_at.is_not(None),
+                    )
+                )
+            ).tuples()
+        )
+        for trial, parent in research_survey_rows:
+            key: tuple[MatraixTrialKind, UUID] = ("survey", trial.id)
+            if key in items:
+                raise MatraixTrialArchiveIntegrityError(
+                    f"Survey trial id {trial.id} is ambiguous across native and historical stores"
+                )
+            items[key] = _research_survey_archive_item(trial, parent)
     if web_ids:
         web_rows = tuple(
             (

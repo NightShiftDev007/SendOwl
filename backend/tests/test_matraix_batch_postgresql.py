@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -36,7 +36,7 @@ from app.matraix_linux.hashing import (
 from app.matraix_linux.hashing import calculate_trial_sha256 as calculate_linux_trial_sha256
 from app.matraix_linux.tasks import PROMPT_SCHEMA_VERSION as LINUX_PROMPT_SCHEMA_VERSION
 from app.matraix_linux.tasks import build_linux_task
-from app.matraix_surveys.models import MatraixSurveyExperimentRecord, MatraixSurveyTrialRecord
+from app.matraix_surveys.models import MatraixSurveyTrialRecord
 from app.matraix_web.contracts import WebCohortRef, WebPersonaRef
 from app.matraix_web.hashing import (
     calculate_evaluation_sha256 as calculate_web_evaluation_sha256,
@@ -45,6 +45,82 @@ from app.matraix_web.hashing import calculate_trial_sha256 as calculate_web_tria
 from app.matraix_web.tasks import PROMPT_SCHEMA_VERSION as WEB_PROMPT_SCHEMA_VERSION
 from app.matraix_web.tasks import build_web_task
 from app.populations.contracts import CohortDetail
+from app.research_surveys.models import ResearchSurveyRecord
+
+
+async def _insert_research_scope(
+    connection: AsyncConnection,
+    cohort: CohortDetail,
+    scenario_id: UUID,
+    created_at: datetime,
+) -> tuple[UUID, UUID]:
+    world_model_id, world_snapshot_id, snapshot_sha256 = (
+        await connection.execute(
+            text(
+                "SELECT world_model_id, world_snapshot_id, snapshot_sha256 "
+                "FROM scenarios WHERE id=:scenario_id"
+            ),
+            {"scenario_id": scenario_id},
+        )
+    ).one()
+    project_id = uuid4()
+    run_id = uuid4()
+    project_sha256 = uuid4().hex * 2
+    run_spec_sha256 = uuid4().hex * 2
+    await connection.execute(
+        text(
+            """
+            INSERT INTO research_projects (
+                id,title,research_question,world_model_id,world_snapshot_id,snapshot_sha256,
+                schema_version,cohort_id,cohort_sha256,persona_count,simulation_requirement,
+                project_sha256,created_at,sealed_at
+            ) VALUES (
+                :id,'Native batch project','What do personas notice?',:world_model_id,
+                :world_snapshot_id,:snapshot_sha256,'sandowl-research-project/v2',
+                NULL,NULL,NULL,NULL,:project_sha256,:created_at,:created_at
+            )
+            """
+        ),
+        {
+            "id": project_id,
+            "world_model_id": world_model_id,
+            "world_snapshot_id": world_snapshot_id,
+            "snapshot_sha256": snapshot_sha256,
+            "project_sha256": project_sha256,
+            "created_at": created_at,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO research_simulation_runs (
+                id,research_project_id,project_sha256,schema_version,cohort_id,cohort_sha256,
+                persona_count,simulation_requirement,seed,rounds,minutes_per_round,initial_post,
+                engine,engine_version,model_name,semantic_config_sha256,prompt_schema_version,
+                status,run_spec_sha256,created_at,started_at,completed_at
+            ) VALUES (
+                :id,:project_id,:project_sha256,'sandowl-research-simulation-run/v2',
+                :cohort_id,:cohort_sha256,:persona_count,'Observe one frozen context.',7,1,60,
+                'One native research context.','camel-oasis','0.2.5','qwen-plus',:semantic_sha,
+                'matraix-semantic-profile/v1','succeeded',:run_spec_sha,:created_at,
+                :created_at,:created_at
+            )
+            """
+        ),
+        {
+            "id": run_id,
+            "project_id": project_id,
+            "project_sha256": project_sha256,
+            "cohort_id": cohort.id,
+            "cohort_sha256": cohort.cohort_sha256,
+            "persona_count": cohort.persona_count,
+            "semantic_sha": "7" * 64,
+            "run_spec_sha": run_spec_sha256,
+            "created_at": created_at,
+        },
+    )
+    return project_id, run_id
+
 
 TEST_POSTGRES_DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 ARTIFACT_TABLES = (
@@ -330,10 +406,13 @@ async def _exercise_registry(database_url: str) -> None:
             transaction = await connection.begin()
             try:
                 revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-                assert revision == "20260816_core_0038"
+                assert revision == "20260820_core_0061"
                 cohort = await _insert_population(connection)
                 scenario, baseline, alternative = await _insert_scenario(connection)
                 created_at = datetime.now(UTC) + timedelta(seconds=1)
+                project_id, run_id = await _insert_research_scope(
+                    connection, cohort, scenario.id, created_at
+                )
                 _survey_experiment_id, survey_trial_id, _survey_sha = await _insert_survey_trial(
                     connection,
                     cohort,
@@ -446,7 +525,8 @@ async def _exercise_registry(database_url: str) -> None:
                         text(
                             """
                             INSERT INTO simulation_worker_heartbeats (
-                                worker_id, engine, engine_version, camel_version, mode,
+                                worker_id, worker_domain, engine, engine_version,
+                                camel_version, mode,
                                 platform_runtime_ready, semantic_runtime_ready,
                                 semantic_model_name, semantic_config_sha256,
                                 semantic_prompt_schema_version, survey_runtime_ready,
@@ -457,10 +537,10 @@ async def _exercise_registry(database_url: str) -> None:
                                 chat_sut_task_version, chat_sut_spec_sha256,
                                 started_at, last_seen_at
                             ) VALUES (
-                                :worker_id, 'camel-oasis', '0.2.5', '0.2.78',
-                                'reddit_manual_smoke', true, true, 'qwen-plus', :semantic_sha,
-                                'matraix-semantic-profile/v1', true, 'qwen-plus', :survey_sha,
-                                'matraix-survey-scenario-preference/v1', true,
+                                :worker_id, 'evaluation', 'camel-oasis', '0.2.5', '0.2.78',
+                                'reddit_manual_smoke', false, false, NULL, NULL,
+                                NULL, true, 'qwen-plus', :survey_sha,
+                                'sandowl-research-survey/v1', true,
                                 'qwen-plus', :chat_sha, 'matraix-chat-acme-support/v1',
                                 :suite_id, :suite_version, :suite_sha,
                                 clock_timestamp(), clock_timestamp()
@@ -484,9 +564,8 @@ async def _exercise_registry(database_url: str) -> None:
                             "items": [
                                 {
                                     "kind": "survey",
-                                    "scenario_id": str(scenario.id),
-                                    "cohort_id": str(cohort.id),
-                                    "alternative_id": str(alternative.id),
+                                    "research_project_id": str(project_id),
+                                    "research_simulation_run_id": str(run_id),
                                 },
                                 {
                                     "kind": "chat",
@@ -509,11 +588,8 @@ async def _exercise_registry(database_url: str) -> None:
                         await connection.scalar(select(func.count(MatraixChatEvaluationRecord.id)))
                         or 0
                     )
-                    experiment_count = int(
-                        await connection.scalar(
-                            select(func.count(MatraixSurveyExperimentRecord.id))
-                        )
-                        or 0
+                    research_survey_count = int(
+                        await connection.scalar(select(func.count(ResearchSurveyRecord.id))) or 0
                     )
                     registry_count = int(
                         await connection.scalar(select(func.count(MatraixBatchRegistryRecord.id)))
@@ -532,23 +608,22 @@ async def _exercise_registry(database_url: str) -> None:
                                 },
                                 {
                                     "kind": "survey",
-                                    "scenario_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
-                                    "cohort_id": str(cohort.id),
-                                    "alternative_id": str(alternative.id),
+                                    "research_project_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                                    "research_simulation_run_id": (
+                                        "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+                                    ),
                                 },
                             ],
                         },
                     )
-                    assert rejected.status_code == 404
+                    assert rejected.status_code == 422
                     assert (
                         await connection.scalar(select(func.count(MatraixChatEvaluationRecord.id)))
                         == evaluation_count
                     )
                     assert (
-                        await connection.scalar(
-                            select(func.count(MatraixSurveyExperimentRecord.id))
-                        )
-                        == experiment_count
+                        await connection.scalar(select(func.count(ResearchSurveyRecord.id)))
+                        == research_survey_count
                     )
                     assert (
                         await connection.scalar(select(func.count(MatraixBatchRegistryRecord.id)))

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-readonly test_env_file="${SENDOWL_ENV_FILE:-.env.example}"
+readonly test_env_file="${SANDOWL_ENV_FILE:-.env.example}"
 
 cleanup() {
   readonly test_status="$?"

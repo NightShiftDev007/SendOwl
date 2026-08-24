@@ -101,13 +101,14 @@ def _run_local_trial(
 
 
 def test_provider_backend_separates_context_budget_from_output_budget() -> None:
-    from oasis_worker.semantic_engine import create_provider_model
+    from oasis_worker.semantic_engine import create_provider_model, create_report_provider_model
 
     settings = load_daemon_settings(
         {
             "DATABASE_URL": "postgresql://unused:unused@localhost/unused",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "provider-contract-test",
+            "OASIS_WORKER_DOMAIN": "semantic",
             "LLM_API_KEY": "secret-key",
             "LLM_BASE_URL": "https://provider.example/v1",
             "LLM_MODEL_NAME": "provider-model",
@@ -123,6 +124,22 @@ def test_provider_backend_separates_context_budget_from_output_budget() -> None:
         "tool_choice": "required",
         "extra_body": {"enable_thinking": False},
     }
+
+    report_settings = load_daemon_settings(
+        {
+            "DATABASE_URL": "postgresql://unused:unused@localhost/unused",
+            "OASIS_ARTIFACT_ROOT": "/artifacts",
+            "OASIS_WORKER_ID": "report-provider-contract-test",
+            "OASIS_WORKER_DOMAIN": "report",
+            "LLM_API_KEY": "secret-key",
+            "LLM_BASE_URL": "https://provider.example/v1",
+            "LLM_MODEL_NAME": "provider-model",
+        }
+    )
+    assert report_settings.semantic_config is not None
+    assert report_settings.semantic_config.config_sha256 != settings.semantic_config.config_sha256
+    report_backend = create_report_provider_model(report_settings.semantic_config)
+    assert report_backend.model_config_dict["max_tokens"] == 2048
 
 
 def test_semantic_runtime_probe_requires_one_real_tool_call() -> None:
@@ -242,6 +259,7 @@ def test_external_provider_semantic_smoke_when_explicitly_enabled(tmp_path: Path
             "DATABASE_URL": "postgresql://unused:unused@localhost/unused",
             "OASIS_ARTIFACT_ROOT": str(tmp_path),
             "OASIS_WORKER_ID": "external-provider-test",
+            "OASIS_WORKER_DOMAIN": "semantic",
             "LLM_API_KEY": os.environ["LLM_API_KEY"],
             "LLM_BASE_URL": os.environ["LLM_BASE_URL"],
             "LLM_MODEL_NAME": os.environ["LLM_MODEL_NAME"],

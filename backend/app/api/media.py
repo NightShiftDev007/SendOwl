@@ -1,4 +1,4 @@
-"""Read-only HTTP boundary for imported AgendaScope media data."""
+"""HTTP boundary for SandOwl-owned media collection and evidence reads."""
 
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -10,6 +10,18 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
+from app.media.collection.contracts import (
+    NativeMediaCollectionConfig,
+    NativeMediaCollectionConfigRequest,
+    NativeMediaCollectionStatus,
+    NativeMediaSourceCreateRequest,
+)
+from app.media.collection.repository import (
+    configure_native_media_collection,
+    create_native_media_source,
+    get_native_media_collection_config,
+    get_native_media_collection_status,
+)
 from app.media.contracts import (
     MediaArticlesResponse,
     MediaArticleSummary,
@@ -147,7 +159,7 @@ def normalize_media_country_query(country: str | None) -> str | None:
 
 
 def create_media_router() -> APIRouter:
-    """Create strict read-only media routes."""
+    """Create strict media collection and evidence routes."""
     router = APIRouter(prefix="/api/v2/media", tags=["media"])
 
     @router.get("/overview", response_model=MediaOverviewResponse)
@@ -240,6 +252,59 @@ def create_media_router() -> APIRouter:
     async def sources(session: MediaSession) -> MediaSourcesResponse:
         """List imported media sources and their status distribution."""
         return await list_sources(session)
+
+    @router.post(
+        "/sources",
+        response_model=NativeMediaCollectionConfig,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_source(
+        request: NativeMediaSourceCreateRequest,
+        session: MediaSession,
+    ) -> NativeMediaCollectionConfig:
+        try:
+            return await create_native_media_source(session, request)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(error),
+            ) from error
+
+    @router.get(
+        "/sources/{source_id}/collection-config",
+        response_model=NativeMediaCollectionConfig,
+    )
+    async def source_collection_config(
+        source_id: UUID,
+        session: MediaSession,
+    ) -> NativeMediaCollectionConfig:
+        try:
+            return await get_native_media_collection_config(session, source_id)
+        except MediaSourceNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.put(
+        "/sources/{source_id}/collection-config",
+        response_model=NativeMediaCollectionConfig,
+    )
+    async def update_source_collection_config(
+        source_id: UUID,
+        request: NativeMediaCollectionConfigRequest,
+        session: MediaSession,
+    ) -> NativeMediaCollectionConfig:
+        try:
+            return await configure_native_media_collection(session, source_id, request)
+        except MediaSourceNotFoundError as error:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+    @router.get(
+        "/collection/status",
+        response_model=NativeMediaCollectionStatus,
+    )
+    async def native_collection_status(
+        session: MediaSession,
+    ) -> NativeMediaCollectionStatus:
+        return await get_native_media_collection_status(session)
 
     @router.get(
         "/sources/{source_id}/evidence",

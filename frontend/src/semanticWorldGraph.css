@@ -39,6 +39,14 @@
 .semantic-graph-readiness strong[data-ready="true"] { color: #7be0bd; }
 .semantic-graph-readiness strong[data-ready="false"] { color: #ffc4b7; }
 
+.semantic-graph-runtime-audit { margin-top: 5px; }
+.semantic-graph-runtime-audit summary { width: fit-content; color: #88a89d; cursor: pointer; font-size: .68rem; }
+.semantic-graph-runtime-audit summary:focus-visible { outline: 2px solid #7be0bd; outline-offset: 2px; }
+.semantic-graph-runtime-audit dl { display: grid; gap: 6px; margin: 8px 0 0; }
+.semantic-graph-runtime-audit dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+.semantic-graph-runtime-audit dt { color: #718f85; font-size: .65rem; }
+.semantic-graph-runtime-audit dd { min-width: 0; margin: 0; color: #a7c3ba; font-size: .68rem; overflow-wrap: anywhere; }
+
 .semantic-graph-readiness button {
   min-height: 34px;
   padding: 0 11px;
@@ -908,6 +916,35 @@
   border-top: 1px solid rgba(115, 218, 190, 0.14);
 }
 
+.semantic-graph-project-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 28px;
+  border-top: 1px solid rgba(115, 218, 190, 0.22);
+  background: #071713;
+}
+
+.semantic-graph-project-handoff > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.semantic-graph-project-handoff strong {
+  color: #cceee2;
+  font-size: 0.9rem;
+}
+
+.semantic-graph-project-handoff p {
+  max-width: 68ch;
+  margin: 0;
+  color: #91b6aa;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
 @media (max-width: 1180px) {
   .semantic-graph-workspace {
     grid-template-columns: 190px minmax(0, 1fr);
@@ -995,6 +1032,19 @@
   .semantic-persona-match-list dl > div {
     grid-template-columns: 1fr;
     gap: 2px;
+  }
+
+  .semantic-graph-project-handoff {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 20px 16px;
+  }
+
+  .semantic-graph-project-handoff .button {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    white-space: normal;
   }
 }
 

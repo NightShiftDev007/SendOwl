@@ -7,12 +7,12 @@ import hashlib
 import logging
 import queue
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from time import sleep
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, TypeVar, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -20,6 +20,15 @@ from psycopg import Connection
 from psycopg import Error as PsycopgError
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from oasis_worker.agent_interaction_contracts import ClaimedAgentInteraction
+from oasis_worker.agent_interaction_queue import (
+    agent_interaction_queue_head,
+    claim_agent_interaction,
+    complete_agent_interaction,
+    fail_agent_interaction,
+    fail_agent_interactions_owned_by_worker,
+    fail_orphaned_agent_interactions,
+)
 from oasis_worker.chat_contracts import (
     CHAT_MCP_TASK_ID,
     CHAT_PROMPT_SCHEMA_VERSION,
@@ -86,7 +95,21 @@ from oasis_worker.queue import (
     remove_heartbeat,
     update_heartbeat,
 )
-from oasis_worker.queue_contracts import ClaimedRun, NormalizedFailure, NormalizedSuccess
+from oasis_worker.queue_contracts import (
+    ClaimedRun,
+    NormalizedFailure,
+    NormalizedSuccess,
+    WorkerDomain,
+)
+from oasis_worker.report_agent_draft_contracts import ClaimedReportAgentDraft
+from oasis_worker.report_agent_draft_queue import (
+    claim_report_agent_draft,
+    complete_report_agent_draft,
+    fail_orphaned_report_agent_drafts,
+    fail_report_agent_draft,
+    fail_report_agent_drafts_owned_by_worker,
+    report_agent_draft_queue_head,
+)
 from oasis_worker.report_qa_contracts import ClaimedReportQuestion
 from oasis_worker.report_qa_queue import (
     claim_report_question,
@@ -96,6 +119,38 @@ from oasis_worker.report_qa_queue import (
     fail_report_questions_owned_by_worker,
     report_question_queue_head,
 )
+from oasis_worker.research_contracts import ClaimedResearchRun
+from oasis_worker.research_interview_contracts import ClaimedResearchPersonaInterview
+from oasis_worker.research_interview_queue import (
+    claim_research_interview,
+    complete_research_interview,
+    fail_orphaned_research_interviews,
+    fail_research_interview,
+    fail_research_interviews_owned_by_worker,
+    research_interview_queue_head,
+)
+from oasis_worker.research_queue import (
+    append_research_round_events,
+    claim_research_run,
+    complete_research_run,
+    fail_orphaned_research_runs,
+    fail_research_run,
+    fail_research_runs_owned_by_worker,
+    research_queue_head,
+)
+from oasis_worker.research_survey_contracts import (
+    ClaimedResearchSurveyTrial,
+    ResearchSurveyRuntimeConfig,
+)
+from oasis_worker.research_survey_hashing import research_survey_config_sha256
+from oasis_worker.research_survey_queue import (
+    claim_research_survey_trial,
+    complete_research_survey_trial,
+    fail_orphaned_research_survey_trials,
+    fail_research_survey_trial,
+    fail_research_survey_trials_owned_by_worker,
+    research_survey_queue_head,
+)
 from oasis_worker.semantic_contracts import (
     PROMPT_SCHEMA_VERSION,
     ClaimedSemanticTrial,
@@ -103,7 +158,7 @@ from oasis_worker.semantic_contracts import (
     SemanticRuntimeConfig,
     SemanticSuccess,
 )
-from oasis_worker.semantic_hashing import semantic_config_sha256
+from oasis_worker.semantic_hashing import report_domain_config_sha256, semantic_config_sha256
 from oasis_worker.semantic_queue import (
     append_round_events,
     claim_semantic_trial,
@@ -112,20 +167,6 @@ from oasis_worker.semantic_queue import (
     fail_semantic_trial,
     fail_semantic_trials_owned_by_worker,
     semantic_queue_head,
-)
-from oasis_worker.survey_contracts import (
-    SURVEY_PROMPT_SCHEMA_VERSION,
-    ClaimedSurveyTrial,
-    SurveyRuntimeConfig,
-)
-from oasis_worker.survey_hashing import survey_config_sha256
-from oasis_worker.survey_queue import (
-    claim_survey_trial,
-    complete_survey_trial,
-    fail_orphaned_survey_trials,
-    fail_survey_trial,
-    fail_survey_trials_owned_by_worker,
-    survey_queue_head,
 )
 from oasis_worker.web_contracts import (
     WEB_EXECUTOR_SCHEMA_VERSION,
@@ -161,6 +202,23 @@ HEARTBEAT_INTERVAL_SECONDS = 5
 HEARTBEAT_STALE_SECONDS = 30
 HASH_CHUNK_SIZE_BYTES = 1024 * 1024
 LOGGER = logging.getLogger("oasis_worker.daemon")
+WORKER_DOMAIN_ENVIRONMENT = "OASIS_WORKER_DOMAIN"
+WORKER_DOMAINS: tuple[WorkerDomain, ...] = ("semantic", "evaluation", "report")
+JOB_KIND_ALLOWLIST: dict[WorkerDomain, frozenset[str]] = {
+    "semantic": frozenset(("smoke", "semantic", "research")),
+    "evaluation": frozenset(("survey", "chat", "web", "linux")),
+    "report": frozenset(
+        (
+            "world_graph",
+            "report_qa",
+            "report_agent_draft",
+            "agent_interaction",
+            "persona_interview",
+            "research_interview",
+        )
+    ),
+}
+RuntimeConfigT = TypeVar("RuntimeConfigT")
 
 
 class DaemonSettings(BaseModel):
@@ -179,8 +237,9 @@ class DaemonSettings(BaseModel):
             strict=True,
         ),
     ]
+    worker_domain: WorkerDomain
     semantic_config: SemanticRuntimeConfig | None = Field(repr=False)
-    survey_config: SurveyRuntimeConfig | None = Field(repr=False)
+    survey_config: ResearchSurveyRuntimeConfig | None = Field(repr=False)
     chat_config: ChatRuntimeConfig | None = Field(repr=False)
     web_config: WebRuntimeConfig | None = Field(repr=False)
     linux_config: LinuxRuntimeConfig | None = Field(repr=False)
@@ -192,7 +251,7 @@ def _required_environment(environment: Mapping[str, str], name: str) -> str:
         raise OasisWorkerError(f"{name} is required for daemon mode")
     if not value:
         raise OasisWorkerError(f"{name} is present but empty")
-    return value
+    return cast(WorkerDomain, value)
 
 
 def _normalize_database_url(value: str) -> str:
@@ -206,7 +265,10 @@ def _normalize_database_url(value: str) -> str:
     return normalized
 
 
-def _semantic_config(environment: Mapping[str, str]) -> SemanticRuntimeConfig | None:
+def _semantic_config(
+    environment: Mapping[str, str],
+    worker_domain: WorkerDomain,
+) -> SemanticRuntimeConfig | None:
     names = ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL_NAME")
     configured = tuple(name for name in names if environment.get(name))
     if not configured:
@@ -229,7 +291,11 @@ def _semantic_config(environment: Mapping[str, str]) -> SemanticRuntimeConfig | 
             api_key=api_key,
             base_url=base_url,
             model_name=model_name,
-            config_sha256=semantic_config_sha256(base_url, model_name),
+            config_sha256=(
+                report_domain_config_sha256(base_url, model_name)
+                if worker_domain == "report"
+                else semantic_config_sha256(base_url, model_name)
+            ),
             prompt_schema_version=PROMPT_SCHEMA_VERSION,
         )
     except ValidationError as error:
@@ -238,18 +304,18 @@ def _semantic_config(environment: Mapping[str, str]) -> SemanticRuntimeConfig | 
 
 def _survey_config(
     semantic_config: SemanticRuntimeConfig | None,
-) -> SurveyRuntimeConfig | None:
+) -> ResearchSurveyRuntimeConfig | None:
     if semantic_config is None:
         return None
-    return SurveyRuntimeConfig(
+    return ResearchSurveyRuntimeConfig(
         api_key=semantic_config.api_key,
         base_url=semantic_config.base_url,
         model_name=semantic_config.model_name,
-        config_sha256=survey_config_sha256(
+        config_sha256=research_survey_config_sha256(
             semantic_config.base_url,
             semantic_config.model_name,
         ),
-        prompt_schema_version=SURVEY_PROMPT_SCHEMA_VERSION,
+        prompt_schema_version="sandowl-research-survey/v1",
     )
 
 
@@ -359,6 +425,30 @@ def _linux_config(
     )
 
 
+def _optional_runtime_config(
+    factory: Callable[[], RuntimeConfigT | None],
+    capability: str,
+) -> RuntimeConfigT | None:
+    try:
+        return factory()
+    except (OasisWorkerError, ValidationError) as error:
+        LOGGER.warning(
+            "worker capability configuration is unavailable",
+            extra={"capability": capability, "error_type": type(error).__name__},
+        )
+        return None
+
+
+def _worker_domain(environment: Mapping[str, str]) -> WorkerDomain:
+    value = _required_environment(environment, WORKER_DOMAIN_ENVIRONMENT)
+    if value not in WORKER_DOMAINS:
+        allowed = ", ".join(WORKER_DOMAINS)
+        raise OasisWorkerError(
+            f"{WORKER_DOMAIN_ENVIRONMENT} must be one of {allowed}; observed {value!r}"
+        )
+    return value
+
+
 def load_daemon_settings(environment: Mapping[str, str]) -> DaemonSettings:
     """Load exactly the required daemon settings without exposing the database URL."""
     artifact_root_text = _required_environment(environment, "OASIS_ARTIFACT_ROOT")
@@ -368,18 +458,37 @@ def load_daemon_settings(environment: Mapping[str, str]) -> DaemonSettings:
     if "\x00" in artifact_root_text:
         raise OasisWorkerError("OASIS_ARTIFACT_ROOT must not contain a NUL byte")
     try:
-        semantic_config = _semantic_config(environment)
+        worker_domain = _worker_domain(environment)
+        semantic_config = _semantic_config(environment, worker_domain)
+        survey_config: ResearchSurveyRuntimeConfig | None = None
+        chat_config: ChatRuntimeConfig | None = None
+        web_config: WebRuntimeConfig | None = None
+        linux_config: LinuxRuntimeConfig | None = None
+        if worker_domain == "evaluation":
+            survey_config = _optional_runtime_config(
+                lambda: _survey_config(semantic_config), "survey"
+            )
+            chat_config = _optional_runtime_config(
+                lambda: _chat_config(environment, semantic_config), "chat"
+            )
+            web_config = _optional_runtime_config(
+                lambda: _web_config(environment, semantic_config), "web"
+            )
+            linux_config = _optional_runtime_config(
+                lambda: _linux_config(environment, semantic_config), "linux"
+            )
         return DaemonSettings(
             database_url=_normalize_database_url(
                 _required_environment(environment, "DATABASE_URL")
             ),
             artifact_root=artifact_root,
             worker_id=_required_environment(environment, "OASIS_WORKER_ID"),
+            worker_domain=worker_domain,
             semantic_config=semantic_config,
-            survey_config=_survey_config(semantic_config),
-            chat_config=_chat_config(environment, semantic_config),
-            web_config=_web_config(environment, semantic_config),
-            linux_config=_linux_config(environment, semantic_config),
+            survey_config=survey_config,
+            chat_config=chat_config,
+            web_config=web_config,
+            linux_config=linux_config,
         )
     except ValidationError as error:
         raise OasisWorkerError("invalid OASIS daemon configuration") from error
@@ -461,6 +570,30 @@ def normalize_job_result(
     )
 
 
+def _heartbeat_configs(
+    settings: DaemonSettings,
+) -> tuple[
+    SemanticRuntimeConfig | None,
+    ResearchSurveyRuntimeConfig | None,
+    ChatRuntimeConfig | None,
+    WebRuntimeConfig | None,
+    LinuxRuntimeConfig | None,
+]:
+    if settings.worker_domain == "evaluation":
+        return (
+            None,
+            settings.survey_config,
+            settings.chat_config,
+            settings.web_config,
+            settings.linux_config,
+        )
+    return (settings.semantic_config, None, None, None, None)
+
+
+def _platform_runtime_ready(settings: DaemonSettings) -> bool:
+    return settings.worker_domain == "semantic"
+
+
 def _failure(error: BaseException) -> NormalizedFailure:
     code = type(error).__name__.lower()
     return NormalizedFailure(
@@ -479,16 +612,20 @@ def _heartbeat_loop(
         connection = connect(settings.database_url)
         try:
             while not stop_event.is_set():
+                semantic_config, survey_config, chat_config, web_config, linux_config = (
+                    _heartbeat_configs(settings)
+                )
                 update_heartbeat(
                     connection,
                     settings.worker_id,
                     started_at,
-                    True,
-                    settings.semantic_config,
-                    settings.survey_config,
-                    settings.chat_config,
-                    settings.web_config,
-                    settings.linux_config,
+                    _platform_runtime_ready(settings),
+                    settings.worker_domain,
+                    semantic_config,
+                    survey_config,
+                    chat_config,
+                    web_config,
+                    linux_config,
                 )
                 stop_event.wait(HEARTBEAT_INTERVAL_SECONDS)
         finally:
@@ -532,13 +669,13 @@ def _semantic_failure(
     error: BaseException,
     runtime_config: (
         SemanticRuntimeConfig
-        | SurveyRuntimeConfig
+        | ResearchSurveyRuntimeConfig
         | ChatRuntimeConfig
         | WebRuntimeConfig
         | LinuxRuntimeConfig
     ),
 ) -> NormalizedFailure:
-    is_survey = isinstance(runtime_config, SurveyRuntimeConfig)
+    is_survey = isinstance(runtime_config, ResearchSurveyRuntimeConfig)
     is_chat = isinstance(runtime_config, ChatRuntimeConfig)
     is_web = isinstance(runtime_config, WebRuntimeConfig)
     is_linux = isinstance(runtime_config, LinuxRuntimeConfig)
@@ -633,67 +770,108 @@ def _claim_next_job(
     connection: Connection[dict[str, object]],
 ) -> (
     ClaimedRun
+    | ClaimedResearchRun
     | ClaimedSemanticTrial
     | ClaimedWorldGraph
+    | ClaimedReportAgentDraft
     | ClaimedReportQuestion
+    | ClaimedAgentInteraction
     | ClaimedPersonaInterview
-    | ClaimedSurveyTrial
+    | ClaimedResearchPersonaInterview
+    | ClaimedResearchSurveyTrial
     | ClaimedChatTrial
     | ClaimedWebTrial
     | LinuxFrozenTrial
     | None
 ):
-    smoke_head = platform_smoke_queue_head(connection)
+    allowed_kinds = JOB_KIND_ALLOWLIST[settings.worker_domain]
+    smoke_head = platform_smoke_queue_head(connection) if "smoke" in allowed_kinds else None
     semantic_head = (
         semantic_queue_head(connection, settings.semantic_config)
-        if settings.semantic_config is not None
+        if "semantic" in allowed_kinds and settings.semantic_config is not None
+        else None
+    )
+    research_head = (
+        research_queue_head(connection, settings.semantic_config)
+        if "research" in allowed_kinds and settings.semantic_config is not None
         else None
     )
     graph_head = (
         world_graph_queue_head(connection, settings.semantic_config)
-        if settings.semantic_config is not None
+        if "world_graph" in allowed_kinds and settings.semantic_config is not None
         else None
     )
     report_question_head = (
         report_question_queue_head(connection, settings.semantic_config)
-        if settings.semantic_config is not None
+        if "report_qa" in allowed_kinds and settings.semantic_config is not None
+        else None
+    )
+    report_agent_draft_head = (
+        report_agent_draft_queue_head(connection, settings.semantic_config)
+        if "report_agent_draft" in allowed_kinds and settings.semantic_config is not None
+        else None
+    )
+    agent_interaction_head = (
+        agent_interaction_queue_head(connection, settings.semantic_config)
+        if "agent_interaction" in allowed_kinds and settings.semantic_config is not None
         else None
     )
     persona_interview_head = (
         persona_interview_queue_head(connection, settings.semantic_config)
-        if settings.semantic_config is not None
+        if "persona_interview" in allowed_kinds and settings.semantic_config is not None
+        else None
+    )
+    research_interview_head = (
+        research_interview_queue_head(connection, settings.semantic_config)
+        if "research_interview" in allowed_kinds and settings.semantic_config is not None
         else None
     )
     survey_head = (
-        survey_queue_head(connection, settings.survey_config)
-        if settings.survey_config is not None
+        research_survey_queue_head(connection, settings.survey_config)
+        if "survey" in allowed_kinds and settings.survey_config is not None
         else None
     )
     chat_head = (
         chat_queue_head(connection, settings.chat_config)
-        if settings.chat_config is not None
+        if "chat" in allowed_kinds and settings.chat_config is not None
         else None
     )
     web_head = (
-        web_queue_head(connection, settings.web_config) if settings.web_config is not None else None
+        web_queue_head(connection, settings.web_config)
+        if "web" in allowed_kinds and settings.web_config is not None
+        else None
     )
     linux_head = (
         linux_queue_head(connection, settings.linux_config)
-        if settings.linux_config is not None
+        if "linux" in allowed_kinds and settings.linux_config is not None
         else None
     )
     candidates: list[tuple[datetime, str, UUID]] = []
-    if smoke_head is not None:
+    if "smoke" in allowed_kinds and smoke_head is not None:
         candidates.append((smoke_head[1], "smoke", smoke_head[0]))
     if semantic_head is not None:
         candidates.append((semantic_head[1], "semantic", semantic_head[0]))
+    if research_head is not None:
+        candidates.append((research_head[1], "research", research_head[0]))
     if graph_head is not None:
         candidates.append((graph_head[1], "world_graph", graph_head[0]))
     if report_question_head is not None:
         candidates.append((report_question_head[1], "report_qa", report_question_head[0]))
+    if report_agent_draft_head is not None:
+        candidates.append(
+            (report_agent_draft_head[1], "report_agent_draft", report_agent_draft_head[0])
+        )
+    if agent_interaction_head is not None:
+        candidates.append(
+            (agent_interaction_head[1], "agent_interaction", agent_interaction_head[0])
+        )
     if persona_interview_head is not None:
         candidates.append(
             (persona_interview_head[1], "persona_interview", persona_interview_head[0])
+        )
+    if research_interview_head is not None:
+        candidates.append(
+            (research_interview_head[1], "research_interview", research_interview_head[0])
         )
     if survey_head is not None:
         candidates.append((survey_head[1], "survey", survey_head[0]))
@@ -718,8 +896,29 @@ def _claim_next_job(
             settings.worker_id,
             settings.semantic_config,
         )
+    if kind == "research":
+        return claim_research_run(
+            connection,
+            job_id,
+            settings.worker_id,
+            settings.semantic_config,
+        )
     if kind == "report_qa":
         return claim_report_question(
+            connection,
+            job_id,
+            settings.worker_id,
+            settings.semantic_config,
+        )
+    if kind == "report_agent_draft":
+        return claim_report_agent_draft(
+            connection,
+            job_id,
+            settings.worker_id,
+            settings.semantic_config,
+        )
+    if kind == "agent_interaction":
+        return claim_agent_interaction(
             connection,
             job_id,
             settings.worker_id,
@@ -732,10 +931,17 @@ def _claim_next_job(
             settings.worker_id,
             settings.semantic_config,
         )
+    if kind == "research_interview":
+        return claim_research_interview(
+            connection,
+            job_id,
+            settings.worker_id,
+            settings.semantic_config,
+        )
     if kind == "survey":
         if settings.survey_config is None:
             raise RuntimeError("survey queue selected without a ready runtime configuration")
-        return claim_survey_trial(
+        return claim_research_survey_trial(
             connection,
             job_id,
             settings.worker_id,
@@ -803,37 +1009,122 @@ def _run_claimed_semantic_trial(
     )
 
 
+def _run_claimed_research_run(
+    settings: DaemonSettings,
+    control: Connection[dict[str, object]],
+    run: ClaimedResearchRun,
+    model_backend: BaseModelBackend,
+) -> SemanticSuccess:
+    from oasis_worker.semantic_engine import run_social_simulation
+
+    def append_round(round_number: int, events: Sequence[SemanticEvent]) -> None:
+        append_research_round_events(
+            control,
+            run.execution.id,
+            settings.worker_id,
+            round_number,
+            events,
+        )
+
+    return asyncio.run(
+        run_social_simulation(
+            run.execution,
+            settings.artifact_root,
+            model_backend,
+            append_round,
+        )
+    )
+
+
+def _fail_owned_jobs_for_domain(
+    connection: Connection[dict[str, object]],
+    worker_id: str,
+    worker_domain: WorkerDomain,
+) -> None:
+    if worker_domain == "semantic":
+        fail_runs_owned_by_worker(connection, worker_id)
+        fail_semantic_trials_owned_by_worker(connection, worker_id)
+        fail_research_runs_owned_by_worker(connection, worker_id)
+    elif worker_domain == "evaluation":
+        fail_research_survey_trials_owned_by_worker(connection, worker_id)
+        fail_chat_trials_owned_by_worker(connection, worker_id)
+        fail_web_trials_owned_by_worker(connection, worker_id)
+        fail_linux_trials_owned_by_worker(connection, worker_id)
+    else:
+        fail_world_graphs_owned_by_worker(connection, worker_id)
+        fail_report_agent_drafts_owned_by_worker(connection, worker_id)
+        fail_agent_interactions_owned_by_worker(connection, worker_id)
+        fail_report_questions_owned_by_worker(connection, worker_id)
+        fail_persona_interviews_owned_by_worker(connection, worker_id)
+        fail_research_interviews_owned_by_worker(connection, worker_id)
+
+
+def _fail_orphaned_jobs_for_domain(
+    connection: Connection[dict[str, object]],
+    worker_domain: WorkerDomain,
+    stale_after_seconds: int,
+) -> None:
+    cutoff = datetime.now(UTC) - timedelta(seconds=stale_after_seconds)
+    if worker_domain == "semantic":
+        fail_orphaned_runs(connection, stale_after_seconds)
+        fail_orphaned_semantic_trials(connection, cutoff)
+        fail_orphaned_research_runs(connection, cutoff)
+    elif worker_domain == "evaluation":
+        fail_orphaned_research_survey_trials(connection, cutoff)
+        fail_orphaned_chat_trials(connection, cutoff)
+        fail_orphaned_web_trials(connection, cutoff)
+        fail_orphaned_linux_trials(connection, cutoff)
+    else:
+        fail_orphaned_world_graphs(connection, cutoff)
+        fail_orphaned_report_agent_drafts(connection, cutoff)
+        fail_orphaned_agent_interactions(connection, cutoff)
+        fail_orphaned_report_questions(connection, cutoff)
+        fail_orphaned_persona_interviews(connection, cutoff)
+        fail_orphaned_research_interviews(connection, cutoff)
+
+
 def run_daemon(settings: DaemonSettings) -> None:
     """Poll PostgreSQL, execute real OASIS jobs, and persist normalized terminal facts."""
-    from oasis_worker.chat_engine import (
-        AcmeSupportClient,
-        AcmeSupportMcpClient,
-        ChatSupportClient,
-        create_chat_model,
-        probe_chat_runtime,
-        run_chat_trial,
-    )
-    from oasis_worker.linux_engine import (
-        FixedLinuxRunnerClient,
-        create_linux_model,
-        probe_linux_runtime,
-        run_linux_trial,
-    )
-    from oasis_worker.persona_interview_engine import answer_persona_interview
-    from oasis_worker.report_qa_engine import answer_report_question
-    from oasis_worker.semantic_engine import create_provider_model, probe_semantic_runtime
-    from oasis_worker.survey_engine import (
-        create_survey_model,
-        probe_survey_runtime,
-        run_survey_trial,
-    )
-    from oasis_worker.web_engine import (
-        FixedWebBrowserClient,
-        create_web_model,
-        probe_web_runtime,
-        run_web_trial,
-    )
-    from oasis_worker.world_graph_engine import create_world_graph_model, extract_world_graph
+    if settings.worker_domain in ("semantic", "report"):
+        from oasis_worker.semantic_engine import (
+            create_provider_model,
+            create_report_provider_model,
+            probe_semantic_runtime,
+        )
+    if settings.worker_domain == "report":
+        from oasis_worker.world_graph_engine import create_world_graph_model, extract_world_graph
+    if settings.worker_domain == "report":
+        from oasis_worker.agent_interaction_engine import answer_agent_interaction
+        from oasis_worker.persona_interview_engine import answer_persona_interview
+        from oasis_worker.report_agent_draft_engine import generate_report_agent_draft
+        from oasis_worker.report_qa_engine import answer_report_question
+        from oasis_worker.research_interview_engine import answer_research_persona_interview
+    if settings.worker_domain == "evaluation":
+        from oasis_worker.chat_engine import (
+            AcmeSupportClient,
+            AcmeSupportMcpClient,
+            ChatSupportClient,
+            create_chat_model,
+            probe_chat_runtime,
+            run_chat_trial,
+        )
+        from oasis_worker.linux_engine import (
+            FixedLinuxRunnerClient,
+            create_linux_model,
+            probe_linux_runtime,
+            run_linux_trial,
+        )
+        from oasis_worker.research_survey_engine import (
+            probe_research_survey_runtime,
+            run_research_survey_trial,
+        )
+        from oasis_worker.survey_engine import create_survey_model
+        from oasis_worker.web_engine import (
+            FixedWebBrowserClient,
+            create_web_model,
+            probe_web_runtime,
+            run_web_trial,
+        )
 
     verify_runtime_dependencies()
     try:
@@ -864,53 +1155,18 @@ def run_daemon(settings: DaemonSettings) -> None:
     preserve_unready_heartbeat = False
     try:
         acquire_worker_lock(control, settings.worker_id)
-        fail_runs_owned_by_worker(control, settings.worker_id)
-        fail_semantic_trials_owned_by_worker(control, settings.worker_id)
-        fail_world_graphs_owned_by_worker(control, settings.worker_id)
-        fail_report_questions_owned_by_worker(control, settings.worker_id)
-        fail_persona_interviews_owned_by_worker(control, settings.worker_id)
-        fail_survey_trials_owned_by_worker(control, settings.worker_id)
-        fail_chat_trials_owned_by_worker(control, settings.worker_id)
-        fail_web_trials_owned_by_worker(control, settings.worker_id)
-        fail_linux_trials_owned_by_worker(control, settings.worker_id)
-        fail_orphaned_runs(control, HEARTBEAT_STALE_SECONDS)
-        fail_orphaned_semantic_trials(
+        _fail_owned_jobs_for_domain(control, settings.worker_id, settings.worker_domain)
+        _fail_orphaned_jobs_for_domain(
             control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_world_graphs(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_report_questions(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_persona_interviews(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_survey_trials(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_chat_trials(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_web_trials(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-        )
-        fail_orphaned_linux_trials(
-            control,
-            datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
+            settings.worker_domain,
+            HEARTBEAT_STALE_SECONDS,
         )
         update_heartbeat(
             control,
             settings.worker_id,
             started_at,
-            True,
+            _platform_runtime_ready(settings),
+            settings.worker_domain,
             None,
             None,
             None,
@@ -918,32 +1174,17 @@ def run_daemon(settings: DaemonSettings) -> None:
             None,
         )
         owns_heartbeat = True
-        if settings.semantic_config is not None:
+        if (
+            settings.worker_domain in ("semantic", "report")
+            and settings.semantic_config is not None
+        ):
             try:
-                semantic_model = create_provider_model(settings.semantic_config)
+                semantic_model = (
+                    create_report_provider_model(settings.semantic_config)
+                    if settings.worker_domain == "report"
+                    else create_provider_model(settings.semantic_config)
+                )
                 asyncio.run(probe_semantic_runtime(semantic_model))
-                world_graph_model = create_world_graph_model(settings.semantic_config)
-                if settings.survey_config is None:
-                    raise RuntimeError("semantic runtime is configured without survey runtime")
-                survey_model = create_survey_model(settings.survey_config)
-                asyncio.run(probe_survey_runtime(survey_model))
-                if settings.chat_config is not None:
-                    chat_model = create_chat_model(settings.chat_config)
-                    chat_suts = {
-                        CHAT_REST_TASK_ID: AcmeSupportClient(
-                            settings.chat_config.rest_sut_base_url
-                        ),
-                        CHAT_MCP_TASK_ID: AcmeSupportMcpClient(settings.chat_config.mcp_sut_url),
-                    }
-                    asyncio.run(probe_chat_runtime(chat_model, tuple(chat_suts.values())))
-                if settings.web_config is not None:
-                    web_model = create_web_model(settings.web_config)
-                    web_browser = FixedWebBrowserClient(settings.web_config.browser_base_url)
-                    asyncio.run(probe_web_runtime(web_model, web_browser))
-                if settings.linux_config is not None:
-                    linux_model = create_linux_model(settings.linux_config)
-                    linux_runner = FixedLinuxRunnerClient(settings.linux_config.runner_base_url)
-                    asyncio.run(probe_linux_runtime(linux_model, linux_runner))
             except Exception as error:
                 preserve_unready_heartbeat = True
                 LOGGER.error(
@@ -956,16 +1197,106 @@ def run_daemon(settings: DaemonSettings) -> None:
                 raise OasisWorkerError(
                     "model runtime readiness probe failed after bounded provider retries"
                 ) from error
+            if settings.worker_domain == "report":
+                world_graph_model = create_world_graph_model(settings.semantic_config)
+        elif settings.worker_domain == "evaluation":
+            if settings.survey_config is not None:
+                try:
+                    survey_model = create_survey_model(settings.survey_config)
+                    asyncio.run(probe_research_survey_runtime(survey_model))
+                except (
+                    OasisWorkerError,
+                    ValidationError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                ) as error:
+                    LOGGER.warning(
+                        "Survey capability probe failed; continuing evaluation worker",
+                        extra={"worker_id": settings.worker_id, "error_type": type(error).__name__},
+                    )
+                    survey_model = None
+                    settings = settings.model_copy(update={"survey_config": None})
+            if settings.chat_config is not None:
+                try:
+                    chat_model = create_chat_model(settings.chat_config)
+                    chat_suts = {
+                        CHAT_REST_TASK_ID: AcmeSupportClient(
+                            settings.chat_config.rest_sut_base_url
+                        ),
+                        CHAT_MCP_TASK_ID: AcmeSupportMcpClient(settings.chat_config.mcp_sut_url),
+                    }
+                    asyncio.run(probe_chat_runtime(chat_model, tuple(chat_suts.values())))
+                except (
+                    OasisWorkerError,
+                    ValidationError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                ) as error:
+                    LOGGER.warning(
+                        "Chat capability probe failed; continuing evaluation worker",
+                        extra={"worker_id": settings.worker_id, "error_type": type(error).__name__},
+                    )
+                    chat_model = None
+                    chat_suts = {}
+                    settings = settings.model_copy(update={"chat_config": None})
+            if settings.web_config is not None:
+                try:
+                    web_model = create_web_model(settings.web_config)
+                    web_browser = FixedWebBrowserClient(settings.web_config.browser_base_url)
+                    asyncio.run(probe_web_runtime(web_model, web_browser))
+                except (
+                    OasisWorkerError,
+                    ValidationError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                ) as error:
+                    LOGGER.warning(
+                        "Web capability probe failed; continuing evaluation worker",
+                        extra={"worker_id": settings.worker_id, "error_type": type(error).__name__},
+                    )
+                    web_model = None
+                    web_browser = None
+                    settings = settings.model_copy(update={"web_config": None})
+            if settings.linux_config is not None:
+                try:
+                    linux_model = create_linux_model(settings.linux_config)
+                    linux_runner = FixedLinuxRunnerClient(settings.linux_config.runner_base_url)
+                    asyncio.run(probe_linux_runtime(linux_model, linux_runner))
+                except (
+                    OasisWorkerError,
+                    ValidationError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                ) as error:
+                    LOGGER.warning(
+                        "Linux capability probe failed; continuing evaluation worker",
+                        extra={"worker_id": settings.worker_id, "error_type": type(error).__name__},
+                    )
+                    linux_model = None
+                    linux_runner = None
+                    settings = settings.model_copy(update={"linux_config": None})
+        if settings.worker_domain == "evaluation" or (
+            settings.worker_domain in ("semantic", "report")
+            and settings.semantic_config is not None
+        ):
+            semantic_config, survey_config, chat_config, web_config, linux_config = (
+                _heartbeat_configs(settings)
+            )
             update_heartbeat(
                 control,
                 settings.worker_id,
                 started_at,
-                True,
-                settings.semantic_config,
-                settings.survey_config,
-                settings.chat_config,
-                settings.web_config,
-                settings.linux_config,
+                _platform_runtime_ready(settings),
+                settings.worker_domain,
+                semantic_config,
+                survey_config,
+                chat_config,
+                web_config,
+                linux_config,
             )
         heartbeat_thread = threading.Thread(
             target=_heartbeat_loop,
@@ -976,38 +1307,10 @@ def run_daemon(settings: DaemonSettings) -> None:
         heartbeat_thread.start()
         while True:
             _raise_heartbeat_failure(heartbeat_failures)
-            fail_orphaned_runs(control, HEARTBEAT_STALE_SECONDS)
-            fail_orphaned_semantic_trials(
+            _fail_orphaned_jobs_for_domain(
                 control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_world_graphs(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_report_questions(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_persona_interviews(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_survey_trials(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_chat_trials(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_web_trials(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
-            )
-            fail_orphaned_linux_trials(
-                control,
-                datetime.now(UTC) - timedelta(seconds=HEARTBEAT_STALE_SECONDS),
+                settings.worker_domain,
+                HEARTBEAT_STALE_SECONDS,
             )
             job = _claim_next_job(settings, control)
             if job is None:
@@ -1048,6 +1351,47 @@ def run_daemon(settings: DaemonSettings) -> None:
                     )
                     raise
                 complete_semantic_trial(control, job.id, settings.worker_id, semantic_result)
+                continue
+            if isinstance(job, ClaimedResearchRun):
+                if semantic_model is None or settings.semantic_config is None:
+                    raise RuntimeError("research run claimed without a provider model")
+                try:
+                    research_result = _run_claimed_research_run(
+                        settings, control, job, semantic_model
+                    )
+                except (OasisWorkerError, ValidationError, OSError, RuntimeError) as error:
+                    failure = _semantic_failure(error, settings.semantic_config)
+                    LOGGER.error(
+                        "OASIS research run failed",
+                        extra={
+                            "run_id": str(job.execution.id),
+                            "worker_id": settings.worker_id,
+                            "error_code": failure.code,
+                        },
+                    )
+                    fail_research_run(
+                        control,
+                        job.execution.id,
+                        settings.worker_id,
+                        failure,
+                    )
+                    continue
+                try:
+                    _raise_heartbeat_failure(heartbeat_failures)
+                except OasisWorkerError as error:
+                    fail_research_run(
+                        control,
+                        job.execution.id,
+                        settings.worker_id,
+                        _semantic_failure(error, settings.semantic_config),
+                    )
+                    raise
+                complete_research_run(
+                    control,
+                    job.execution.id,
+                    settings.worker_id,
+                    research_result,
+                )
                 continue
             if isinstance(job, ClaimedWorldGraph):
                 if world_graph_model is None or settings.semantic_config is None:
@@ -1114,6 +1458,72 @@ def run_daemon(settings: DaemonSettings) -> None:
                     raise
                 complete_report_question(control, job.id, settings.worker_id, answer)
                 continue
+            if isinstance(job, ClaimedAgentInteraction):
+                if semantic_model is None or settings.semantic_config is None:
+                    raise RuntimeError("Agent Interaction claimed without a provider model")
+                try:
+                    answer = asyncio.run(answer_agent_interaction(job, semantic_model))
+                except (OasisWorkerError, ValidationError, OSError, RuntimeError) as error:
+                    failure = _semantic_failure(error, settings.semantic_config)
+                    LOGGER.error(
+                        "single-run Agent Interaction failed",
+                        extra={
+                            "interaction_id": str(job.id),
+                            "worker_id": settings.worker_id,
+                            "error_code": failure.code,
+                        },
+                    )
+                    fail_agent_interaction(control, job.id, settings.worker_id, failure, False)
+                    continue
+                try:
+                    _raise_heartbeat_failure(heartbeat_failures)
+                except OasisWorkerError as error:
+                    fail_agent_interaction(
+                        control,
+                        job.id,
+                        settings.worker_id,
+                        _semantic_failure(error, settings.semantic_config),
+                        False,
+                    )
+                    raise
+                complete_agent_interaction(control, job.id, settings.worker_id, answer)
+                continue
+            if isinstance(job, ClaimedReportAgentDraft):
+                if semantic_model is None or settings.semantic_config is None:
+                    raise RuntimeError("ReportAgent draft claimed without a provider model")
+                try:
+                    draft = asyncio.run(generate_report_agent_draft(job, semantic_model))
+                except (OasisWorkerError, ValidationError, OSError, RuntimeError) as error:
+                    failure = _semantic_failure(error, settings.semantic_config)
+                    LOGGER.error(
+                        "evidence-cited ReportAgent draft failed",
+                        extra={
+                            "draft_id": str(job.id),
+                            "worker_id": settings.worker_id,
+                            "error_code": failure.code,
+                        },
+                    )
+                    fail_report_agent_draft(
+                        control,
+                        job.id,
+                        settings.worker_id,
+                        failure,
+                        False,
+                    )
+                    continue
+                try:
+                    _raise_heartbeat_failure(heartbeat_failures)
+                except OasisWorkerError as error:
+                    fail_report_agent_draft(
+                        control,
+                        job.id,
+                        settings.worker_id,
+                        _semantic_failure(error, settings.semantic_config),
+                        False,
+                    )
+                    raise
+                complete_report_agent_draft(control, job.id, settings.worker_id, draft)
+                continue
             if isinstance(job, ClaimedPersonaInterview):
                 if semantic_model is None or settings.semantic_config is None:
                     raise RuntimeError("Persona interview claimed without a provider model")
@@ -1155,11 +1565,56 @@ def run_daemon(settings: DaemonSettings) -> None:
                     interview_answer,
                 )
                 continue
-            if isinstance(job, ClaimedSurveyTrial):
+            if isinstance(job, ClaimedResearchPersonaInterview):
+                if semantic_model is None or settings.semantic_config is None:
+                    raise RuntimeError(
+                        "research Persona interview claimed without a provider model"
+                    )
+                try:
+                    research_interview_answer = asyncio.run(
+                        answer_research_persona_interview(job, semantic_model)
+                    )
+                except (OasisWorkerError, ValidationError, OSError, RuntimeError) as error:
+                    failure = _semantic_failure(error, settings.semantic_config)
+                    LOGGER.error(
+                        "run-grounded Persona interview failed",
+                        extra={
+                            "interview_id": str(job.id),
+                            "worker_id": settings.worker_id,
+                            "error_code": failure.code,
+                        },
+                    )
+                    fail_research_interview(
+                        control,
+                        job.id,
+                        settings.worker_id,
+                        failure,
+                        False,
+                    )
+                    continue
+                try:
+                    _raise_heartbeat_failure(heartbeat_failures)
+                except OasisWorkerError as error:
+                    fail_research_interview(
+                        control,
+                        job.id,
+                        settings.worker_id,
+                        _semantic_failure(error, settings.semantic_config),
+                        False,
+                    )
+                    raise
+                complete_research_interview(
+                    control,
+                    job.id,
+                    settings.worker_id,
+                    research_interview_answer,
+                )
+                continue
+            if isinstance(job, ClaimedResearchSurveyTrial):
                 if survey_model is None or settings.survey_config is None:
                     raise RuntimeError("survey trial claimed without a provider model")
                 try:
-                    survey_result = asyncio.run(run_survey_trial(job, survey_model))
+                    survey_result = asyncio.run(run_research_survey_trial(job, survey_model))
                 except (OasisWorkerError, ValidationError, OSError, RuntimeError) as error:
                     failure = _semantic_failure(error, settings.survey_config)
                     LOGGER.error(
@@ -1170,19 +1625,19 @@ def run_daemon(settings: DaemonSettings) -> None:
                             "error_code": failure.code,
                         },
                     )
-                    fail_survey_trial(control, job.id, settings.worker_id, failure)
+                    fail_research_survey_trial(control, job.id, settings.worker_id, failure)
                     continue
                 try:
                     _raise_heartbeat_failure(heartbeat_failures)
                 except OasisWorkerError as error:
-                    fail_survey_trial(
+                    fail_research_survey_trial(
                         control,
                         job.id,
                         settings.worker_id,
                         _semantic_failure(error, settings.survey_config),
                     )
                     raise
-                complete_survey_trial(control, job, settings.worker_id, survey_result)
+                complete_research_survey_trial(control, job, settings.worker_id, survey_result)
                 continue
             if isinstance(job, ClaimedChatTrial):
                 if chat_model is None or not chat_suts or settings.chat_config is None:

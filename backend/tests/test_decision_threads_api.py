@@ -5,6 +5,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.config import load_runtime_settings
+from app.legacy_adc import LEGACY_ADC_WRITE_RETIRED_DETAIL
 from app.main import create_app
 
 
@@ -19,8 +20,11 @@ def test_decision_thread_endpoints_return_explicit_503_without_database() -> Non
         "semantic_experiment_id": None,
     }
 
-    responses = (
+    read_responses = (
         client.get("/api/v2/decision-threads"),
+        client.get(f"/api/v2/decision-threads/{thread_id}"),
+    )
+    write_responses = (
         client.post(
             "/api/v2/decision-threads",
             json={
@@ -29,12 +33,22 @@ def test_decision_thread_endpoints_return_explicit_503_without_database() -> Non
                 "decision_question": "Which intervention should be evaluated?",
             },
         ),
-        client.get(f"/api/v2/decision-threads/{thread_id}"),
+        client.post(
+            "/api/v2/decision-threads/drafts",
+            json={
+                "title": "Tourism decision",
+                "decision_question": "Which intervention should be evaluated?",
+            },
+        ),
         client.post(f"/api/v2/decision-threads/{thread_id}/revisions", json=context),
     )
 
-    for response in responses:
+    for response in read_responses:
         assert response.status_code == 503
         assert response.json() == {
             "detail": "Decision threads are unavailable because DATABASE_URL is not configured"
         }
+
+    for response in write_responses:
+        assert response.status_code == 410
+        assert response.json() == {"detail": LEGACY_ADC_WRITE_RETIRED_DETAIL}

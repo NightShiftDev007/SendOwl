@@ -77,7 +77,7 @@ def bot_reply(customer_message: str) -> str:
 
 
 mcp = FastMCP(
-    name="sendowl-acme-support-mcp",
+    name="sandowl-acme-support-mcp",
     host="0.0.0.0",
     port=int(os.environ.get("ACME_SUPPORT_MCP_PORT", "8000")),
     streamable_http_path="/mcp",
@@ -97,7 +97,7 @@ def send_message(message: str) -> str:
 
 @mcp.tool()
 def runtime_identity() -> dict[str, object]:
-    """Return the immutable identity used by the SendOwl readiness probe."""
+    """Return the immutable identity used by the SandOwl readiness probe."""
     return {
         "sut_id": SUT_ID,
         "sut_version": SUT_VERSION,

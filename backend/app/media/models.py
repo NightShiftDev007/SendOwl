@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     true,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +40,23 @@ class MediaSourceRecord(ApplicationBase):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    native_collection_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    collection_mode: Mapped[str] = mapped_column(String(8), nullable=False, server_default="web")
+    feed_url: Mapped[str | None] = mapped_column(String(500))
+    poll_interval_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="900"
+    )
+    collection_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    collection_config_sha256: Mapped[str | None] = mapped_column(String(64))
+    last_collection_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_collection_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_collection_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -49,7 +67,32 @@ class MediaSourceRecord(ApplicationBase):
             "status IN ('active','degraded','failed','disabled')",
             name="ck_media_sources_status",
         ),
+        CheckConstraint(
+            "collection_mode IN ('rss','web')",
+            name="ck_media_sources_collection_mode",
+        ),
+        CheckConstraint(
+            "poll_interval_seconds BETWEEN 300 AND 86400",
+            name="ck_media_sources_collection_interval",
+        ),
+        CheckConstraint(
+            "consecutive_collection_failures >= 0",
+            name="ck_media_sources_collection_failures",
+        ),
+        CheckConstraint(
+            "(collection_mode='rss' AND feed_url IS NOT NULL) OR collection_mode='web'",
+            name="ck_media_sources_collection_feed",
+        ),
+        CheckConstraint(
+            "collection_config_sha256 IS NULL OR collection_config_sha256 ~ '^[a-f0-9]{64}$'",
+            name="ck_media_sources_collection_digest",
+        ),
         Index("ix_media_sources_country_status", "country_code", "status"),
+        Index(
+            "ix_media_sources_native_collection",
+            "native_collection_enabled",
+            "last_collection_attempt_at",
+        ),
     )
 
 
@@ -135,6 +178,7 @@ class MediaTopicRecord(ApplicationBase):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False, server_default="legacy_import")
 
     __table_args__ = (
         CheckConstraint(
@@ -144,6 +188,10 @@ class MediaTopicRecord(ApplicationBase):
         CheckConstraint(
             "lifecycle_state IN ('nascent','forming','confirmed','evolving','archived')",
             name="ck_media_topics_lifecycle",
+        ),
+        CheckConstraint(
+            "origin IN ('legacy_import','native_collection')",
+            name="ck_media_topics_origin",
         ),
         Index("ix_media_topics_last_seen", "last_seen_at"),
     )
@@ -360,6 +408,8 @@ class MediaPropagationEdgeRecord(ApplicationBase):
         CheckConstraint(
             "(observation_source='legacy_projection' AND source_follower_id IS NULL) OR "
             "(observation_source='structured_followers' AND source_follower_id IS NOT NULL "
+            "AND follower_source_id IS NOT NULL) OR "
+            "(observation_source='native_collection' AND source_follower_id IS NULL "
             "AND follower_source_id IS NOT NULL)",
             name="ck_media_propagation_edge_observation_source",
         ),

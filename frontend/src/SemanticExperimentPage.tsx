@@ -6,7 +6,7 @@ import { PopulationContextPanel } from "./PopulationContextPanel";
 import { RunInteractionGraph } from "./RunInteractionGraph";
 import { isAmbiguousPostResultError } from "./apiClient";
 import { formatMediaTimestamp } from "./mediaPresentation";
-import type { RunStudioRoute } from "./runStudioRoute";
+import type { LegacyRunStudioRoute } from "./runStudioRoute";
 import type { ScenarioDetail } from "./scenarioContracts";
 import {
   createSemanticExperiment,
@@ -32,8 +32,8 @@ import { useScenarioDetail, useScenarios } from "./useScenarios";
 import "./semanticExperiment.css";
 
 interface SemanticExperimentPageProps {
-  readonly route: RunStudioRoute;
-  readonly onRouteChange: (route: RunStudioRoute) => void;
+  readonly route: LegacyRunStudioRoute;
+  readonly onRouteChange: (route: LegacyRunStudioRoute) => void;
 }
 
 type CreationState =
@@ -491,10 +491,10 @@ function Inspector({
   trial,
   onRouteChange,
 }: {
-  readonly route: RunStudioRoute;
+  readonly route: LegacyRunStudioRoute;
   readonly experiment: SemanticExperimentDetail | null;
   readonly trial: SemanticTrial | null;
-  readonly onRouteChange: (route: RunStudioRoute) => void;
+  readonly onRouteChange: (route: LegacyRunStudioRoute) => void;
 }): JSX.Element {
   const panel = route.panel ?? "provenance";
   const selectPanel = (nextPanel: "timeline" | "metrics" | "provenance"): void => onRouteChange({ ...route, panel: nextPanel });
@@ -529,7 +529,8 @@ export function SemanticExperimentPage({ route, onRouteChange }: SemanticExperim
 
   return (
     <div className="semantic-page run-studio-page">
-      <header className="semantic-hero"><div><span>OASIS / SEMANTIC EXPERIMENT</span><h2>用固定人群运行基线与备选方案</h2><p>同一种子成对运行，只展示真实事件、可复核计数和运行限制。实验结果不等于现实因果结论。</p></div><SemanticReadinessStrip state={readinessState} onReload={reloadReadiness} /></header>
+      <header className="semantic-hero"><div><span>HISTORICAL ARCHIVE / ADC SEMANTIC EXPERIMENT</span><h2>旧多方案语义实验只读归档</h2><p>新工作使用 Research Project 下的独立 Simulation Run；这里仅回查历史基线、备选方案、Trial 与事件。</p></div><SemanticReadinessStrip state={readinessState} onReload={reloadReadiness} /></header>
+      <div className="legacy-adc-readonly-note" role="note"><strong>新建入口已关闭</strong><span>原生单次运行不包含 baseline / alternative 比较语义。</span><a href="#/projects">前往研究项目 →</a></div>
       {route.experimentId !== null && experimentsState.status === "error" ? <ApiErrorPanel title="无法验证实验深链归属" error={experimentsState.error} onRetry={reloadExperiments} isRetrying={false} /> : null}
       {experimentLinkError ? <div className="semantic-route-error" role="alert"><strong>experiment_id 不属于当前实验目录</strong><p>{route.experimentId}</p></div> : null}
       {trialLinkError ? <div className="semantic-route-error" role="alert"><strong>trial_id 不属于当前实验</strong><p>{route.trialId}</p></div> : null}

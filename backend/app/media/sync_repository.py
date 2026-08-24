@@ -48,14 +48,17 @@ from app.media.sync_contracts import (
 )
 from app.media.sync_models import MediaSyncRunRecord, MediaSyncRunTableRecord
 
-MANUAL_SYNC_WORKER_ID = "sendowl-media-import-cli"
-LOGGER = logging.getLogger("sendowl.media_sync")
+MANUAL_SYNC_WORKER_ID = "sandowl-media-import-cli"
+LOGGER = logging.getLogger("sandowl.media_sync")
 SYNC_STATUS_LIMITATIONS = (
     "Each refresh scans all supported AgendaScope source rows and only writes changed target rows.",
-    "Articles absent from a complete source scan are hidden in SendOwl without deleting "
+    "Articles absent from a complete source scan are hidden in SandOwl without deleting "
     "frozen evidence; other source deletions are not reconciled.",
     "Business-time watermarks do not prove semantic completeness or real-time coverage.",
+    "A running refresh older than six hours is projected as an orphaned worker failure; "
+    "the stored run remains unchanged until the next worker reconciliation.",
 )
+SYNC_RUN_STALE_AFTER = timedelta(hours=6)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +102,7 @@ def _source_engine(settings: ImportSettings) -> AsyncEngine:
         pool_pre_ping=True,
         connect_args={
             "server_settings": {
-                "application_name": "sendowl-media-sync",
+                "application_name": "sandowl-media-sync",
                 "default_transaction_read_only": "on",
             }
         },
@@ -520,7 +523,11 @@ def _contract_watermarks(record: MediaSyncRunRecord) -> MediaSyncWatermarks:
     )
 
 
-async def _run_contract(session: AsyncSession, record: MediaSyncRunRecord) -> MediaSyncRun:
+async def _run_contract(
+    session: AsyncSession,
+    record: MediaSyncRunRecord,
+    observed_at: datetime,
+) -> MediaSyncRun:
     count_records = tuple(
         (
             await session.scalars(
@@ -540,8 +547,17 @@ async def _run_contract(session: AsyncSession, record: MediaSyncRunRecord) -> Me
         for table_name in MediaSyncTableName
         if table_name.value in count_by_name
     )
+    stale_running = (
+        record.status == MediaSyncRunStatus.RUNNING.value
+        and record.started_at <= observed_at - SYNC_RUN_STALE_AFTER
+    )
     error = (
-        MediaSyncRunError(code=record.error_code, message=record.error_message)
+        MediaSyncRunError(
+            code="worker_heartbeat_expired",
+            message="The media sync worker stopped before this run reached a terminal state.",
+        )
+        if stale_running
+        else MediaSyncRunError(code=record.error_code, message=record.error_message)
         if record.error_code is not None and record.error_message is not None
         else None
     )
@@ -549,10 +565,10 @@ async def _run_contract(session: AsyncSession, record: MediaSyncRunRecord) -> Me
     return MediaSyncRun(
         id=record.id,
         trigger=MediaSyncTrigger(record.trigger),
-        status=MediaSyncRunStatus(record.status),
+        status=(MediaSyncRunStatus.FAILED if stale_running else MediaSyncRunStatus(record.status)),
         worker_id=record.worker_id,
         started_at=record.started_at,
-        completed_at=record.completed_at,
+        completed_at=observed_at if stale_running else record.completed_at,
         next_scheduled_at=record.next_scheduled_at,
         source_observed_at=record.source_observed_at,
         source_watermarks=_contract_watermarks(record) if succeeded else None,
@@ -627,10 +643,12 @@ async def get_media_sync_status(
         generated_at=generated_at,
         mode="periodic_snapshot_refresh",
         latest_run=(
-            await _run_contract(session, latest_record) if latest_record is not None else None
+            await _run_contract(session, latest_record, generated_at)
+            if latest_record is not None
+            else None
         ),
         latest_success=(
-            await _run_contract(session, latest_success_record)
+            await _run_contract(session, latest_success_record, generated_at)
             if latest_success_record is not None
             else None
         ),

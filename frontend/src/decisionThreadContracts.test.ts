@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   decisionThreadContextRequestSchema,
+  decisionThreadDraftCreateRequestSchema,
   decisionThreadDetailSchema,
 } from "./decisionThreadContracts";
 
@@ -29,14 +30,34 @@ const revision = {
 
 describe("decision-thread contracts", () => {
   it("accepts a strict snapshot-only thread history", () => {
-    expect(decisionThreadDetailSchema.parse({
+    const detail = decisionThreadDetailSchema.parse({
       id: ids.thread,
       title: "Tourism decision",
       decision_question: "Which intervention should be evaluated?",
       created_at: "2026-08-12T12:00:00Z",
       latest_revision: revision,
       revisions: [revision],
-    }).latest_revision.version).toBe(1);
+    });
+
+    expect(detail.latest_revision?.version).toBe(1);
+  });
+
+  it("accepts a question-first draft without a context revision", () => {
+    expect(decisionThreadDraftCreateRequestSchema.parse({
+      title: "Tourism decision",
+      decision_question: "Which intervention should be evaluated?",
+    })).toEqual({
+      title: "Tourism decision",
+      decision_question: "Which intervention should be evaluated?",
+    });
+    expect(decisionThreadDetailSchema.parse({
+      id: ids.thread,
+      title: "Tourism decision",
+      decision_question: "Which intervention should be evaluated?",
+      created_at: "2026-08-12T12:00:00Z",
+      latest_revision: null,
+      revisions: [],
+    }).latest_revision).toBeNull();
   });
 
   it("rejects experiment context without both scenario and cohort", () => {

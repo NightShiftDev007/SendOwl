@@ -793,7 +793,7 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
                 ) : null}
               </aside>
 
-              <main className="scenario-experiment-stage decision-main-stage">
+              <section className="scenario-experiment-stage decision-main-stage">
                 <div className="decision-stage-heading">
                   <span>比较画布</span>
                   <strong>一个决策问题 · 一条自然基线 · {alternatives.length} 个行动方案</strong>
@@ -916,7 +916,7 @@ function ScenarioBuilder({ onCreated }: ScenarioBuilderProps): JSX.Element {
                     </div>
                   </section>
                 </div>
-              </main>
+              </section>
 
               <aside className="scenario-submit-bar decision-inspector scenario-action-inspector">
                 <div className="decision-inspector-heading">
@@ -1294,10 +1294,10 @@ export function ScenarioPage(): JSX.Element {
     <div className="scenario-page decision-surface decision-scenario-surface">
       <header className="decision-surface-header" aria-labelledby="scenario-page-title">
         <div className="decision-surface-heading">
-          <span className="decision-stage-index">03 · 决策实验室</span>
+          <span className="decision-stage-index">历史归档 · ADC SCENARIO</span>
           <div>
-            <h2 id="scenario-page-title">让基线与行动方案站在同一个现实上</h2>
-            <p>现实证据保持只读；这里冻结的是比较问题、假设与可复现干预，不把模拟输入伪装成事实。</p>
+            <h1 id="scenario-page-title">旧 Scenario 对照规格只读归档</h1>
+            <p>SandOwl 原生流程已改用 Research Project 与单次 Simulation Run；这里仅保留历史基线和备选方案数据供追溯。</p>
           </div>
         </div>
         <div className="decision-context-bar">
@@ -1317,6 +1317,8 @@ export function ScenarioPage(): JSX.Element {
           </ul>
         </div>
       </header>
+
+      <div className="legacy-adc-readonly-note" role="note"><strong>新建入口已关闭</strong><span>请在「研究项目」中创建原生 Project，并为它配置一个独立 Simulation Run。</span><a href="#/projects">前往研究项目 →</a></div>
 
       <ScenarioBuilder onCreated={scenarioCreated} />
 

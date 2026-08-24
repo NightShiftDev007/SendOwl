@@ -10,16 +10,16 @@ from app.matraix_chat.contracts import MatraixChatTrial
 from app.matraix_chat.hashing import calculate_transcript_sha256
 from app.shared.contracts import ContractModel, NonEmptyText, Sha256Digest
 
-PROJECTION_SCHEMA_VERSION = "sendowl-chat-atif-projection/v1"
+PROJECTION_SCHEMA_VERSION = "sandowl-chat-atif-projection/v1"
 ATIF_SCHEMA_VERSION = "ATIF-v1.7"
 ATIF_AGENT_NAME = "Acme support source sample"
 ATIF_AGENT_VERSION = "1.0.0"
 ATIF_NOTES = (
-    "Derived from SendOwl's recorded Chat transcript. User steps are synthetic Persona "
+    "Derived from SandOwl's recorded Chat transcript. User steps are synthetic Persona "
     "messages; agent steps are deterministic Acme source-sample responses."
 )
 ATIF_LIMITATIONS = (
-    "This ATIF-v1.7 trajectory is derived from SendOwl's recorded Chat transcript, not "
+    "This ATIF-v1.7 trajectory is derived from SandOwl's recorded Chat transcript, not "
     "imported Harbor telemetry.",
     "User steps are synthetic Persona messages; agent steps are deterministic Acme "
     "source-sample responses.",
@@ -91,7 +91,7 @@ class AtifTrajectory(ContractModel):
 class MatraixChatAtifProjection(ContractModel):
     """Content-addressed projection plus explicit provenance limitations."""
 
-    projection_schema_version: Literal["sendowl-chat-atif-projection/v1"]
+    projection_schema_version: Literal["sandowl-chat-atif-projection/v1"]
     projection_sha256: Sha256Digest
     completeness: Literal["complete", "partial"]
     source_trial_sha256: Sha256Digest

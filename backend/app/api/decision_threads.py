@@ -12,15 +12,18 @@ from app.decision_threads.contracts import (
     DecisionThreadContextCreate,
     DecisionThreadCreateRequest,
     DecisionThreadDetail,
+    DecisionThreadDraftCreateRequest,
     DecisionThreadsResponse,
 )
 from app.decision_threads.errors import DecisionThreadNotFoundError, DecisionThreadSelectionError
 from app.decision_threads.repository import (
     append_decision_thread_revision,
     create_decision_thread,
+    create_decision_thread_draft,
     get_decision_thread,
     list_decision_threads,
 )
+from app.legacy_adc import reject_legacy_adc_write
 from app.populations.errors import PopulationCohortNotFoundError
 from app.scenarios.errors import ScenarioNotFoundError
 from app.semantic_experiments.errors import SemanticExperimentNotFoundError
@@ -56,7 +59,12 @@ def create_decision_threads_router() -> APIRouter:
     async def index(session: DecisionThreadSession) -> DecisionThreadsResponse:
         return await list_decision_threads(session)
 
-    @router.post("", response_model=DecisionThreadDetail, status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "",
+        response_model=DecisionThreadDetail,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(reject_legacy_adc_write)],
+    )
     async def create(
         request: DecisionThreadCreateRequest,
         session: DecisionThreadSession,
@@ -70,6 +78,18 @@ def create_decision_threads_router() -> APIRouter:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
             ) from error
 
+    @router.post(
+        "/drafts",
+        response_model=DecisionThreadDetail,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(reject_legacy_adc_write)],
+    )
+    async def create_draft(
+        request: DecisionThreadDraftCreateRequest,
+        session: DecisionThreadSession,
+    ) -> DecisionThreadDetail:
+        return await create_decision_thread_draft(session, request)
+
     @router.get("/{thread_id}", response_model=DecisionThreadDetail)
     async def detail(thread_id: UUID, session: DecisionThreadSession) -> DecisionThreadDetail:
         try:
@@ -81,6 +101,7 @@ def create_decision_threads_router() -> APIRouter:
         "/{thread_id}/revisions",
         response_model=DecisionThreadDetail,
         status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def append_revision(
         thread_id: UUID,

@@ -12,7 +12,7 @@ export interface AppShellProps {
 }
 
 interface PrimaryDestination {
-  readonly id: "situation" | "workspace" | "runs";
+  readonly id: "situation" | "workspace" | "evaluation";
   readonly label: string;
   readonly shortLabel: string;
   readonly hrefSection: SectionId;
@@ -29,32 +29,36 @@ const PRIMARY_DESTINATIONS: readonly PrimaryDestination[] = [
   },
   {
     id: "workspace",
-    label: "Decision Workspace",
-    shortLabel: "Workspace",
-    hrefSection: "threads",
-    sections: ["threads", "media", "world", "decisions"],
+    label: "模拟工作台",
+    shortLabel: "模拟",
+    hrefSection: "projects",
+    sections: ["projects", "media", "world", "personas", "runs", "reports"],
   },
   {
-    id: "runs",
-    label: "Run Studio",
-    shortLabel: "Run Studio",
-    hrefSection: "runs",
-    sections: ["personas", "tasks", "runs", "reports"],
+    id: "evaluation",
+    label: "评测中心",
+    shortLabel: "评测",
+    hrefSection: "tasks",
+    sections: ["tasks"],
   },
 ];
 
 const WORKSPACE_STAGE_IDS = [
-  "threads",
   "media",
   "world",
-  "decisions",
+  "projects",
+  "personas",
+  "runs",
+  "reports",
 ] as const satisfies readonly SectionId[];
 
 const WORKSPACE_STAGE_LABELS: Readonly<Record<(typeof WORKSPACE_STAGE_IDS)[number], string>> = {
-  threads: "决策任务",
   media: "媒体证据",
-  world: "冻结现实",
-  decisions: "决策实验",
+  world: "世界与图谱",
+  projects: "研究项目",
+  personas: "模拟人群",
+  runs: "模拟运行",
+  reports: "报告与交互",
 };
 
 function requireNavigationItem(
@@ -86,11 +90,7 @@ export function AppShell({
 }: AppShellProps): JSX.Element {
   const mainContentRef = useRef<HTMLElement>(null);
   const previousSectionRef = useRef<SectionId>(activeSection);
-  const isDecisionWorkspace = includesSection(WORKSPACE_STAGE_IDS, activeSection);
-  const isRunWorkspace = activeSection === "personas"
-    || activeSection === "tasks"
-    || activeSection === "runs"
-    || activeSection === "reports";
+  const isSimulationWorkspace = includesSection(WORKSPACE_STAGE_IDS, activeSection);
 
   useEffect(() => {
     if (previousSectionRef.current === activeSection) {
@@ -113,7 +113,7 @@ export function AppShell({
           <a
             className="product-brand"
             href={createSectionHref("overview")}
-            aria-label="SandOwl Decision Intelligence，返回态势页"
+              aria-label="SandOwl 群体模拟研究平台，返回态势页"
           >
             <span className="product-brand-mark" aria-hidden="true">
               <span />
@@ -121,7 +121,7 @@ export function AppShell({
             </span>
             <span className="product-brand-copy">
               <strong>SandOwl</strong>
-              <small>Decision Intelligence</small>
+              <small>群体模拟研究平台</small>
             </span>
           </a>
 
@@ -153,8 +153,8 @@ export function AppShell({
           </div>
         </div>
 
-        {isDecisionWorkspace ? (
-          <nav className="product-task-rail" aria-label="Decision Workspace 任务阶段">
+        {isSimulationWorkspace ? (
+          <nav className="product-task-rail" aria-label="模拟工作台阶段">
             <ol>
               {WORKSPACE_STAGE_IDS.map((sectionId, index) => {
                 const item = requireNavigationItem(navigation, sectionId);
@@ -178,38 +178,6 @@ export function AppShell({
           </nav>
         ) : null}
 
-        {isRunWorkspace ? (
-          <div className="product-run-rail" aria-label="Run Studio 阶段">
-            <a
-              href={createSectionHref("personas")}
-              data-active={activeSection === "personas"}
-              aria-current={activeSection === "personas" ? "page" : undefined}
-            >
-              Persona World
-            </a>
-            <a
-              href={createSectionHref("tasks")}
-              data-active={activeSection === "tasks"}
-              aria-current={activeSection === "tasks" ? "page" : undefined}
-            >
-              Task Gallery
-            </a>
-            <a
-              href={createSectionHref("runs")}
-              data-active={activeSection === "runs"}
-              aria-current={activeSection === "runs" ? "page" : undefined}
-            >
-              Playground
-            </a>
-            <a
-              href={createSectionHref("reports")}
-              data-active={activeSection === "reports"}
-              aria-current={activeSection === "reports" ? "page" : undefined}
-            >
-              决策报告
-            </a>
-          </div>
-        ) : null}
       </header>
 
       <main

@@ -262,6 +262,7 @@ async def create_platform_smoke_run(
             SimulationWorkerHeartbeatRecord.engine_version == "0.2.5",
             SimulationWorkerHeartbeatRecord.camel_version == "0.2.78",
             SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+            SimulationWorkerHeartbeatRecord.worker_domain == "semantic",
             SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
         )
         .limit(1)
@@ -330,6 +331,7 @@ async def get_oasis_readiness(session: AsyncSession) -> OasisReadiness:
                     SimulationWorkerHeartbeatRecord.engine_version == "0.2.5",
                     SimulationWorkerHeartbeatRecord.camel_version == "0.2.78",
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+                    SimulationWorkerHeartbeatRecord.worker_domain == "semantic",
                 )
             )
         )

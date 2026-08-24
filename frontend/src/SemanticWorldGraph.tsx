@@ -8,6 +8,7 @@ import {
   type CohortCreateRequest,
 } from "./populationContracts";
 import { createRunStudioHash } from "./runStudioRoute";
+import { createResearchProjectHash } from "./researchProjectRoute";
 import { usePopulationDatasets } from "./usePopulations";
 import { useSemanticReadiness } from "./useSemanticExperiments";
 import "./semanticWorldGraph.css";
@@ -114,15 +115,8 @@ function normalizeCohortError(error: unknown): Error {
     : new Error("冻结 Cohort 失败：请求抛出了非标准错误。请检查后端日志。");
 }
 
-function cohortRunStudioHref(cohortId: string): string {
-  return createRunStudioHash({
-    mode: "semantic",
-    cohortId,
-    scenarioId: null,
-    experimentId: null,
-    trialId: null,
-    panel: null,
-  });
+function cohortRunStudioHref(): string {
+  return createRunStudioHash({ mode: "native", projectId: null, runId: null });
 }
 
 export function SemanticWorldGraph({
@@ -292,9 +286,9 @@ export function SemanticWorldGraph({
     <section className="semantic-world-graph" aria-labelledby="semantic-world-graph-title">
       <header>
         <div>
-          <h4 id="semantic-world-graph-title">千问语义世界图</h4>
+          <h4 id="semantic-world-graph-title">语义关系提取</h4>
           <p>
-            千问只负责从冻结正文提取实体与关系；PostgreSQL 保存图结构，并逐条核验原文引用和字符位置。
+            从冻结正文提取实体与关系，并逐条保留原文引用和字符位置。生成结果不会改变冻结证据。
           </p>
         </div>
         <button
@@ -314,22 +308,32 @@ export function SemanticWorldGraph({
 
       <section className="semantic-graph-readiness" aria-live="polite">
         <div>
-          <span>Qwen Worker</span>
+          <span>语义提取服务</span>
           <strong data-ready={runtimeReady}>
             {readinessState.status === "loading"
-              ? "正在核验"
+              ? "正在检查"
               : runtimeReady
-                ? `可提交 · ${readiness?.model_name ?? "模型身份缺失"}`
-                : "配置阻塞"}
+                ? "可用"
+                : "暂不可用"}
           </strong>
           <p>
             {runtimeReady
-              ? "提交前仍会重新读取 readiness，配置漂移时不会发送 POST。"
+              ? "提交前会再次确认服务状态，避免使用已经变化的配置。"
               : readiness?.limitations.at(-1)
-                ?? "无法读取语义运行时状态；图谱提交保持锁定。"}
+                ?? "无法读取语义提取服务状态；当前不会创建任务。"}
           </p>
+          {readiness !== null ? (
+            <details className="semantic-graph-runtime-audit">
+              <summary>技术配置</summary>
+              <dl>
+                <div><dt>模型</dt><dd>{readiness.model_name ?? "未配置"}</dd></div>
+                <div><dt>在线工作进程</dt><dd>{readiness.live_worker_count}</dd></div>
+                <div><dt>配置 SHA-256</dt><dd><code>{readiness.semantic_config_sha256 ?? "—"}</code></dd></div>
+              </dl>
+            </details>
+          ) : null}
         </div>
-        <button type="button" onClick={reloadReadiness}>重新核验</button>
+        <button type="button" onClick={reloadReadiness}>重新检查服务</button>
       </section>
 
       {state.status === "error" ? (
@@ -853,8 +857,8 @@ export function SemanticWorldGraph({
                             <span>{cohortCreationState.result.cohort.title}</span>
                             <small>图谱选择来源已封存</small>
                             <code>{cohortCreationState.result.origin.origin_sha256}</code>
-                            <a href={cohortRunStudioHref(cohortCreationState.result.cohort.id)}>
-                              带着这个 Cohort 进入 Run Studio →
+                            <a href={cohortRunStudioHref()}>
+                              进入模拟运行工作台 →
                             </a>
                           </div>
                         ) : null}
@@ -946,6 +950,25 @@ export function SemanticWorldGraph({
           )}
         </aside>
       </div>
+
+      {selectedGraph?.status === "succeeded" ? (
+        <section className="semantic-graph-project-handoff" aria-label="把语义图带入研究项目">
+          <div>
+            <strong>语义图已通过证据校验</strong>
+            <p>下一步将当前快照与这张精确语义图一起冻结进研究项目。</p>
+          </div>
+          <a
+            className="button button-primary"
+            href={createResearchProjectHash({
+              worldModelId,
+              snapshotId,
+              graphId: selectedGraph.id,
+            })}
+          >
+            用这张语义图建立研究项目
+          </a>
+        </section>
+      ) : null}
     </section>
   );
 }

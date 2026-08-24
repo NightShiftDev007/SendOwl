@@ -21,12 +21,11 @@ def _payload() -> dict[str, object]:
     }
 
 
-def test_semantic_endpoints_return_explicit_503_without_database() -> None:
+def test_semantic_reads_require_database_and_legacy_write_is_retired() -> None:
     client = TestClient(create_app(load_runtime_settings({})))
     experiment_id = uuid4()
     trial_id = uuid4()
     responses = (
-        client.post("/api/v2/semantic-experiments", json=_payload()),
         client.get("/api/v2/semantic-experiments"),
         client.get(f"/api/v2/semantic-experiments/{experiment_id}"),
         client.get(f"/api/v2/semantic-experiments/{experiment_id}/comparison"),
@@ -36,9 +35,12 @@ def test_semantic_endpoints_return_explicit_503_without_database() -> None:
 
     assert {response.status_code for response in responses} == {503}
     assert all("DATABASE_URL" in response.json()["detail"] for response in responses)
+    retired = client.post("/api/v2/semantic-experiments", json=_payload())
+    assert retired.status_code == 410
+    assert "legacy ADC write surface is retired" in retired.json()["detail"]
 
 
-def test_semantic_post_rejects_extra_fields_and_seed_coercion_before_repository() -> None:
+def test_semantic_post_is_retired_before_request_contract_validation() -> None:
     application = create_app(load_runtime_settings({}))
 
     async def session_override() -> AsyncIterator[object]:
@@ -57,8 +59,8 @@ def test_semantic_post_rejects_extra_fields_and_seed_coercion_before_repository(
         json={**payload, "seeds": ["7"]},
     )
 
-    assert extra.status_code == 422
-    assert coerced.status_code == 422
+    assert extra.status_code == 410
+    assert coerced.status_code == 410
 
 
 def test_semantic_event_cursor_has_strict_bounds() -> None:

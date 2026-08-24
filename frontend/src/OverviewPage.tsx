@@ -26,7 +26,7 @@ export interface OverviewPageProps {
   readonly onOpenMediaTopic: (topicId: string) => void;
 }
 
-interface DecisionPathStep {
+interface SimulationPathStep {
   readonly code: string;
   readonly label: string;
   readonly title: string;
@@ -46,11 +46,12 @@ const MediaWorldMap = lazy(async () => {
 
 type WorldLens = "globe" | "map" | "propagation";
 
-const decisionPathSteps: readonly DecisionPathStep[] = [
+const simulationPathSteps: readonly SimulationPathStep[] = [
   { code: "01", label: "Evidence", title: "媒体证据" },
-  { code: "02", label: "World Snapshot", title: "冻结现实" },
-  { code: "03", label: "Scenario", title: "决策实验" },
-  { code: "04", label: "Run", title: "推演运行" },
+  { code: "02", label: "World / Graph", title: "世界与图谱" },
+  { code: "03", label: "Population", title: "模拟人群" },
+  { code: "04", label: "Simulation", title: "单次模拟" },
+  { code: "05", label: "Report", title: "报告与交互" },
 ];
 
 const capabilityStateLabels: Readonly<
@@ -58,6 +59,7 @@ const capabilityStateLabels: Readonly<
 > = {
   contract_ready: "仅契约就绪",
   runtime_ready: "运行链路就绪",
+  legacy_readonly: "历史只读",
 };
 
 function CapabilityRow({
@@ -273,17 +275,17 @@ function SituationIntro({
         <span aria-hidden="true" />
         媒体证据场
       </div>
-      <h1 id="situation-home-title">从正在发生的事实，进入下一步决策</h1>
+      <h1 id="situation-home-title">从正在发生的信息，进入群体模拟</h1>
       <p>
-        先看真实报道正在聚焦哪里，再将可追溯证据冻结为世界快照并带入决策实验。
+        先看真实报道正在聚焦哪里，再将可追溯证据、模拟人群和一个明确要求带入单次运行。
       </p>
       <div className="situation-home__actions">
         <button
           className="button situation-home__button-primary"
           type="button"
-          onClick={() => onNavigate("world")}
+          onClick={() => onNavigate("projects")}
         >
-          进入 Decision Workspace
+          进入模拟工作台
           <span aria-hidden="true">→</span>
         </button>
         <button
@@ -433,18 +435,18 @@ function SituationScene({
   );
 }
 
-function DecisionPath(): JSX.Element {
+function SimulationPath(): JSX.Element {
   return (
-    <section className="situation-home__path" aria-labelledby="decision-path-title">
+    <section className="situation-home__path" aria-labelledby="simulation-path-title">
       <header>
         <div>
-          <h2 id="decision-path-title">一条从证据到运行的决策链路</h2>
+          <h2 id="simulation-path-title">一条从证据到报告的模拟链路</h2>
           <p>阶段仅表示产品工作路径，不代表当前任务已经完成。</p>
         </div>
-        <span>Evidence → Decision → Run</span>
+        <span>媒体证据 → 世界快照 → 合成人群 → 模拟运行 → 研究报告</span>
       </header>
       <ol>
-        {decisionPathSteps.map((step) => (
+        {simulationPathSteps.map((step) => (
           <li key={step.code}>
             <span>{step.code}</span>
             <div>
@@ -562,7 +564,7 @@ export function OverviewPage({ onNavigate, onOpenMediaTopic }: OverviewPageProps
         ) : null}
       </section>
 
-      <DecisionPath />
+      <SimulationPath />
 
       {mediaState.status === "success" ? (
         <LatestEvidence overview={mediaState.data} onNavigate={onNavigate} />

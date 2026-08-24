@@ -5,7 +5,7 @@ import inspect
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -77,6 +77,33 @@ def _all_table_counts() -> tuple[MediaSyncTableCount, ...]:
     )
 
 
+def test_stale_running_sync_is_projected_as_an_orphaned_worker_failure() -> None:
+    observed_at = datetime(2026, 8, 17, 12, tzinfo=UTC)
+    record = MediaSyncRunRecord(
+        id=uuid4(),
+        trigger="scheduled",
+        status="running",
+        worker_id="sandowl-compose-media-sync-worker",
+        started_at=observed_at - timedelta(hours=7),
+        completed_at=None,
+        next_scheduled_at=None,
+        source_observed_at=None,
+        error_code=None,
+        error_message=None,
+    )
+    scalar_result = MagicMock()
+    scalar_result.all.return_value = []
+    session = MagicMock(spec=AsyncSession)
+    session.scalars = AsyncMock(return_value=scalar_result)
+
+    projected = asyncio.run(sync_repository._run_contract(session, record, observed_at))
+
+    assert projected.status is MediaSyncRunStatus.FAILED
+    assert projected.completed_at == observed_at
+    assert projected.error is not None
+    assert projected.error.code == "worker_heartbeat_expired"
+
+
 def test_succeeded_sync_contract_requires_complete_accounting() -> None:
     now = datetime.now(UTC)
 
@@ -84,7 +111,7 @@ def test_succeeded_sync_contract_requires_complete_accounting() -> None:
         id=uuid4(),
         trigger=MediaSyncTrigger.SCHEDULED,
         status=MediaSyncRunStatus.SUCCEEDED,
-        worker_id="sendowl-sync-1",
+        worker_id="sandowl-sync-1",
         started_at=now,
         completed_at=now + timedelta(seconds=2),
         next_scheduled_at=now + timedelta(minutes=5),
@@ -105,7 +132,7 @@ def test_failed_sync_contract_preserves_only_controlled_error() -> None:
         id=uuid4(),
         trigger=MediaSyncTrigger.SCHEDULED,
         status=MediaSyncRunStatus.FAILED,
-        worker_id="sendowl-sync-1",
+        worker_id="sandowl-sync-1",
         started_at=now,
         completed_at=now,
         next_scheduled_at=None,
@@ -130,7 +157,7 @@ def test_sync_contract_rejects_next_schedule_for_failed_run() -> None:
             id=uuid4(),
             trigger=MediaSyncTrigger.SCHEDULED,
             status=MediaSyncRunStatus.FAILED,
-            worker_id="sendowl-sync-1",
+            worker_id="sandowl-sync-1",
             started_at=now,
             completed_at=now,
             next_scheduled_at=now + timedelta(minutes=5),
@@ -155,17 +182,17 @@ def test_sync_table_count_rejects_unaccounted_rows() -> None:
 def test_worker_requires_explicit_source_attestation_and_safe_cadence() -> None:
     base_environment = {
         "AGENDASCOPE_DATABASE_URL": "postgresql://reader:secret@source/agendascope",
-        "DATABASE_URL": "postgresql://writer:secret@target/sendowl",
+        "DATABASE_URL": "postgresql://writer:secret@target/sandowl",
         "AGENDASCOPE_EXPECTED_DATABASE_NAME": "agendascope",
         "AGENDASCOPE_EXPECTED_SCHEMA_REVISION": "0020_create_facts_layer",
-        "MEDIA_SYNC_WORKER_ID": "sendowl-compose-media-sync-worker",
+        "MEDIA_SYNC_WORKER_ID": "sandowl-compose-media-sync-worker",
         "MEDIA_SYNC_INTERVAL_SECONDS": "300",
     }
 
     settings = load_worker_settings(base_environment)
 
     assert settings.interval_seconds == 300
-    assert settings.worker_id == "sendowl-compose-media-sync-worker"
+    assert settings.worker_id == "sandowl-compose-media-sync-worker"
 
     with pytest.raises(ImportConfigurationError, match="AGENDASCOPE_EXPECTED_SCHEMA_REVISION"):
         load_worker_settings(
@@ -193,7 +220,7 @@ def test_source_engine_is_read_only_from_connection_start() -> None:
     settings = load_import_settings(
         {
             "AGENDASCOPE_DATABASE_URL": "postgresql://reader:secret@source/agendascope",
-            "DATABASE_URL": "postgresql://writer:secret@target/sendowl",
+            "DATABASE_URL": "postgresql://writer:secret@target/sandowl",
             "AGENDASCOPE_EXPECTED_DATABASE_NAME": "agendascope",
             "AGENDASCOPE_EXPECTED_SCHEMA_REVISION": "0020_create_facts_layer",
         }
@@ -207,7 +234,7 @@ def test_source_engine_is_read_only_from_connection_start() -> None:
         pool_pre_ping=True,
         connect_args={
             "server_settings": {
-                "application_name": "sendowl-media-sync",
+                "application_name": "sandowl-media-sync",
                 "default_transaction_read_only": "on",
             }
         },

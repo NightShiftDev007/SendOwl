@@ -30,7 +30,7 @@ LOW_INFORMATION_VALUES = frozenset(
 )
 PROFILE_TEMPLATE_TEXT = """
 # ROLE
-You are one simulated Reddit audience member in a bounded decision experiment.
+You are one simulated Reddit audience member in a bounded SandOwl research run.
 
 # IDENTITY
 Display name: {display_name}
@@ -124,7 +124,7 @@ class SemanticIntervention(StrictModel):
     actor: Literal["scenario_actor"]
     channel: Literal["reddit"]
     content: Annotated[RequiredText, Field(max_length=4000)]
-    offset_minutes: Annotated[int, Field(ge=0, le=1440)]
+    offset_minutes: Annotated[int, Field(ge=0, le=2880)]
 
 
 class SemanticVariant(StrictModel):
@@ -181,7 +181,7 @@ class ScenarioVariantIntegrity(StrictModel):
 class ScenarioIntegrityInput(StrictModel):
     id: UUID
     title: Annotated[RequiredText, Field(max_length=300)]
-    decision_question: Annotated[RequiredText, Field(max_length=2000)]
+    decision_question: Annotated[RequiredText, Field(max_length=6200)]
     world_model_id: UUID
     world_snapshot_id: UUID
     snapshot_version: Annotated[int, Field(ge=1)]
@@ -238,7 +238,7 @@ class SemanticExperiment(StrictModel):
     scenario_id: UUID
     scenario_sha256: Sha256
     scenario_title: Annotated[RequiredText, Field(max_length=300)]
-    decision_question: Annotated[RequiredText, Field(max_length=2000)]
+    decision_question: Annotated[RequiredText, Field(max_length=24_000)]
     cohort_id: UUID
     cohort_sha256: Sha256
     cohort_title: DisplayName
@@ -317,8 +317,39 @@ class ClaimedSemanticTrial(StrictModel):
         return self.experiment.variants[self.variant_position]
 
 
+class SocialSimulationExecution(StrictModel):
+    """SandOwl-native input consumed by the shared OASIS social simulation core."""
+
+    id: UUID
+    context_id: UUID
+    context_kind: Literal["semantic_experiment", "research_project"]
+    decision_question: Annotated[RequiredText, Field(max_length=24_000)]
+    actor_user_name: Identifier
+    actor_name: DisplayName
+    actor_bio: Annotated[RequiredText, Field(max_length=500)]
+    seed: Annotated[int, Field(ge=0, le=4_294_967_295)]
+    rounds: Annotated[int, Field(ge=1, le=6)]
+    minutes_per_round: Annotated[int, Field(ge=15, le=480)]
+    model_name: Annotated[RequiredText, Field(max_length=200)]
+    semantic_config_sha256: Sha256
+    prompt_schema_version: Literal["matraix-semantic-profile/v1"]
+    initial_posts: Annotated[tuple[SemanticIntervention, ...], Field(max_length=20)]
+    cohort: CohortIntegrityInput
+
+    @model_validator(mode="after")
+    def validate_initial_posts(self) -> Self:
+        if tuple(item.position for item in self.initial_posts) != tuple(
+            range(len(self.initial_posts))
+        ):
+            raise ValueError("initial post positions must be contiguous from zero")
+        horizon = self.rounds * self.minutes_per_round
+        if any(item.offset_minutes > horizon for item in self.initial_posts):
+            raise ValueError("initial post offset exceeds simulation duration")
+        return self
+
+
 class SemanticEvent(StrictModel):
-    round: Annotated[int, Field(ge=1, le=3)]
+    round: Annotated[int, Field(ge=1, le=6)]
     phase: Literal["intervention", "audience"]
     actor_kind: Literal["scenario", "persona"]
     persona_id: UUID | None
@@ -374,12 +405,12 @@ class SemanticSuccess(StrictModel):
     artifact_size_bytes: Annotated[int, Field(gt=0)]
     user_count: Annotated[int, Field(ge=2, le=9)]
     initial_post_count: Annotated[int, Field(ge=0, le=20)]
-    generated_post_count: Annotated[int, Field(ge=0, le=24)]
-    comment_count: Annotated[int, Field(ge=0, le=24)]
-    reaction_count: Annotated[int, Field(ge=0, le=24)]
-    do_nothing_count: Annotated[int, Field(ge=0, le=24)]
+    generated_post_count: Annotated[int, Field(ge=0, le=48)]
+    comment_count: Annotated[int, Field(ge=0, le=48)]
+    reaction_count: Annotated[int, Field(ge=0, le=48)]
+    do_nothing_count: Annotated[int, Field(ge=0, le=48)]
     observed_action_count: Annotated[int, Field(ge=1, le=116)]
-    rounds_completed: Annotated[int, Field(ge=1, le=3)]
+    rounds_completed: Annotated[int, Field(ge=1, le=6)]
     limitations: Annotated[tuple[RequiredText, ...], Field(min_length=1)]
 
     @model_validator(mode="after")

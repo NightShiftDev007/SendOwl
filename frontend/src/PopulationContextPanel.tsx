@@ -48,7 +48,7 @@ function normalizeCohortCreationError(error: unknown): Error {
 
   return error instanceof Error
     ? error
-    : new Error("冻结 Cohort 失败：请求抛出了非标准错误。请检查后端日志。");
+    : new Error("冻结人群失败：请求抛出了非标准错误。请检查后端日志。");
 }
 
 function findDataset(
@@ -66,7 +66,7 @@ function queryValidationMessage(value: string): string | null {
   const normalizedValue = value.trim();
 
   if (normalizedValue.length === 1) {
-    return "搜索词至少需要 2 个字符；也可以清空后查看全部 Persona。";
+    return "搜索词至少需要 2 个字符；也可以清空后查看全部合成人物。";
   }
 
   if (normalizedValue.length > 100) {
@@ -80,15 +80,15 @@ function cohortTitleValidationMessage(value: string): string | null {
   const normalizedValue = value.trim();
 
   if (normalizedValue.length === 0) {
-    return "请输入 Cohort 名称。";
+    return "请输入人群名称。";
   }
 
   if (normalizedValue.length > 200) {
-    return "Cohort 名称不能超过 200 个字符。";
+    return "人群名称不能超过 200 个字符。";
   }
 
   if (/\r|\n/u.test(normalizedValue)) {
-    return "Cohort 名称只能使用一行文本。";
+    return "人群名称只能使用一行文本。";
   }
 
   return null;
@@ -216,7 +216,7 @@ export function PopulationContextPanel({
       }
 
       if (selectedPersonaIds.length >= 100) {
-        setSelectionError("一个 Cohort 最多只能冻结 100 个 Persona；请先取消其他成员。");
+        setSelectionError("一个人群最多只能冻结 100 个合成人物；请先取消其他成员。");
         return;
       }
 
@@ -295,21 +295,21 @@ export function PopulationContextPanel({
     <section className="population-context" aria-labelledby="population-context-title">
       <header className="population-context-heading">
         <div>
-          <span>CONTEXT / 00</span>
-          <h4 id="population-context-title">冻结人群上下文</h4>
-          <p>从真实 MatrAIx Persona 数据集中明确挑选成员，再封存为可追溯 Cohort。</p>
+          <span>上下文 / 00</span>
+          <h3 id="population-context-title">冻结人群上下文</h3>
+          <p>从已登记的合成人物数据集中明确挑选成员，再封存为可追溯人群。</p>
         </div>
-        <code>immutable cohort</code>
+        <code>不可变人群</code>
       </header>
 
       <div className="population-context-boundary" role="note">
         <strong>冻结不等于推演</strong>
-          <p>Cohort 只在语义实验提交时成为受众输入；platform smoke 不读取这项选择。</p>
+          <p>人群只在你明确提交任务时成为输入；浏览页面不会自动启动模拟或评测。</p>
       </div>
 
       {datasetsState.status === "error" ? (
         <ApiErrorPanel
-          title="无法读取 Persona 数据集"
+          title="无法读取合成人物数据集"
           error={datasetsState.error}
           isRetrying={datasetsState.isRetrying}
           onRetry={reloadDatasets}
@@ -318,7 +318,7 @@ export function PopulationContextPanel({
 
       {datasetsState.status === "loading" && datasetsState.data === null ? (
         <div className="population-skeleton" role="status" aria-live="polite">
-          <span className="sr-only">正在读取 Persona 数据集</span>
+          <span className="sr-only">正在读取合成人物数据集</span>
           <span className="skeleton-block" aria-hidden="true" />
           <span className="skeleton-block" aria-hidden="true" />
         </div>
@@ -326,15 +326,15 @@ export function PopulationContextPanel({
 
       {datasetsState.data !== null && datasets.length === 0 ? (
         <div className="population-empty" role="status">
-          <strong>还没有可用的 Persona 数据集</strong>
-          <p>导入并登记 MatrAIx 数据集后，才能选择 Persona 和冻结 Cohort。</p>
+          <strong>还没有可用的合成人物数据集</strong>
+          <p>导入并登记合成人物数据集后，才能选择人物并冻结人群。</p>
         </div>
       ) : null}
 
       {datasets.length > 0 ? (
         <div className="population-dataset-control">
           <label htmlFor="population-dataset">
-            <span>Persona 数据集</span>
+            <span>合成人物数据集</span>
             <select
               id="population-dataset"
               value={selectedDatasetId ?? ""}
@@ -374,7 +374,7 @@ export function PopulationContextPanel({
         <div className="population-persona-workbench">
           <div className="population-subheading">
             <div>
-              <strong>挑选 Persona</strong>
+              <strong>挑选合成人物</strong>
               <span>{selectedPersonaIds.length} / 100 已选</span>
             </div>
             <button
@@ -393,7 +393,7 @@ export function PopulationContextPanel({
 
           <div className="population-search" role="search">
             <label htmlFor="population-persona-query">
-              <span>搜索姓名、Persona ID 或来源</span>
+              <span>搜索姓名、人物 ID 或来源</span>
               <input
                 id="population-persona-query"
                 type="search"
@@ -416,7 +416,7 @@ export function PopulationContextPanel({
                 type="button"
                 onClick={applySearch}
               >
-                搜索 Persona
+                搜索人物
               </button>
               {appliedQuery !== null ? (
                 <button
@@ -442,7 +442,7 @@ export function PopulationContextPanel({
 
           {personasState.status === "error" ? (
             <ApiErrorPanel
-              title="无法读取 Persona 列表"
+              title="无法读取合成人物列表"
               error={personasState.error}
               isRetrying={personasState.isRetrying}
               onRetry={reloadPersonas}
@@ -451,7 +451,7 @@ export function PopulationContextPanel({
 
           {personasState.status === "loading" && personasState.data === null ? (
             <div className="population-skeleton" role="status" aria-live="polite">
-              <span className="sr-only">正在读取 Persona</span>
+              <span className="sr-only">正在读取合成人物</span>
               <span className="skeleton-block" aria-hidden="true" />
               <span className="skeleton-block" aria-hidden="true" />
               <span className="skeleton-block" aria-hidden="true" />
@@ -460,7 +460,7 @@ export function PopulationContextPanel({
 
           {personasResponse !== null && personasResponse.items.length === 0 ? (
             <div className="population-empty" role="status">
-              <strong>{appliedQuery === null ? "这个数据集没有 Persona" : "没有匹配的 Persona"}</strong>
+              <strong>{appliedQuery === null ? "这个数据集没有合成人物" : "没有匹配的合成人物"}</strong>
               <p>
                 {appliedQuery === null
                   ? "请核对数据集清单和后端导入结果。"
@@ -518,7 +518,7 @@ export function PopulationContextPanel({
           ) : null}
 
           {personasResponse !== null && personasResponse.total > 0 ? (
-            <nav className="population-pagination" aria-label="Persona 分页">
+            <nav className="population-pagination" aria-label="合成人物分页">
               <button
                 className="button button-secondary button-compact"
                 type="button"
@@ -545,12 +545,12 @@ export function PopulationContextPanel({
         <div className="population-freeze-control">
           <div className="population-subheading">
             <div>
-              <strong>封存 Cohort</strong>
+              <strong>封存人群</strong>
               <span>只记录明确勾选的 {selectedPersonaIds.length} 人</span>
             </div>
           </div>
           <label htmlFor="population-cohort-title">
-            <span>Cohort 名称</span>
+            <span>人群名称</span>
             <input
               id="population-cohort-title"
               type="text"
@@ -580,18 +580,18 @@ export function PopulationContextPanel({
             aria-busy={isCreating}
             onClick={() => void freezeCohort()}
           >
-            {isCreating ? "正在冻结 Cohort…" : `冻结 ${selectedPersonaIds.length} 人 Cohort`}
+            {isCreating ? "正在冻结人群…" : `冻结 ${selectedPersonaIds.length} 人的人群`}
           </button>
 
           {creationState.status === "error" ? (
             <div className="population-create-message" data-status="error" role="alert">
               <strong>
                 {isAmbiguousPostResultError(creationState.error)
-                  ? "冻结结果未知，请先刷新 Cohort 目录核对"
-                  : "Cohort 没有冻结"}
+                  ? "冻结结果未知，请先刷新人群目录核对"
+                  : "人群没有冻结"}
               </strong>
               <p>{creationState.error.message}</p>
-              <small>POST 不会自动重试，以免创建重复 Cohort。</small>
+              <small>提交不会自动重试，以免创建重复人群。</small>
             </div>
           ) : null}
 
@@ -607,7 +607,7 @@ export function PopulationContextPanel({
 
       <details className="population-cohort-directory">
         <summary>
-          <span>冻结 Cohort 目录</span>
+          <span>冻结人群目录</span>
           <strong data-status={cohortsState.status}>
             {cohortsState.status === "error"
               ? "读取失败 · 展开重试"
@@ -617,7 +617,7 @@ export function PopulationContextPanel({
           </strong>
         </summary>
         <div className="population-directory-actions">
-          <p>明确选择一个 Cohort，核对成员和来源哈希。</p>
+          <p>明确选择一个冻结人群，核对成员和来源哈希。</p>
           <button
             className="button button-secondary button-compact"
             type="button"
@@ -631,7 +631,7 @@ export function PopulationContextPanel({
 
         {cohortsState.status === "error" ? (
           <ApiErrorPanel
-            title="无法读取 Cohort 目录"
+            title="无法读取冻结人群目录"
             error={cohortsState.error}
             isRetrying={cohortsState.isRetrying}
             onRetry={reloadCohorts}
@@ -640,7 +640,7 @@ export function PopulationContextPanel({
 
         {cohortsState.status === "loading" && cohortsState.data === null ? (
           <div className="population-skeleton" role="status" aria-live="polite">
-            <span className="sr-only">正在读取冻结 Cohort</span>
+            <span className="sr-only">正在读取冻结人群</span>
             <span className="skeleton-block" aria-hidden="true" />
             <span className="skeleton-block" aria-hidden="true" />
           </div>
@@ -648,8 +648,8 @@ export function PopulationContextPanel({
 
         {cohortsResponse !== null && cohortsResponse.items.length === 0 ? (
           <div className="population-empty" role="status">
-            <strong>还没有冻结 Cohort</strong>
-            <p>选择 1–100 个 Persona 并命名后，冻结结果会持久化到这里。</p>
+            <strong>还没有冻结人群</strong>
+            <p>选择 1–100 个合成人物并命名后，冻结结果会持久化到这里。</p>
           </div>
         ) : null}
 
@@ -676,14 +676,14 @@ export function PopulationContextPanel({
 
         {selectedCohortId === null ? (
           <div className="population-empty population-cohort-prompt" role="status">
-            <strong>尚未选择 Cohort</strong>
+            <strong>尚未选择冻结人群</strong>
             <p>系统不会自动打开第一项；请选择后查看成员与来源链。</p>
           </div>
         ) : null}
 
         {cohortDetailState.status === "error" ? (
           <ApiErrorPanel
-            title="无法读取 Cohort 成员"
+            title="无法读取冻结人群成员"
             error={cohortDetailState.error}
             isRetrying={cohortDetailState.isRetrying}
             onRetry={reloadCohortDetail}
@@ -692,7 +692,7 @@ export function PopulationContextPanel({
 
         {cohortDetailState.status === "loading" && selectedCohort === null ? (
           <div className="population-skeleton" role="status" aria-live="polite">
-            <span className="sr-only">正在读取 Cohort 成员和来源</span>
+            <span className="sr-only">正在读取冻结人群成员和来源</span>
             <span className="skeleton-block" aria-hidden="true" />
             <span className="skeleton-block" aria-hidden="true" />
             <span className="skeleton-block" aria-hidden="true" />
@@ -736,7 +736,7 @@ export function PopulationContextPanel({
                 </dd>
               </div>
             </dl>
-            <section className="population-graph-origins" aria-label="图谱 Persona 选择来源">
+            <section className="population-graph-origins" aria-label="图谱人物选择来源">
               <header>
                 <div>
                   <span>GRAPH SELECTION LINEAGE</span>
@@ -758,7 +758,7 @@ export function PopulationContextPanel({
                 />
               ) : null}
               {graphOriginsState.status === "success" && graphOriginsState.data.total === 0 ? (
-                <p>这个 Cohort 由 Persona World 直接创建，没有声明图谱筛选来源。</p>
+                <p>这个人群由人物工作区直接创建，没有声明图谱筛选来源。</p>
               ) : null}
               {graphOriginsState.status === "success" && graphOriginsState.data.items.length > 0 ? (
                 <ol>

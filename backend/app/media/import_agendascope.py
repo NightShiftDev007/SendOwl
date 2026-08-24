@@ -1,4 +1,4 @@
-"""Idempotently import the AgendaScope media read model into AI Decision Center.
+"""Idempotently import the AgendaScope media read model into SandOwl.
 
 Run with ``python -m app.media.import_agendascope``. The source transaction is
 explicitly read-only; credentials and DSNs are never included in output.
@@ -680,7 +680,7 @@ async def _reconcile_absent_articles(
     target_connection: AsyncConnection,
     source_observed_at: datetime,
 ) -> int:
-    """Hide source-absent articles while preserving frozen SendOwl evidence rows."""
+    """Hide source-absent articles while preserving frozen SandOwl evidence rows."""
     target = _target_table(next(spec for spec in IMPORT_SPECS if spec.source_table == "articles"))
     result = await target_connection.execute(
         update(target)

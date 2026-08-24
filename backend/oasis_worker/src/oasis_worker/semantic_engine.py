@@ -51,12 +51,14 @@ from oasis_worker.semantic_contracts import (
     SemanticPersona,
     SemanticRuntimeConfig,
     SemanticSuccess,
+    SocialSimulationExecution,
 )
 from oasis_worker.semantic_hashing import (
     MODEL_CONTEXT_TOKEN_LIMIT,
     MODEL_ENABLE_THINKING,
     MODEL_OUTPUT_MAX_TOKENS,
     MODEL_TOOL_CHOICE,
+    REPORT_DOMAIN_OUTPUT_MAX_TOKENS,
 )
 
 MODEL_TIMEOUT_SECONDS = 90.0
@@ -65,10 +67,10 @@ ALLOWED_AUDIENCE_ACTIONS = (*(ActionType(name) for name in ALLOWED_AUDIENCE_ACTI
 SEMANTIC_LIMITATIONS = (
     "OpenAI-compatible provider behavior is nondeterministic; the recorded seed does not "
     "guarantee provider-level reproducibility.",
-    "This semantic trial is limited to at most eight personas and three rounds on Reddit.",
+    "This social simulation is limited to at most eight personas and six rounds on Reddit.",
     "The trial has no real social network; agents only observe OASIS recommendations.",
     "Persona prompts use a deterministic bounded projection of at most forty informative "
-    "profile attributes and do not contain the variant hypothesis.",
+    "profile attributes and do not contain hidden analysis instructions.",
     "Events are observed actions only; no stance, reach, prediction, or decision verdict is "
     "inferred.",
 )
@@ -237,13 +239,15 @@ async def probe_semantic_runtime(model_backend: BaseModelBackend) -> None:
         )
 
 
-def create_provider_model(config: SemanticRuntimeConfig) -> BaseModelBackend:
-    """Build an explicit key-scoped OpenAI-compatible backend without environment mutation."""
+def _create_provider_model(
+    config: SemanticRuntimeConfig,
+    output_max_tokens: int,
+) -> BaseModelBackend:
     backend = ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
         model_type=config.model_name,
         model_config_dict={
-            "max_tokens": MODEL_OUTPUT_MAX_TOKENS,
+            "max_tokens": output_max_tokens,
             "tool_choice": MODEL_TOOL_CHOICE,
             "extra_body": {"enable_thinking": MODEL_ENABLE_THINKING},
         },
@@ -253,6 +257,16 @@ def create_provider_model(config: SemanticRuntimeConfig) -> BaseModelBackend:
         max_retries=MODEL_MAX_RETRIES,
     )
     return SemanticOpenAIBackend(backend)
+
+
+def create_provider_model(config: SemanticRuntimeConfig) -> BaseModelBackend:
+    """Build the bounded semantic-simulation provider backend."""
+    return _create_provider_model(config, MODEL_OUTPUT_MAX_TOKENS)
+
+
+def create_report_provider_model(config: SemanticRuntimeConfig) -> BaseModelBackend:
+    """Build the report-domain backend with room for complete cited tool JSON."""
+    return _create_provider_model(config, REPORT_DOMAIN_OUTPUT_MAX_TOKENS)
 
 
 def project_persona_profile(persona: SemanticPersona) -> ProfileProjection:
@@ -279,17 +293,19 @@ def project_persona_profile(persona: SemanticPersona) -> ProfileProjection:
     )
 
 
-def _artifact_path(artifact_root: Path, trial: ClaimedSemanticTrial) -> Path:
-    directory = artifact_root / str(trial.id)
+def _artifact_path(artifact_root: Path, execution: SocialSimulationExecution) -> Path:
+    directory = artifact_root / str(execution.id)
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise OasisExecutionError(
-            f"cannot create semantic artifact directory for {trial.id}"
+            f"cannot create simulation artifact directory for {execution.id}"
         ) from error
-    path = directory / f"{trial.id}.sqlite3"
+    path = directory / f"{execution.id}.sqlite3"
     if path.exists():
-        raise ArtifactConflictError(f"refusing to overwrite semantic artifact for trial {trial.id}")
+        raise ArtifactConflictError(
+            f"refusing to overwrite simulation artifact for run {execution.id}"
+        )
     return path
 
 
@@ -304,7 +320,7 @@ def _seed_runtime(seed: int) -> None:
 
 
 def _audience_agent(
-    trial: ClaimedSemanticTrial,
+    execution: SocialSimulationExecution,
     persona: SemanticPersona,
     model_backend: BaseModelBackend,
     graph: AgentGraph,
@@ -314,7 +330,7 @@ def _audience_agent(
         user_name=f"persona_{persona.position:03d}",
         name=persona.display_name,
         description=(
-            f"MatrAIx persona {persona.persona_id} from {persona.source}; "
+            f"SandOwl synthetic persona {persona.persona_id} from {persona.source}; "
             f"profile_sha256={persona.profile_sha256}"
         ),
         profile={
@@ -322,7 +338,7 @@ def _audience_agent(
             "source": persona.source,
             "profile_sha256": persona.profile_sha256,
             "profile_projection": projection.text,
-            "decision_question": trial.experiment.decision_question,
+            "decision_question": execution.decision_question,
         },
         recsys_type="reddit",
         is_controllable=False,
@@ -340,15 +356,15 @@ def _audience_agent(
     return agent
 
 
-def _scenario_agent(trial: ClaimedSemanticTrial, graph: AgentGraph) -> SocialAgent:
-    agent_id = trial.cohort.persona_count
+def _scenario_agent(
+    execution: SocialSimulationExecution,
+    graph: AgentGraph,
+) -> SocialAgent:
+    agent_id = execution.cohort.persona_count
     user_info = UserInfo(
-        user_name=f"scenario_{str(trial.scenario_variant_id).replace('-', '')[:16]}",
-        name=f"Scenario actor {trial.scenario_position}",
-        description=(
-            f"Synthetic intervention actor for scenario {trial.experiment.scenario_id}; "
-            f"variant position {trial.scenario_position}."
-        ),
+        user_name=execution.actor_user_name,
+        name=execution.actor_name,
+        description=execution.actor_bio,
         profile=None,
         recsys_type="reddit",
         is_controllable=True,
@@ -411,7 +427,7 @@ def _exact_keys(info: Mapping[str, object], keys: set[str], rowid: int) -> None:
 def _normalize_trace(
     connection: sqlite3.Connection,
     row: sqlite3.Row,
-    trial: ClaimedSemanticTrial,
+    execution: SocialSimulationExecution,
     round_number: int,
     phase: str,
 ) -> TraceObservation:
@@ -424,7 +440,7 @@ def _normalize_trace(
         raise ArtifactVerificationError(f"trace row {rowid} has unsupported action {action!r}")
     observed_at = _require_string(row["created_at"], f"trace[{rowid}].created_at")
     info = _parse_info(row["info"], rowid)
-    scenario_position = trial.cohort.persona_count
+    scenario_position = execution.cohort.persona_count
     if phase == "intervention":
         if user_id != scenario_position:
             raise ArtifactVerificationError(f"trace row {rowid} is not from the scenario actor")
@@ -432,10 +448,10 @@ def _normalize_trace(
         persona_id = None
         public_agent_position = 0
     else:
-        if not 0 <= user_id < trial.cohort.persona_count:
+        if not 0 <= user_id < execution.cohort.persona_count:
             raise ArtifactVerificationError(f"trace row {rowid} is not from an audience agent")
         actor_kind = "persona"
-        persona_id = trial.cohort.personas[user_id].id
+        persona_id = execution.cohort.personas[user_id].id
         public_agent_position = user_id + 1
 
     content: str | None = None
@@ -491,7 +507,7 @@ def _normalize_trace(
 def _new_observations(
     path: Path,
     after_rowid: int,
-    trial: ClaimedSemanticTrial,
+    execution: SocialSimulationExecution,
     round_number: int,
     phase: str,
 ) -> tuple[TraceObservation, ...]:
@@ -508,10 +524,12 @@ def _new_observations(
                 ActionType.DO_NOTHING.value,
             ),
         ).fetchall()
-        return tuple(_normalize_trace(connection, row, trial, round_number, phase) for row in rows)
+        return tuple(
+            _normalize_trace(connection, row, execution, round_number, phase) for row in rows
+        )
 
 
-def _verify_users(path: Path, trial: ClaimedSemanticTrial) -> None:
+def _verify_users(path: Path, execution: SocialSimulationExecution) -> None:
     expected = [
         (
             persona.position,
@@ -519,23 +537,20 @@ def _verify_users(path: Path, trial: ClaimedSemanticTrial) -> None:
             f"persona_{persona.position:03d}",
             persona.display_name,
             (
-                f"MatrAIx persona {persona.persona_id} from {persona.source}; "
+                f"SandOwl synthetic persona {persona.persona_id} from {persona.source}; "
                 f"profile_sha256={persona.profile_sha256}"
             ),
         )
-        for persona in trial.cohort.personas
+        for persona in execution.cohort.personas
     ]
-    scenario_id = trial.cohort.persona_count
+    scenario_id = execution.cohort.persona_count
     expected.append(
         (
             scenario_id,
             scenario_id,
-            f"scenario_{str(trial.scenario_variant_id).replace('-', '')[:16]}",
-            f"Scenario actor {trial.scenario_position}",
-            (
-                f"Synthetic intervention actor for scenario {trial.experiment.scenario_id}; "
-                f"variant position {trial.scenario_position}."
-            ),
+            execution.actor_user_name,
+            execution.actor_name,
+            execution.actor_bio,
         )
     )
     with _connect_sqlite(path) as connection:
@@ -564,10 +579,10 @@ def _hash_file(path: Path) -> tuple[str, int]:
 
 def _verify_artifact(
     path: Path,
-    trial: ClaimedSemanticTrial,
+    execution: SocialSimulationExecution,
     observations: Sequence[TraceObservation],
 ) -> SemanticSuccess:
-    _verify_users(path, trial)
+    _verify_users(path, execution)
     events = tuple(item.event for item in observations)
     with _connect_sqlite(path) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
@@ -588,7 +603,7 @@ def _verify_artifact(
         dislike_rows = int(connection.execute("SELECT count(*) FROM dislike").fetchone()[0])
 
     initial_events = tuple(event for event in events if event.phase == "intervention")
-    expected_interventions = trial.selected_variant.interventions
+    expected_interventions = execution.initial_posts
     if tuple(event.content for event in initial_events) != tuple(
         item.content for item in expected_interventions
     ):
@@ -606,39 +621,64 @@ def _verify_artifact(
         raise ArtifactVerificationError(
             "semantic interaction table counts do not match typed events"
         )
-    expected_audience_actions = trial.experiment.rounds * trial.cohort.persona_count
+    expected_audience_actions = execution.rounds * execution.cohort.persona_count
     if len(events) != initial_post_count + expected_audience_actions:
         raise ArtifactVerificationError("semantic action count does not match rounds and cohort")
     artifact_sha256, artifact_size_bytes = _hash_file(path)
     return SemanticSuccess(
         engine_version=EXPECTED_OASIS_VERSION,
         camel_version=EXPECTED_CAMEL_VERSION,
-        model_name=trial.experiment.model_name,
-        semantic_config_sha256=trial.experiment.semantic_config_sha256,
-        prompt_schema_version=trial.experiment.prompt_schema_version,
+        model_name=execution.model_name,
+        semantic_config_sha256=execution.semantic_config_sha256,
+        prompt_schema_version=execution.prompt_schema_version,
         artifact_sha256=artifact_sha256,
         artifact_size_bytes=artifact_size_bytes,
-        user_count=trial.cohort.persona_count + 1,
+        user_count=execution.cohort.persona_count + 1,
         initial_post_count=initial_post_count,
         generated_post_count=generated_post_count,
         comment_count=comment_count,
         reaction_count=reaction_count,
         do_nothing_count=do_nothing_count,
         observed_action_count=len(events),
-        rounds_completed=trial.experiment.rounds,
+        rounds_completed=execution.rounds,
         limitations=SEMANTIC_LIMITATIONS,
     )
 
 
-async def run_semantic_trial(
-    trial: ClaimedSemanticTrial,
+def execution_from_semantic_trial(trial: ClaimedSemanticTrial) -> SocialSimulationExecution:
+    """Adapt the legacy comparison experiment at its execution boundary only."""
+    actor_key = str(trial.scenario_variant_id).replace("-", "")[:16]
+    return SocialSimulationExecution(
+        id=trial.id,
+        context_id=trial.experiment.id,
+        context_kind="semantic_experiment",
+        decision_question=trial.experiment.decision_question,
+        actor_user_name=f"scenario_{actor_key}",
+        actor_name=f"Scenario actor {trial.scenario_position}",
+        actor_bio=(
+            f"Synthetic intervention actor for scenario {trial.experiment.scenario_id}; "
+            f"variant position {trial.scenario_position}."
+        ),
+        seed=trial.seed,
+        rounds=trial.experiment.rounds,
+        minutes_per_round=trial.experiment.minutes_per_round,
+        model_name=trial.experiment.model_name,
+        semantic_config_sha256=trial.experiment.semantic_config_sha256,
+        prompt_schema_version=trial.experiment.prompt_schema_version,
+        initial_posts=trial.selected_variant.interventions,
+        cohort=trial.cohort,
+    )
+
+
+async def run_social_simulation(
+    execution: SocialSimulationExecution,
     artifact_root: Path,
     model_backend: BaseModelBackend,
     append_round: Callable[[int, Sequence[SemanticEvent]], None],
 ) -> SemanticSuccess:
-    """Execute all frozen rounds and persist each normalized round through a callback."""
-    database_path = _artifact_path(artifact_root, trial)
-    _seed_runtime(trial.seed)
+    """Execute one native social simulation without comparison or variant semantics."""
+    database_path = _artifact_path(artifact_root, execution)
+    _seed_runtime(execution.seed)
     graph = AgentGraph()
     environment = None
     primary_error: Exception | None = None
@@ -646,32 +686,32 @@ async def run_semantic_trial(
     injected_positions: set[int] = set()
     try:
         audience = tuple(
-            _audience_agent(trial, persona, model_backend, graph)
-            for persona in trial.cohort.personas
+            _audience_agent(execution, persona, model_backend, graph)
+            for persona in execution.cohort.personas
         )
         for agent in audience:
             graph.add_agent(agent)
-        scenario = _scenario_agent(trial, graph)
+        scenario = _scenario_agent(execution, graph)
         graph.add_agent(scenario)
         environment = make(
             agent_graph=graph,
             platform=DefaultPlatformType.REDDIT,
             database_path=str(database_path),
-            semaphore=trial.cohort.persona_count,
+            semaphore=execution.cohort.persona_count,
         )
         await environment.reset()
-        _verify_users(database_path, trial)
+        _verify_users(database_path, execution)
         trace_cursor = _last_trace_rowid(database_path)
-        for round_number in range(1, trial.experiment.rounds + 1):
+        for round_number in range(1, execution.rounds + 1):
             round_observations: list[TraceObservation] = []
             due = tuple(
                 item
-                for item in trial.selected_variant.interventions
+                for item in execution.initial_posts
                 if item.position not in injected_positions
                 and max(
                     1,
-                    (item.offset_minutes + trial.experiment.minutes_per_round - 1)
-                    // trial.experiment.minutes_per_round,
+                    (item.offset_minutes + execution.minutes_per_round - 1)
+                    // execution.minutes_per_round,
                 )
                 == round_number
             )
@@ -685,7 +725,7 @@ async def run_semantic_trial(
                     }
                 )
                 new_items = _new_observations(
-                    database_path, trace_cursor, trial, round_number, "intervention"
+                    database_path, trace_cursor, execution, round_number, "intervention"
                 )
                 if len(new_items) != 1:
                     raise OasisExecutionError(
@@ -697,16 +737,16 @@ async def run_semantic_trial(
                 injected_positions.add(intervention.position)
             await environment.step({agent: LLMAction() for agent in audience})
             audience_items = _new_observations(
-                database_path, trace_cursor, trial, round_number, "audience"
+                database_path, trace_cursor, execution, round_number, "audience"
             )
-            if len(audience_items) != trial.cohort.persona_count:
+            if len(audience_items) != execution.cohort.persona_count:
                 raise OasisExecutionError(
                     f"semantic round {round_number} requires exactly one successful trace per "
-                    f"audience agent; expected {trial.cohort.persona_count}, "
+                    f"audience agent; expected {execution.cohort.persona_count}, "
                     f"observed {len(audience_items)}"
                 )
             observed_agents = tuple(sorted(item.event.agent_position for item in audience_items))
-            if observed_agents != tuple(range(1, trial.cohort.persona_count + 1)):
+            if observed_agents != tuple(range(1, execution.cohort.persona_count + 1)):
                 raise OasisExecutionError(
                     f"semantic round {round_number} does not contain one trace per audience agent"
                 )
@@ -714,8 +754,8 @@ async def run_semantic_trial(
             round_observations.extend(audience_items)
             append_round(round_number, tuple(item.event for item in round_observations))
             observations.extend(round_observations)
-        if len(injected_positions) != len(trial.selected_variant.interventions):
-            raise OasisExecutionError("semantic trial ended before every intervention was injected")
+        if len(injected_positions) != len(execution.initial_posts):
+            raise OasisExecutionError("simulation ended before every initial post was injected")
     except Exception as error:
         primary_error = error
         if isinstance(
@@ -724,7 +764,7 @@ async def run_semantic_trial(
         ):
             raise
         raise OasisExecutionError(
-            f"OASIS semantic execution failed for trial {trial.id} with {type(error).__name__}"
+            f"OASIS social simulation failed for run {execution.id} with {type(error).__name__}"
         ) from error
     finally:
         cleanup_error: Exception | None = None
@@ -740,7 +780,22 @@ async def run_semantic_trial(
                 cleanup_error = error
         if primary_error is None and cleanup_error is not None:
             raise OasisExecutionError(
-                f"OASIS semantic cleanup failed for trial {trial.id} with "
+                f"OASIS social simulation cleanup failed for run {execution.id} with "
                 f"{type(cleanup_error).__name__}"
             ) from cleanup_error
-    return _verify_artifact(database_path, trial, tuple(observations))
+    return _verify_artifact(database_path, execution, tuple(observations))
+
+
+async def run_semantic_trial(
+    trial: ClaimedSemanticTrial,
+    artifact_root: Path,
+    model_backend: BaseModelBackend,
+    append_round: Callable[[int, Sequence[SemanticEvent]], None],
+) -> SemanticSuccess:
+    """Run one legacy experiment trial through the shared native execution core."""
+    return await run_social_simulation(
+        execution_from_semantic_trial(trial),
+        artifact_root,
+        model_backend,
+        append_round,
+    )

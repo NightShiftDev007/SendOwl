@@ -296,7 +296,7 @@ class MediaPropagationEdge(ContractModel):
     follower_source_id: UUID | None
     observation_source: Annotated[
         str,
-        StringConstraints(pattern=r"^(legacy_projection|structured_followers)$"),
+        StringConstraints(pattern=r"^(legacy_projection|structured_followers|native_collection)$"),
     ]
 
     def model_post_init(self, __context: object) -> None:
@@ -304,8 +304,13 @@ class MediaPropagationEdge(ContractModel):
         if self.observation_source == "structured_followers":
             if self.source_follower_id is None or self.follower_source_id is None:
                 raise ValueError("structured propagation edges require follower identities")
+        elif self.observation_source == "native_collection":
+            if self.source_follower_id is not None or self.follower_source_id is None:
+                raise ValueError(
+                    "native collection edges require a source identity without an import record"
+                )
         elif self.source_follower_id is not None:
-            raise ValueError("legacy propagation edges cannot claim a structured follower id")
+            raise ValueError("non-structured propagation edges cannot claim a follower record id")
 
 
 class MediaPropagationEvent(ContractModel):

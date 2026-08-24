@@ -181,6 +181,7 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
     __tablename__ = "simulation_worker_heartbeats"
 
     worker_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    worker_domain: Mapped[str] = mapped_column(String(32), nullable=False)
     engine: Mapped[str] = mapped_column(String(32), nullable=False)
     engine_version: Mapped[str] = mapped_column(String(32), nullable=False)
     camel_version: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -241,6 +242,10 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             "length(worker_id) BETWEEN 1 AND 128",
             name="ck_simulation_worker_heartbeats_worker_id",
         ),
+        CheckConstraint(
+            "worker_domain IN ('semantic', 'evaluation', 'report')",
+            name="ck_simulation_worker_heartbeats_domain",
+        ),
         CheckConstraint("engine = 'camel-oasis'", name="ck_simulation_worker_engine"),
         CheckConstraint(
             "engine_version = '0.2.5'",
@@ -249,7 +254,7 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
         CheckConstraint("camel_version = '0.2.78'", name="ck_simulation_worker_camel_version"),
         CheckConstraint("mode = 'reddit_manual_smoke'", name="ck_simulation_worker_mode"),
         CheckConstraint(
-            "(semantic_runtime_ready AND platform_runtime_ready AND "
+            "(semantic_runtime_ready AND worker_domain IN ('semantic', 'report') AND "
             "length(btrim(semantic_model_name)) BETWEEN 1 AND 200 "
             "AND semantic_model_name !~ E'[\\r\\n]' "
             "AND semantic_config_sha256 ~ '^[a-f0-9]{64}$' "
@@ -260,23 +265,23 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             name="ck_simulation_worker_semantic_config",
         ),
         CheckConstraint(
-            "(survey_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready AND "
+            "(survey_runtime_ready AND worker_domain = 'evaluation' AND "
             "length(btrim(survey_model_name)) BETWEEN 1 AND 200 "
             "AND survey_model_name !~ E'[\\r\\n]' "
             "AND survey_config_sha256 ~ '^[a-f0-9]{64}$' "
-            "AND survey_prompt_schema_version = 'matraix-survey-scenario-preference/v1') OR "
+            "AND survey_prompt_schema_version = 'sandowl-research-survey/v1') OR "
             "(NOT survey_runtime_ready AND survey_model_name IS NULL "
             "AND survey_config_sha256 IS NULL "
             "AND survey_prompt_schema_version IS NULL)",
             name="ck_simulation_worker_survey_config",
         ),
         CheckConstraint(
-            "(chat_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready AND "
+            "(chat_runtime_ready AND worker_domain = 'evaluation' AND "
             "length(btrim(chat_model_name)) BETWEEN 1 AND 200 "
             "AND chat_model_name !~ E'[\\r\\n]' "
             "AND chat_config_sha256 ~ '^[a-f0-9]{64}$' "
             "AND chat_prompt_schema_version = 'matraix-chat-acme-support/v1' "
-            "AND chat_sut_task_id = 'sendowl/matraix-acme-rest-mcp-suite' "
+            "AND chat_sut_task_id = 'sandowl/matraix-acme-rest-mcp-suite' "
             "AND chat_sut_task_version = '1.0.0' "
             "AND chat_sut_spec_sha256 = "
             "'0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a') OR "
@@ -287,7 +292,7 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             name="ck_simulation_worker_chat_config",
         ),
         CheckConstraint(
-            "(web_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready "
+            "(web_runtime_ready AND worker_domain = 'evaluation' "
             "AND length(btrim(web_model_name)) BETWEEN 1 AND 200 "
             "AND web_model_name !~ E'[\\r\\n]' "
             "AND web_config_sha256 ~ '^[a-f0-9]{64}$' "
@@ -301,7 +306,7 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             name="ck_simulation_worker_web_config",
         ),
         CheckConstraint(
-            "(linux_runtime_ready AND platform_runtime_ready AND semantic_runtime_ready "
+            "(linux_runtime_ready AND worker_domain = 'evaluation' "
             "AND length(btrim(linux_model_name)) BETWEEN 1 AND 200 "
             "AND linux_model_name !~ E'[\\r\\n]' "
             "AND linux_config_sha256 ~ '^[a-f0-9]{64}$' "
@@ -315,4 +320,9 @@ class SimulationWorkerHeartbeatRecord(ApplicationBase):
             name="ck_simulation_worker_linux_config",
         ),
         Index("ix_simulation_worker_heartbeats_last_seen", "last_seen_at"),
+        Index(
+            "ix_simulation_worker_heartbeats_domain_last_seen",
+            "worker_domain",
+            "last_seen_at",
+        ),
     )

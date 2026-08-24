@@ -1,5 +1,5 @@
 [project]
-name = "sendowl-acme-support-mcp-sample"
+name = "sandowl-acme-support-mcp-sample"
 version = "1.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = ["mcp==1.29.0"]

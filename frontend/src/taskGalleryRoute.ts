@@ -14,9 +14,13 @@ const allowedParameterNames = new Set([
   "kind",
   "status",
   "page",
+  "project_id",
+  "run_id",
 ]);
 
 export interface TaskGalleryRoute {
+  readonly projectId?: string | null;
+  readonly runId?: string | null;
   readonly task: z.infer<typeof taskKindSchema> | null;
   readonly experimentId: string | null;
   readonly evaluationId: string | null;
@@ -68,6 +72,11 @@ export function resolveTaskGalleryRoute(query: string): TaskGalleryRouteResult {
     }
 
     const task = taskResult?.data ?? null;
+    const projectId = optionalIdentifier(singleParameter(parameters, "project_id"), "project_id");
+    const runId = optionalIdentifier(singleParameter(parameters, "run_id"), "run_id");
+    if ((projectId === null) !== (runId === null)) {
+      return { status: "invalid", message: "project_id 与 run_id 必须成对提供。" };
+    }
     const experimentId = optionalIdentifier(
       singleParameter(parameters, "experiment_id"),
       "experiment_id",
@@ -144,6 +153,7 @@ export function resolveTaskGalleryRoute(query: string): TaskGalleryRouteResult {
     return {
       status: "resolved",
       route: {
+        ...(projectId === null ? {} : { projectId, runId }),
         task,
         experimentId,
         evaluationId,
@@ -163,6 +173,11 @@ export function resolveTaskGalleryRoute(query: string): TaskGalleryRouteResult {
 }
 
 export function createTaskGalleryHash(route: TaskGalleryRoute): string {
+  const projectId = route.projectId ?? null;
+  const runId = route.runId ?? null;
+  if ((projectId === null) !== (runId === null)) {
+    throw new Error("Project and Run identifiers must be serialized together.");
+  }
   if (route.task !== "survey" && route.experimentId !== null) {
     throw new Error("Only Survey Playground may serialize experiment state.");
   }
@@ -193,8 +208,15 @@ export function createTaskGalleryHash(route: TaskGalleryRoute): string {
     throw new Error("Pagination requires a selected task.");
   }
 
-  if (route.task === null) return "#/tasks";
+  if (route.task === null) {
+    if (projectId === null || runId === null) return "#/tasks";
+    return `#/tasks?project_id=${identifierSchema.parse(projectId)}&run_id=${identifierSchema.parse(runId)}`;
+  }
   const parameters = new URLSearchParams({ task: taskKindSchema.parse(route.task) });
+  if (projectId !== null && runId !== null) {
+    parameters.set("project_id", identifierSchema.parse(projectId));
+    parameters.set("run_id", identifierSchema.parse(runId));
+  }
   if (route.experimentId !== null) {
     parameters.set("experiment_id", identifierSchema.parse(route.experimentId));
   }

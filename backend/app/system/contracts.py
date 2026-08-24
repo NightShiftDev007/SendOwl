@@ -83,6 +83,7 @@ class CapabilityStatus(StrEnum):
 
     CONTRACT_READY = "contract_ready"
     RUNTIME_READY = "runtime_ready"
+    LEGACY_READONLY = "legacy_readonly"
 
 
 class CapabilityDescriptor(ContractModel):

@@ -60,8 +60,10 @@ function rootFields(): Pick<
   };
 }
 
-function parentDetailHash(item: TrialArchiveItem): string {
+function parentDetailHash(item: TrialArchiveItem, route: TaskGalleryRoute): string {
   const common = {
+    projectId: route.projectId ?? null,
+    runId: route.runId ?? null,
     archiveKind: null,
     archiveStatus: null,
     page: null,
@@ -69,29 +71,30 @@ function parentDetailHash(item: TrialArchiveItem): string {
     registryId: null,
   } as const;
   if (item.kind === "survey") {
+    if (item.task.version === "scenario-preference/v1") return item.source_detail_path;
     return createTaskGalleryHash({
-        task: "survey",
-        experimentId: item.parent_id,
-        evaluationId: null,
-        ...common,
-      });
+      task: "survey",
+      experimentId: item.parent_id,
+      evaluationId: null,
+      ...common,
+    });
   }
   if (item.kind === "chat" || item.kind === "web") {
     return createTaskGalleryHash({
-        task: item.kind,
-        experimentId: null,
-        evaluationId: item.parent_id,
-        ...common,
-        page: 1,
-      });
+      task: item.kind,
+      experimentId: null,
+      evaluationId: item.parent_id,
+      ...common,
+      page: 1,
+    });
   }
   return createTaskGalleryHash({
-        task: "linux",
-        experimentId: null,
-        evaluationId: null,
-        ...common,
-        page: 1,
-      });
+    task: "linux",
+    experimentId: null,
+    evaluationId: null,
+    ...common,
+    page: 1,
+  });
 }
 
 function statusTimestamp(item: TrialArchiveItem): string {
@@ -115,7 +118,7 @@ function TrialRow({
         <span className="trial-archive-row-kind" data-kind={item.kind}>{kindLabels[item.kind]}</span>
         <span className="trial-archive-row-task">
           <strong>{item.task.title}</strong>
-          <small>{item.task.version} · {item.persona.display_name}</small>
+          <small>{item.kind === "survey" && item.task.version === "scenario-preference/v1" ? "历史 ADC · " : ""}{item.task.version} · {item.persona.display_name}</small>
         </span>
         <span className="trial-archive-row-persona">
           <strong>{item.persona.persona_id}</strong>
@@ -182,9 +185,11 @@ function ProvenanceRows({ item }: { readonly item: TrialArchiveItem }): JSX.Elem
 
 function TrialInspector({
   item,
+  route,
   selectionMissing,
 }: {
   readonly item: TrialArchiveItem | null;
+  readonly route: TaskGalleryRoute;
   readonly selectionMissing: boolean;
 }): JSX.Element {
   const verification = useTrialIntegrityVerification(item?.kind ?? null, item?.id ?? null);
@@ -257,7 +262,7 @@ function TrialInspector({
               </>
             ) : null}
           </section>
-          <a className="trial-archive-open" href={parentDetailHash(item)}>
+          <a className="trial-archive-open" href={parentDetailHash(item, route)}>
             打开所属 {kindLabels[item.kind]} Trial →
           </a>
           <p className="trial-archive-boundary">跳转仅由记录类型、所属父任务和 Trial 标识构造；进入详情后会再次核对父子成员关系。</p>
@@ -318,10 +323,10 @@ export function TrialArchivePage({
   return (
     <div className="trial-archive-page">
       <header className="trial-archive-header">
-        <button type="button" onClick={onBack}>← Task Gallery</button>
+        <button type="button" onClick={onBack}>← 返回评测中心</button>
         <div>
-          <span>MATRAIX / TRIAL ARCHIVE</span>
-          <h2>Survey、Chat、Web 与 Linux Trial 的统一证据目录</h2>
+          <span>SANDOWL / 试验档案</span>
+          <h1>Survey、Chat、Web 与 Linux Trial 的统一证据目录</h1>
           <p>只读聚合本库中已经持久化的 Trial；状态、Persona、错误和 provenance 按原记录呈现，并提供当前服务端筛选的精确计数，不计算跨任务分数。</p>
         </div>
         <dl>
@@ -401,13 +406,13 @@ export function TrialArchivePage({
           </section>
         </aside>
 
-        <main className="trial-archive-stage" aria-labelledby="trial-archive-stage-title">
+        <section className="trial-archive-stage" aria-labelledby="trial-archive-stage-title">
           <header>
             <div><span>RECORDS / DURABLE</span><h3 id="trial-archive-stage-title">真实 Trial 目录</h3></div>
             <p>{response === null ? "等待接口" : `本页 ${response.items.length} 条`}</p>
           </header>
           {state.status === "error" ? (
-            <ApiErrorPanel title="无法读取 Trial Archive" error={state.error} isRetrying={state.isRetrying} onRetry={reload} />
+            <ApiErrorPanel title="无法读取试验档案" error={state.error} isRetrying={state.isRetrying} onRetry={reload} />
           ) : null}
           {state.status === "loading" && response === null ? (
             <div className="trial-archive-loading" role="status"><span className="skeleton-block" /><span className="skeleton-block" /><span className="skeleton-block" /></div>
@@ -436,7 +441,7 @@ export function TrialArchivePage({
           {response !== null
           && totalPages !== null
           && (response.total > 0 || archivePage > 1) ? (
-            <nav className="trial-archive-pagination" aria-label="Trial Archive 分页">
+            <nav className="trial-archive-pagination" aria-label="试验档案分页">
               <button
                 type="button"
                 disabled={archivePage <= 1 || state.status === "loading"}
@@ -450,9 +455,9 @@ export function TrialArchivePage({
               >下一页</button>
             </nav>
           ) : null}
-        </main>
+        </section>
 
-        <TrialInspector item={selectedItem} selectionMissing={selectionMissing} />
+        <TrialInspector item={selectedItem} route={route} selectionMissing={selectionMissing} />
       </div>
     </div>
   );

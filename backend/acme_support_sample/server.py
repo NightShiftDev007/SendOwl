@@ -2,7 +2,7 @@
 
 This is a source-sample application used to exercise the Chatbot Evaluation
 runtime. It is not a production customer-support system and stores no shared
-conversation state; the SendOwl worker owns each trial transcript.
+conversation state; the SandOwl worker owns each trial transcript.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def ready_response() -> ReadyResponse:
 class AcmeSupportRequestHandler(BaseHTTPRequestHandler):
     """Strict JSON boundary for the isolated source-sample application."""
 
-    server_version = "SendOwlAcmeSupport/1.0"
+    server_version = "SandOwlAcmeSupport/1.0"
     sys_version = ""
 
     def _write_json(self, status: HTTPStatus, body: object) -> None:

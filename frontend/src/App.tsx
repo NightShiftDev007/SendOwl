@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "./AppShell";
 import {
@@ -6,26 +6,25 @@ import {
   requireNavigationItem,
   type SectionId,
 } from "./domain";
-import { DecisionReportsPage } from "./DecisionReportsPage";
-import { DecisionThreadsPage, createDecisionThreadHash } from "./DecisionThreadsPage";
-import { MediaPage } from "./MediaPage";
 import {
   createMediaHash,
   resolveMediaRoute,
   type MediaRoute,
 } from "./mediaRoute";
-import { OasisPlatformSmokePage } from "./OasisPlatformSmokePage";
-import { OverviewPage } from "./OverviewPage";
-import { PersonaWorldPage } from "./PersonaWorldPage";
-import { PolicyEvidencePage } from "./PolicyEvidencePage";
-import { ScenarioPage } from "./ScenarioPage";
-import { TaskGalleryPage } from "./TaskGalleryPage";
+import {
+  createResearchProjectHash,
+  resolveResearchProjectRoute,
+  type ResearchProjectRoute,
+} from "./researchProjectRoute";
+import {
+  resolveReportWorkspaceRoute,
+  type ReportWorkspaceRoute,
+} from "./reportWorkspaceRoute";
 import {
   createTaskGalleryHash,
   resolveTaskGalleryRoute,
   type TaskGalleryRoute,
 } from "./taskGalleryRoute";
-import { WorldModelPage } from "./WorldModelPage";
 import {
   createWorldHash,
   resolveWorldRoute,
@@ -36,6 +35,74 @@ import {
   resolveRunStudioRoute,
   type RunStudioRoute,
 } from "./runStudioRoute";
+
+const DecisionReportsPage = lazy(async () => {
+  const module = await import("./DecisionReportsPage");
+  return { default: module.DecisionReportsPage };
+});
+const DecisionThreadsPage = lazy(async () => {
+  const module = await import("./DecisionThreadsPage");
+  return { default: module.DecisionThreadsPage };
+});
+const MediaPage = lazy(async () => {
+  const module = await import("./MediaPage");
+  return { default: module.MediaPage };
+});
+const OasisPlatformSmokePage = lazy(async () => {
+  const module = await import("./OasisPlatformSmokePage");
+  return { default: module.OasisPlatformSmokePage };
+});
+const OverviewPage = lazy(async () => {
+  const module = await import("./OverviewPage");
+  return { default: module.OverviewPage };
+});
+const PersonaWorldPage = lazy(async () => {
+  const module = await import("./PersonaWorldPage");
+  return { default: module.PersonaWorldPage };
+});
+const PolicyEvidencePage = lazy(async () => {
+  const module = await import("./PolicyEvidencePage");
+  return { default: module.PolicyEvidencePage };
+});
+const ResearchProjectsPage = lazy(async () => {
+  const module = await import("./ResearchProjectsPage");
+  return { default: module.ResearchProjectsPage };
+});
+const ResearchReportsPage = lazy(async () => {
+  const module = await import("./ResearchReportsPage");
+  return { default: module.ResearchReportsPage };
+});
+const ResearchRunStudioPage = lazy(async () => {
+  const module = await import("./ResearchRunStudioPage");
+  return { default: module.ResearchRunStudioPage };
+});
+const ScenarioPage = lazy(async () => {
+  const module = await import("./ScenarioPage");
+  return { default: module.ScenarioPage };
+});
+const TaskGalleryPage = lazy(async () => {
+  const module = await import("./TaskGalleryPage");
+  return { default: module.TaskGalleryPage };
+});
+const WorldModelPage = lazy(async () => {
+  const module = await import("./WorldModelPage");
+  return { default: module.WorldModelPage };
+});
+
+function createDecisionThreadHash(threadId: string | null): string {
+  return threadId === null ? "#/threads" : `#/threads?thread_id=${encodeURIComponent(threadId)}`;
+}
+
+function PageLoadingFallback(): JSX.Element {
+  return (
+    <section className="page-loading-fallback" role="status" aria-live="polite">
+      <span className="sr-only">正在加载工作区</span>
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+      <span className="skeleton-block" aria-hidden="true" />
+    </section>
+  );
+}
 
 function renderActivePage(
   activeSection: SectionId,
@@ -48,7 +115,10 @@ function renderActivePage(
   onTaskGalleryRouteChange: (route: TaskGalleryRoute) => void,
   worldRoute: WorldRoute | null,
   onWorldRouteChange: (route: WorldRoute) => void,
+  researchProjectRoute: ResearchProjectRoute | null,
+  onResearchProjectRouteChange: (route: ResearchProjectRoute) => void,
   resourceId: string | null,
+  reportWorkspaceRoute: ReportWorkspaceRoute | null,
 ): JSX.Element {
   if (activeSection === "overview") {
     return (
@@ -71,6 +141,18 @@ function renderActivePage(
 
   if (activeSection === "policy") {
     return <PolicyEvidencePage />;
+  }
+
+  if (activeSection === "projects") {
+    if (researchProjectRoute === null) {
+      throw new Error("Research Project route is missing for the projects workspace.");
+    }
+    return (
+      <ResearchProjectsPage
+        route={researchProjectRoute}
+        onRouteChange={onResearchProjectRouteChange}
+      />
+    );
   }
 
   if (activeSection === "threads") {
@@ -116,16 +198,33 @@ function renderActivePage(
       throw new Error("Run Studio route is missing for the runs workspace.");
     }
 
-    return (
-      <OasisPlatformSmokePage
-        route={runStudioRoute}
-        onRouteChange={onRunStudioRouteChange}
-      />
-    );
+    return runStudioRoute.mode === "native"
+      ? (
+        <ResearchRunStudioPage
+          route={runStudioRoute}
+          onRouteChange={onRunStudioRouteChange}
+        />
+      )
+      : (
+        <OasisPlatformSmokePage
+          route={runStudioRoute}
+          onRouteChange={onRunStudioRouteChange}
+        />
+      );
   }
 
   if (activeSection === "reports") {
-    return <DecisionReportsPage initialExperimentId={resourceId} />;
+    if (reportWorkspaceRoute === null) {
+      throw new Error("Report workspace route is missing for the reports workspace.");
+    }
+    return reportWorkspaceRoute.mode === "legacy"
+      ? <DecisionReportsPage initialExperimentId={reportWorkspaceRoute.experimentId} />
+      : (
+        <ResearchReportsPage
+          initialProjectId={reportWorkspaceRoute.projectId}
+          initialRunId={reportWorkspaceRoute.runId}
+        />
+      );
   }
 
   throw new Error(`Unsupported application section: ${String(activeSection)}`);
@@ -143,7 +242,9 @@ type HashRoute =
       readonly mediaRoute: MediaRoute | null;
       readonly taskGalleryRoute: TaskGalleryRoute | null;
       readonly worldRoute: WorldRoute | null;
+      readonly researchProjectRoute?: ResearchProjectRoute;
       readonly resourceId: string | null;
+      readonly reportWorkspaceRoute?: ReportWorkspaceRoute;
     }
   | { readonly status: "invalid"; readonly hash: string; readonly message: string };
 
@@ -186,7 +287,7 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     };
   }
 
-  if (query !== "" && !["media", "runs", "threads", "reports", "tasks", "world"].includes(section.id)) {
+  if (query !== "" && !["media", "runs", "threads", "reports", "tasks", "world", "projects"].includes(section.id)) {
     return {
       status: "invalid",
       hash,
@@ -270,9 +371,43 @@ export function resolveSectionFromHash(hash: string): HashRoute {
     };
   }
 
-  if (section.id === "threads" || section.id === "reports") {
+  if (section.id === "projects") {
+    const result = resolveResearchProjectRoute(query);
+    if (result.status === "invalid") {
+      return { status: "invalid", hash, message: result.message };
+    }
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: null,
+      resourceId: null,
+      researchProjectRoute: result.route,
+    };
+  }
+
+  if (section.id === "reports") {
+    const result = resolveReportWorkspaceRoute(query);
+    if (result.status === "invalid") {
+      return { status: "invalid", hash, message: result.message };
+    }
+    return {
+      status: "resolved",
+      section: section.id,
+      runStudioRoute: null,
+      mediaRoute: null,
+      taskGalleryRoute: null,
+      worldRoute: null,
+      resourceId: null,
+      reportWorkspaceRoute: result.route,
+    };
+  }
+
+  if (section.id === "threads") {
     const parameters = new URLSearchParams(query);
-    const expectedName = section.id === "threads" ? "thread_id" : "experiment_id";
+    const expectedName = "thread_id";
     if ([...parameters.keys()].some((name) => name !== expectedName)) {
       return {
         status: "invalid",
@@ -368,8 +503,8 @@ function RouteErrorPage({ route }: { readonly route: Extract<HashRoute, { status
           </section>
           <aside className="implementation-note" aria-label="恢复导航">
             <strong>返回安全入口</strong>
-            <p>回到决策工作台后，可从主导航重新进入需要的模块。</p>
-            <a className="button button-primary" href={createSectionHref("overview")}>返回决策工作台</a>
+            <p>回到态势总览后，可从主导航重新进入需要的工作区。</p>
+            <a className="button button-primary" href={createSectionHref("overview")}>返回态势总览</a>
           </aside>
         </div>
       </main>
@@ -391,6 +526,9 @@ export function App(): JSX.Element {
   const updateWorldRoute = useCallback((nextRoute: WorldRoute): void => {
     window.location.hash = createWorldHash(nextRoute);
   }, []);
+  const updateResearchProjectRoute = useCallback((nextRoute: ResearchProjectRoute): void => {
+    window.location.hash = createResearchProjectHash(nextRoute);
+  }, []);
 
   if (route.status === "invalid") {
     return <RouteErrorPage route={route} />;
@@ -406,19 +544,24 @@ export function App(): JSX.Element {
       navigation={navigationItems}
       createSectionHref={createSectionHref}
     >
-      {renderActivePage(
-        activeSection,
-        navigate,
-        route.runStudioRoute,
-        updateRunStudioRoute,
-        route.mediaRoute,
-        updateMediaRoute,
-        route.taskGalleryRoute,
-        updateTaskGalleryRoute,
-        route.worldRoute,
-        updateWorldRoute,
-        route.resourceId,
-      )}
+      <Suspense fallback={<PageLoadingFallback />}>
+        {renderActivePage(
+          activeSection,
+          navigate,
+          route.runStudioRoute,
+          updateRunStudioRoute,
+          route.mediaRoute,
+          updateMediaRoute,
+          route.taskGalleryRoute,
+          updateTaskGalleryRoute,
+          route.worldRoute,
+          updateWorldRoute,
+          route.researchProjectRoute ?? null,
+          updateResearchProjectRoute,
+          route.resourceId,
+          route.reportWorkspaceRoute ?? null,
+        )}
+      </Suspense>
     </AppShell>
   );
 }

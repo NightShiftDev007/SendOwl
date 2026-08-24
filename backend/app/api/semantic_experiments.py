@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
+from app.legacy_adc import reject_legacy_adc_write
 from app.populations.errors import PopulationCohortNotFoundError
 from app.scenarios.errors import ScenarioNotFoundError
 from app.semantic_experiments.contracts import (
@@ -64,6 +65,7 @@ def create_semantic_experiments_router() -> APIRouter:
         "/api/v2/semantic-experiments",
         response_model=SemanticExperimentDetail,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue_semantic_experiment(
         request: SemanticExperimentCreateRequest,

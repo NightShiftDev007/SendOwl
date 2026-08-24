@@ -10,6 +10,7 @@ from app.decision_threads.contracts import (
     DecisionThreadContextCreate,
     DecisionThreadCreateRequest,
     DecisionThreadDetail,
+    DecisionThreadDraftCreateRequest,
     DecisionThreadRevision,
     DecisionThreadsResponse,
     DecisionThreadSummary,
@@ -108,16 +109,29 @@ async def _load_detail(
         .all()
     )
     revisions = tuple(_revision(record) for record in records)
-    if not revisions:
-        raise RuntimeError(f"decision thread {thread.id} has no context revisions")
     return DecisionThreadDetail(
         id=thread.id,
         title=thread.title,
         decision_question=thread.decision_question,
         created_at=thread.created_at,
-        latest_revision=revisions[-1],
+        latest_revision=revisions[-1] if revisions else None,
         revisions=revisions,
     )
+
+
+async def create_decision_thread_draft(
+    session: AsyncSession,
+    request: DecisionThreadDraftCreateRequest,
+) -> DecisionThreadDetail:
+    thread = DecisionThreadRecord(
+        id=uuid4(),
+        title=request.title,
+        decision_question=request.decision_question,
+        created_at=datetime.now(UTC),
+    )
+    session.add(thread)
+    await session.commit()
+    return await _load_detail(session, thread)
 
 
 async def create_decision_thread(
@@ -168,13 +182,11 @@ async def append_decision_thread_revision(
         .order_by(DecisionThreadRevisionRecord.version.desc())
         .limit(1)
     )
-    if latest_version is None:
-        raise RuntimeError(f"decision thread {thread_id} has no context revisions")
     digests = await _validated_revision_values(session, thread.decision_question, request)
     revision = DecisionThreadRevisionRecord(
         id=uuid4(),
         thread_id=thread.id,
-        version=latest_version + 1,
+        version=(latest_version or 0) + 1,
         world_model_id=request.world_model_id,
         world_snapshot_id=request.world_snapshot_id,
         snapshot_sha256=digests[0],

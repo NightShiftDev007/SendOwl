@@ -43,6 +43,17 @@ describe("Task Gallery runtime readiness", () => {
     ).toBe("contract");
   });
 
+  it("keeps historical read-only capabilities out of new-work launch paths", () => {
+    const decision = evaluateTaskAvailability(
+      { expectedState: "runtime_ready", readinessKind: "platform" },
+      "legacy_readonly",
+      readyProbes,
+    );
+
+    expect(decision.availability).toBe("contract");
+    expect(decision.reason).toContain("历史读取");
+  });
+
   it("shows verification while a required readiness endpoint is loading", () => {
     const decision = evaluateTaskAvailability(
       { expectedState: "runtime_ready", readinessKind: "semantic" },

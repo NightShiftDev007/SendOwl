@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
 from app.decision_reports.errors import DecisionReportNotFoundError
+from app.legacy_adc import reject_legacy_adc_write
 from app.persona_interviews.contracts import (
     PersonaInterview,
     PersonaInterviewRequest,
@@ -54,6 +55,7 @@ def create_persona_interviews_router() -> APIRouter:
         "/api/v2/decision-reports/{report_id}/persona-interviews",
         response_model=PersonaInterview,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue(
         report_id: UUID,
@@ -97,6 +99,7 @@ def create_persona_interviews_router() -> APIRouter:
         "/api/v2/decision-reports/{report_id}/persona-interview-sessions",
         response_model=PersonaInterviewSession,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue_session(
         report_id: UUID,

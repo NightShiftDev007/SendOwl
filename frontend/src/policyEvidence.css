@@ -1,15 +1,15 @@
 .policy-page { display: grid; gap: 20px; }
 .policy-hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; padding: 24px; border: 1px solid var(--border); background: var(--surface); }
-.policy-hero h2, .policy-capture h3, .policy-detail h3, .policy-directory h3 { margin: 4px 0 0; }
+.policy-hero h1, .policy-capture h3, .policy-detail h3, .policy-directory h3 { margin: 4px 0 0; }
 .policy-hero p { max-width: 720px; margin: 0; color: var(--ink-muted); }
 .policy-hero span, .policy-capture header span, .policy-detail > header span, .policy-directory header span, .policy-content header span { color: var(--product-accent); font-size: 11px; letter-spacing: .14em; }
 .policy-layout { display: grid; grid-template-columns: minmax(280px, .85fr) minmax(420px, 1.5fr) minmax(280px, .85fr); gap: 16px; align-items: start; }
 .policy-capture, .policy-detail, .policy-directory { min-width: 0; border: 1px solid var(--border); background: var(--surface); padding: 18px; }
 .policy-capture { display: grid; gap: 12px; }
 .policy-capture label { display: grid; gap: 6px; color: var(--ink-muted); font-size: 12px; }
-.policy-capture input, .policy-capture textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--canvas); color: var(--ink); padding: 9px 10px; font: inherit; }
+.policy-capture input, .policy-capture textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; border: 1px solid var(--border); background: var(--canvas); color: var(--ink); padding: 9px 10px; font: inherit; }
 .policy-capture textarea, .policy-content pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.policy-capture-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.policy-capture-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; gap: 10px; }
 .policy-capture .policy-confirm { display: flex; align-items: start; gap: 8px; line-height: 1.5; }
 .policy-capture .policy-confirm input { width: auto; margin-top: 3px; }
 .policy-capture > button, .policy-directory button, .policy-versions button { border: 1px solid var(--border); background: var(--canvas); color: var(--ink); padding: 10px; cursor: pointer; }

@@ -66,7 +66,7 @@ class MatraixTrialArchiveError(ContractModel):
 
 class SurveyTrialArchiveTask(ContractModel):
     title: FrozenTaskTitle
-    version: Literal["scenario-preference/v1"]
+    version: Literal["scenario-preference/v1", "single-context-observation/v1"]
 
 
 class ChatTrialArchiveTask(ContractModel):
@@ -88,7 +88,9 @@ class SurveyTrialArchiveProvenance(ContractModel):
     runner_version: Literal["1.0.0"] | None
     model_name: FrozenModelName
     parent_config_sha256: Sha256Digest
-    prompt_schema_version: Literal["matraix-survey-scenario-preference/v1"]
+    prompt_schema_version: Literal[
+        "matraix-survey-scenario-preference/v1", "sandowl-research-survey/v1"
+    ]
     answers_sha256: Sha256Digest | None
 
 
@@ -178,7 +180,11 @@ class SurveyTrialArchiveItem(ContractModel):
             self.provenance.runner_version,
             (self.provenance.answers_sha256,),
         )
-        expected_path = f"/api/v2/matraix/survey-trials/{self.id}"
+        expected_path = (
+            f"/api/v2/research-surveys/{self.parent_id}"
+            if self.task.version == "single-context-observation/v1"
+            else f"/api/v2/matraix/survey-trials/{self.id}"
+        )
         if self.source_detail_path != expected_path:
             raise ValueError("survey source_detail_path must address the source trial")
         return self

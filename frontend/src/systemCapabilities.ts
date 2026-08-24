@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { getJson } from "./apiClient";
 
-const capabilityStateSchema = z.enum(["contract_ready", "runtime_ready"]);
+const capabilityStateSchema = z.enum(["contract_ready", "runtime_ready", "legacy_readonly"]);
 
 const capabilityDescriptorSchema = z.object({
   name: z.string().trim().min(1),

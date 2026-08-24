@@ -81,7 +81,7 @@ async def _live_graph_model_config(session: AsyncSession) -> tuple[str, str]:
                     SimulationWorkerHeartbeatRecord.engine == "camel-oasis",
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
-                    SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.worker_domain == "report",
                     SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
                     SimulationWorkerHeartbeatRecord.semantic_prompt_schema_version
                     == SEMANTIC_PROMPT_SCHEMA_VERSION,

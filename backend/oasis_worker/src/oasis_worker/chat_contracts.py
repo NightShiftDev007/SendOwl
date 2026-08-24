@@ -22,7 +22,7 @@ CHAT_TASK_SPEC_SHA256 = "4624a4ab5611ca216f7f2bdb34e44f8849233f8ce3f1a6b789fd793
 CHAT_SUT_SPEC_SHA256 = "b3609ac5ab58a4994c497f276d4689b8272150a9251676ddef84ebe9e8bdc980"
 CHAT_MCP_TASK_SPEC_SHA256 = "cd92b749ac08d0a229c3ea6191c52f03c096b03aff1689f5da04e7ec2daabd98"
 CHAT_MCP_SUT_SPEC_SHA256 = "5fbc2623be9df873de0c025edd1f2dcbf9d0b24672d627f1e063002c9e9587e1"
-CHAT_SUITE_ID = "sendowl/matraix-acme-rest-mcp-suite"
+CHAT_SUITE_ID = "sandowl/matraix-acme-rest-mcp-suite"
 CHAT_SUITE_VERSION = "1.0.0"
 CHAT_SUITE_SHA256 = "0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"
 CHAT_MIN_CUSTOMER_TURNS = 2
@@ -49,7 +49,7 @@ class ChatRuntimeConfig(StrictModel):
     model_name: Annotated[RequiredText, Field(max_length=200)]
     config_sha256: Sha256
     prompt_schema_version: Literal["matraix-chat-acme-support/v1"]
-    sut_task_id: Literal["sendowl/matraix-acme-rest-mcp-suite"]
+    sut_task_id: Literal["sandowl/matraix-acme-rest-mcp-suite"]
     sut_task_version: Literal["1.0.0"]
     sut_spec_sha256: Literal["0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"]
 

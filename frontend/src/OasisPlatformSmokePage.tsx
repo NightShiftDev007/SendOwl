@@ -21,7 +21,7 @@ import {
   type PlatformSmokeRunSummary,
 } from "./oasisContracts";
 import type { AlternativeVariant, ScenarioDetail } from "./scenarioContracts";
-import type { RunStudioRoute } from "./runStudioRoute";
+import type { LegacyRunStudioRoute } from "./runStudioRoute";
 import {
   useOasisReadiness,
   usePlatformSmokeRunDetail,
@@ -463,15 +463,15 @@ function RunLauncher({
     <section className="oasis-launcher run-studio-launcher" aria-labelledby="oasis-launcher-title">
       <div className="oasis-section-heading run-studio-launch-heading">
         <div>
-          <span className="oasis-eyebrow">Manual platform smoke</span>
-          <h3 id="oasis-launcher-title">发送一个可复现的平台烟雾测试</h3>
-          <p>只能选择已封存实验的备选方案；基线没有动作，因此不进入本测试。</p>
+          <span className="oasis-eyebrow">HISTORICAL ADC / READ ONLY</span>
+          <h3 id="oasis-launcher-title">平台烟雾测试历史归档</h3>
+          <p>新建入口已停用；下方仅保留旧输入结构用于解释历史运行，现有运行与产物仍可读取。</p>
         </div>
-        <span className="contract-endpoint">POST /api/v2/simulation-runs/platform-smoke</span>
+        <span className="contract-endpoint">GET /api/v2/simulation-runs/platform-smoke</span>
       </div>
 
       <form onSubmit={(event) => void submitRun(event)}>
-        <fieldset disabled={isSubmitting}>
+        <fieldset disabled>
           <legend className="sr-only">OASIS 平台烟雾测试输入</legend>
 
           <div className="oasis-launcher-content run-studio-launch-grid">
@@ -1014,13 +1014,13 @@ function PlatformSmokeWorkspace(): JSX.Element {
       <header className="oasis-page-intro run-studio-header" aria-labelledby="oasis-page-title">
         <div className="run-studio-title">
           <div className="run-studio-boundary-label">
-            <span>OASIS / PLATFORM SMOKE</span>
-            <code>semantic_run_ready=false</code>
+            <span>HISTORICAL OASIS / READ ONLY</span>
+            <code>legacy platform archive</code>
           </div>
-          <h2 id="oasis-page-title">先证明平台链路真实可运行，再谈人群推演</h2>
+          <h1 id="oasis-page-title">旧平台烟雾测试运行档案</h1>
           <p>
-            当前只执行 OASIS 0.2.5 Reddit 平台、SQLite 存储和手工初始帖动作。
-            不调用 LLM 受众代理，不生成舆情预测，也不把平台产物包装成决策结论。
+            这里保留 OASIS 0.2.5 Reddit 平台、SQLite 存储和手工初始帖动作的历史记录。
+            新工作请返回原生模拟运行；本页不会创建任务，也不会把旧产物包装成现实预测。
           </p>
         </div>
         <ReadinessPanel state={readinessState} onReload={reloadReadiness} />
@@ -1065,8 +1065,8 @@ function PlatformSmokeWorkspace(): JSX.Element {
 }
 
 interface OasisPlatformSmokePageProps {
-  readonly route: RunStudioRoute;
-  readonly onRouteChange: (route: RunStudioRoute) => void;
+  readonly route: LegacyRunStudioRoute;
+  readonly onRouteChange: (route: LegacyRunStudioRoute) => void;
 }
 
 export function OasisPlatformSmokePage({
@@ -1089,7 +1089,7 @@ export function OasisPlatformSmokePage({
             panel: null,
           })}
         >
-          平台烟雾测试
+          历史平台测试
         </button>
         <button
           type="button"
@@ -1103,7 +1103,7 @@ export function OasisPlatformSmokePage({
             panel: null,
           })}
         >
-          语义实验
+          历史方案实验
         </button>
       </nav>
       {route.mode === "platform"

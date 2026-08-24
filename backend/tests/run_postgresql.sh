@@ -16,9 +16,11 @@ pytest -p no:cacheprovider \
   tests/test_media_sync.py::test_postgresql_cancelled_refresh_is_terminal_and_releases_lock \
   tests/test_media_sync.py::test_postgresql_lock_release_failure_preserves_primary_error \
   tests/test_media_sync.py::test_postgresql_committed_success_survives_lock_release_failure \
+  tests/test_native_media_collection_postgresql.py::test_native_media_collection_executes_against_postgresql \
   tests/test_migrations.py::test_postgresql_content_addresses_are_enforced_when_resources_are_sealed \
   tests/test_migrations.py::test_population_child_write_waits_for_concurrent_dataset_seal \
   tests/test_migrations.py::test_semantic_postgresql_guards_verify_events_progress_and_results \
   tests/test_migrations.py::test_semantic_http_endpoints_execute_against_postgresql \
   tests/test_populations_postgresql.py::test_population_repository_uses_sealed_postgresql_resources \
-  tests/test_policy_evidence_postgresql.py::test_policy_evidence_executes_against_postgresql
+  tests/test_policy_evidence_postgresql.py::test_policy_evidence_executes_against_postgresql \
+  tests/test_research_projects_postgresql.py::test_research_project_flow_separates_context_from_run_design

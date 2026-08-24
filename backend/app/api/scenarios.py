@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
+from app.legacy_adc import reject_legacy_adc_write
 from app.scenarios.contracts import ScenarioCreateRequest, ScenarioDetail, ScenariosResponse
 from app.scenarios.errors import ScenarioNotFoundError
 from app.scenarios.repository import create_scenario, get_scenario, list_scenarios
@@ -41,7 +42,12 @@ def create_scenarios_router() -> APIRouter:
     """Create immutable scenario routes."""
     router = APIRouter(prefix="/api/v2/scenarios", tags=["scenarios"])
 
-    @router.post("", response_model=ScenarioDetail, status_code=status.HTTP_201_CREATED)
+    @router.post(
+        "",
+        response_model=ScenarioDetail,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(reject_legacy_adc_write)],
+    )
     async def add_scenario(
         request: ScenarioCreateRequest,
         session: ScenarioSession,

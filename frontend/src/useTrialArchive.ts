@@ -26,7 +26,7 @@ function stateData(state: TrialArchiveLoadState): TrialArchiveResponse | null {
 function normalizeError(error: unknown): Error {
   return error instanceof Error
     ? error
-    : new Error("读取 MatrAIx Trial Archive 失败：请求抛出了非标准错误。请检查后端日志。");
+    : new Error("读取试验档案失败：请求抛出了非标准错误。请检查后端日志。");
 }
 
 interface TrialArchiveSnapshot {

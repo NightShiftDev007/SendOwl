@@ -30,6 +30,42 @@
   padding: 0;
 }
 
+.decision-scenario-surface > .scenario-builder,
+.semantic-page .semantic-composer { display: none; }
+
+.legacy-adc-readonly-note { display:flex; align-items:center; gap:12px; margin:18px 24px 0; padding:13px 15px; border:1px solid rgba(229,165,90,.35); background:rgba(229,165,90,.07); }
+.legacy-adc-readonly-note strong { color:#e5a55a; }
+.legacy-adc-readonly-note span { flex:1; color:#9fb0b6; }
+.legacy-adc-readonly-note a { color:#61c7d3; white-space:nowrap; }
+
+.world-snapshot-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px clamp(18px, 3.4vw, 52px);
+  color: var(--decision-ink);
+  background: rgba(91, 213, 212, 0.055);
+  border-bottom: 1px solid var(--decision-line);
+}
+
+.world-snapshot-review-actions > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.world-snapshot-review-actions p {
+  margin: 0;
+  color: var(--decision-muted);
+  font-size: 0.78rem;
+}
+
+.world-snapshot-review-actions .button {
+  min-height: 44px;
+  flex: 0 0 auto;
+}
+
 .decision-surface-header {
   padding: clamp(22px, 3.2vw, 48px) clamp(18px, 3.4vw, 52px) 24px;
   border-bottom: 1px solid var(--decision-line);
@@ -466,6 +502,10 @@
   border-left: 1px solid var(--decision-line);
 }
 
+.decision-world-surface .world-registry-workbench[data-review-mode="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .decision-world-surface .world-model-directory,
 .decision-world-surface .world-model-detail {
   color: var(--decision-ink);
@@ -872,7 +912,8 @@
 }
 
 .decision-scenario-surface .scenario-baseline-detail {
-  border-left: 3px solid var(--decision-green);
+  border-color: var(--decision-green);
+  background: rgba(131, 211, 161, 0.045);
 }
 
 .decision-scenario-surface .scenario-hash-ledger {
@@ -1036,6 +1077,23 @@
 
   .decision-scenario-surface .scenario-hash-ledger > div {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .legacy-adc-readonly-note,
+  .world-snapshot-review-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .legacy-adc-readonly-note span,
+  .world-snapshot-review-actions .button {
+    width: 100%;
+  }
+
+  .legacy-adc-readonly-note a {
+    white-space: normal;
   }
 }
 .world-evidence-handoff {

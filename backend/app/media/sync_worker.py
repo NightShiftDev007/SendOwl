@@ -17,7 +17,7 @@ from app.media.import_agendascope import (
 from app.media.sync_contracts import MediaSyncRunStatus
 from app.media.sync_repository import MediaSyncExecution, run_scheduled_media_sync
 
-LOGGER = logging.getLogger("sendowl.media_sync")
+LOGGER = logging.getLogger("sandowl.media_sync")
 INTERVAL_VARIABLE = "MEDIA_SYNC_INTERVAL_SECONDS"
 WORKER_ID_VARIABLE = "MEDIA_SYNC_WORKER_ID"
 MINIMUM_INTERVAL_SECONDS = 60

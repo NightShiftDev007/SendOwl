@@ -136,6 +136,58 @@ POLICY_EVIDENCE_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260816_core_0037_policy
 WORLD_SNAPSHOT_POLICY_MIGRATION_FILE = (
     VERSIONS_DIRECTORY / "20260816_core_0038_world_snapshot_policy_evidence.py"
 )
+REPORT_AGENT_EVIDENCE_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0039_bounded_report_agent_evidence.py"
+)
+REPORT_AGENT_DRAFT_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0040_report_agent_cited_drafts.py"
+)
+WORKER_DOMAIN_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260816_core_0041_worker_domains.py"
+SANDOWL_IDENTITY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0043_sandowl_runtime_identity.py"
+)
+RESEARCH_PROJECTS_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260816_core_0044_research_projects.py"
+RESEARCH_RUN_EXECUTION_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0045_research_run_execution.py"
+)
+PROJECT_RUN_DESIGN_SPLIT_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0046_project_run_design_split.py"
+)
+RESEARCH_RUN_REPORT_AGENT_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260816_core_0047_research_run_report_agent.py"
+)
+AGENT_INTERACTIONS_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260816_core_0048_agent_interactions.py"
+REPORT_AGENT_RETRY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260817_core_0049_report_agent_draft_retry.py"
+)
+RESEARCH_SURVEYS_MIGRATION_FILE = VERSIONS_DIRECTORY / "20260817_core_0050_research_surveys.py"
+NATIVE_SURVEY_REGISTRY_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260817_core_0051_native_survey_registry.py"
+)
+GRAPH_BOUND_RESEARCH_CONTEXT_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0052_graph_bound_research_context.py"
+)
+RESEARCH_SIMULATION_PLANS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0053_research_simulation_plans.py"
+)
+RESEARCH_EVALUATION_TASK_BUNDLES_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0056_research_evaluation_task_bundles.py"
+)
+RESEARCH_EVALUATION_TARGETS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0057_research_evaluation_targets.py"
+)
+NATIVE_MEDIA_COLLECTION_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0058_native_media_collection.py"
+)
+HARBOR_EVALUATION_JOBS_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0059_harbor_evaluation_jobs.py"
+)
+REUSABLE_AGENDA_CONTEXT_HASHES_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260818_core_0060_reusable_agenda_context_hashes.py"
+)
+HARBOR_JOB_RETRY_LINEAGE_MIGRATION_FILE = (
+    VERSIONS_DIRECTORY / "20260820_core_0061_harbor_job_retry_lineage.py"
+)
 TEST_POSTGRES_DATABASE_URL = os.environ.get("TEST_POSTGRES_DATABASE_URL")
 
 
@@ -149,7 +201,7 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
     configuration = Config(str(BACKEND_DIRECTORY / "alembic.ini"))
     scripts = ScriptDirectory.from_config(configuration)
 
-    assert scripts.get_heads() == ["20260816_core_0038"]
+    assert scripts.get_heads() == ["20260820_core_0061"]
     assert {revision.revision for revision in scripts.walk_revisions()} == {
         *(f"20260812_core_{position:04d}" for position in range(1, 14)),
         "20260813_core_0014",
@@ -177,7 +229,209 @@ def test_migration_chain_has_one_distinct_core_head() -> None:
         "20260816_core_0036",
         "20260816_core_0037",
         "20260816_core_0038",
+        "20260816_core_0039",
+        "20260816_core_0040",
+        "20260816_core_0041",
+        "20260816_core_0042",
+        "20260816_core_0043",
+        "20260816_core_0044",
+        "20260816_core_0045",
+        "20260816_core_0046",
+        "20260816_core_0047",
+        "20260816_core_0048",
+        "20260817_core_0049",
+        "20260817_core_0050",
+        "20260817_core_0051",
+        "20260818_core_0052",
+        "20260818_core_0053",
+        "20260818_core_0054",
+        "20260818_core_0055",
+        "20260818_core_0056",
+        "20260818_core_0057",
+        "20260818_core_0058",
+        "20260818_core_0059",
+        "20260818_core_0060",
+        "20260820_core_0061",
     }
+
+
+def test_research_evaluation_task_bundles_are_linear_0056() -> None:
+    source = RESEARCH_EVALUATION_TASK_BUNDLES_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0056"' in source
+    assert 'down_revision: str | None = "20260818_core_0055"' in source
+    assert '"research_evaluation_task_bundles"' in source
+    assert "research_evaluation_task_bundle_immutable" in source
+
+
+def test_research_evaluation_targets_are_linear_0057() -> None:
+    source = RESEARCH_EVALUATION_TARGETS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0057"' in source
+    assert 'down_revision: str | None = "20260818_core_0056"' in source
+    assert '"research_evaluation_targets"' in source
+    assert "research_evaluation_target_immutable" in source
+
+
+def test_native_media_collection_is_linear_0058() -> None:
+    source = NATIVE_MEDIA_COLLECTION_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0058"' in source
+    assert 'down_revision: str | None = "20260818_core_0057"' in source
+    assert '"native_media_collection_runs"' in source
+    assert '"native_media_collection_worker_heartbeats"' in source
+
+
+def test_harbor_evaluation_jobs_are_linear_0059() -> None:
+    source = HARBOR_EVALUATION_JOBS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0059"' in source
+    assert 'down_revision: str | None = "20260818_core_0058"' in source
+    assert '"research_evaluation_jobs"' in source
+
+
+def test_reusable_agenda_context_hashes_are_linear_0060() -> None:
+    source = REUSABLE_AGENDA_CONTEXT_HASHES_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0060"' in source
+    assert 'down_revision: str | None = "20260818_core_0059"' in source
+    assert '"research_project_agenda_contexts_context_sha256_key"' in source
+
+
+def test_harbor_job_retry_lineage_is_linear_0061() -> None:
+    source = HARBOR_JOB_RETRY_LINEAGE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260820_core_0061"' in source
+    assert 'down_revision: str | None = "20260818_core_0060"' in source
+    assert "retry_of_job_id" in source
+    assert "attempt_number" in source
+    assert "research_evaluation_job_identity_guard" in source
+
+
+def test_graph_bound_research_context_is_linear_0052() -> None:
+    source = GRAPH_BOUND_RESEARCH_CONTEXT_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0052"' in source
+    assert 'down_revision: str | None = "20260817_core_0051"' in source
+    assert "sandowl-research-project/v3" in source
+    assert "sandowl-research-simulation-run/v3" in source
+    assert "simulation_context_sha256" in source
+
+
+def test_research_simulation_plans_are_linear_0053() -> None:
+    source = RESEARCH_SIMULATION_PLANS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260818_core_0053"' in source
+    assert 'down_revision: str | None = "20260818_core_0052"' in source
+    assert "sandowl-research-simulation-run/v4" in source
+    assert "simulation_plan_sha256" in source
+    assert "round BETWEEN 1 AND 6" in source
+    assert "research_run_graph_memory" in source
+    assert "research run graph memory is append-only" in source
+
+
+def test_research_projects_migration_is_linear_0044() -> None:
+    source = RESEARCH_PROJECTS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0044"' in source
+    assert 'down_revision: str | None = "20260816_core_0043"' in source
+    assert '"research_projects"' in source
+    assert '"research_simulation_runs"' in source
+    assert "reject_research_project_mutation" in source
+
+
+def test_research_run_execution_migration_is_the_linear_0045_head() -> None:
+    source = RESEARCH_RUN_EXECUTION_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0045"' in source
+    assert 'down_revision: str | None = "20260816_core_0044"' in source
+    assert '"research_run_events"' in source
+    assert '"research_run_reports"' in source
+    assert "uq_research_runs_spec_sha256" in source
+
+
+def test_project_run_design_split_is_linear_0046() -> None:
+    source = PROJECT_RUN_DESIGN_SPLIT_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0046"' in source
+    assert 'down_revision: str | None = "20260816_core_0045"' in source
+    assert "sandowl-research-project/v2" in source
+    assert "sandowl-research-simulation-run/v2" in source
+    assert "fk_research_runs_cohort" in source
+
+
+def test_research_run_report_agent_is_linear_0047() -> None:
+    source = RESEARCH_RUN_REPORT_AGENT_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0047"' in source
+    assert 'down_revision: str | None = "20260816_core_0046"' in source
+    assert "sandowl-research-run-report-agent/v1" in source
+    assert "read_simulation_run" in source
+
+
+def test_agent_interactions_is_the_linear_0048_head() -> None:
+    source = AGENT_INTERACTIONS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0048"' in source
+    assert 'down_revision: str | None = "20260816_core_0047"' in source
+    assert '"agent_interactions"' in source
+    assert "sandowl-agent-interaction/v1" in source
+    assert "report_agent_draft_id" in source
+
+
+def test_report_agent_retry_is_the_linear_0049_head() -> None:
+    source = REPORT_AGENT_RETRY_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260817_core_0049"' in source
+    assert 'down_revision: str | None = "20260816_core_0048"' in source
+    assert "retry_of_draft_id" in source
+    assert "retry_of_input_sha256" in source
+    assert "attempt_number BETWEEN 2 AND 5" in source
+    assert "retry_parent.status <> 'failed'" in source
+    assert "cannot downgrade while ReportAgent retry drafts exist" in source
+
+
+def test_research_surveys_is_the_linear_0050_head() -> None:
+    source = RESEARCH_SURVEYS_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260817_core_0050"' in source
+    assert 'down_revision: str | None = "20260817_core_0049"' in source
+    assert '"research_surveys"' in source
+    assert '"research_survey_trials"' in source
+    assert '"research_survey_answers"' in source
+    assert "sandowl-research-survey/v1" in source
+
+
+def test_native_survey_registry_is_the_linear_0051_head() -> None:
+    source = NATIVE_SURVEY_REGISTRY_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260817_core_0051"' in source
+    assert 'down_revision: str | None = "20260817_core_0050"' in source
+    assert "protect_matraix_batch_registry_item" in source
+    assert "protect_matraix_batch_registry" in source
+    assert "research_surveys" in source
+
+
+def test_sandowl_identity_migration_is_the_linear_0043_head() -> None:
+    source = SANDOWL_IDENTITY_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0043"' in source
+    assert 'down_revision: str | None = "20260816_core_0042"' in source
+    assert 'SANDOWL_SUITE_ID = "sandowl/matraix-acme-rest-mcp-suite"' in source
+    assert "UPDATE simulation_worker_heartbeats SET" in source
+    assert "DELETE FROM simulation_worker_heartbeats WHERE worker_id LIKE 'sendowl-%'" in source
+    assert "ck_simulation_worker_chat_config" in source
+
+
+def test_worker_domain_migration_is_the_linear_0041_head() -> None:
+    source = WORKER_DOMAIN_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260816_core_0041"' in source
+    assert 'down_revision: str | None = "20260816_core_0040"' in source
+    assert '"worker_domain"' in source
+    assert "TRUNCATE TABLE simulation_worker_heartbeats" in source
+    assert "ck_simulation_worker_heartbeats_domain" in source
+    assert "ix_simulation_worker_heartbeats_domain_last_seen" in source
 
 
 def test_enterprise_head_is_explicitly_unknown_to_the_core_lineage() -> None:
@@ -450,6 +704,29 @@ def test_world_snapshot_policy_migration_extends_hash_without_rewriting_v2() -> 
     assert "does not exactly match its immutable source version" in source
     assert "reject_world_snapshot_mutation" in source
     assert "reject_world_snapshot_truncate" in source
+
+
+def test_bounded_report_agent_migration_owns_audited_snapshot_tools() -> None:
+    source = REPORT_AGENT_EVIDENCE_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260816_core_0038"' in source
+    assert '"report_agent_evidence_runs"' in source
+    assert '"report_agent_evidence_tool_calls"' in source
+    assert "max_tool_calls BETWEEN 1 AND 20" in source
+    assert "list_evidence','read_media','read_policy" in source
+    assert "outside its sealed snapshot scope" in source
+    assert "ReportAgent evidence records are append-only" in source
+
+
+def test_report_agent_draft_migration_freezes_cited_generation_inputs() -> None:
+    source = REPORT_AGENT_DRAFT_MIGRATION_FILE.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "20260816_core_0039"' in source
+    assert '"report_agent_cited_drafts"' in source
+    assert "report_agent_evidence_calls_sha" in source
+    assert "evidence_call_count BETWEEN 1 AND 20" in source
+    assert "bounded-report-agent-cited-draft/v1" in source
+    assert "ReportAgent cited drafts are immutable" in source
 
 
 def test_core_lineage_never_reuses_enterprise_revision_ids_or_schema() -> None:
@@ -1127,7 +1404,7 @@ async def _exercise_postgresql_content_address_guards(database_url: str) -> None
                 current_revision = await connection.scalar(
                     text("SELECT version_num FROM alembic_version")
                 )
-                assert current_revision == "20260816_core_0038"
+                assert current_revision == "20260820_core_0061"
 
                 created_at = datetime.now(UTC)
                 world_model_id = uuid4()
@@ -2490,12 +2767,12 @@ async def _exercise_semantic_api_postgresql(database_url: str) -> None:
                     text(
                         """
                         INSERT INTO simulation_worker_heartbeats (
-                            worker_id,engine,engine_version,camel_version,mode,
+                            worker_id,worker_domain,engine,engine_version,camel_version,mode,
                             platform_runtime_ready,semantic_runtime_ready,semantic_model_name,
                             semantic_config_sha256,semantic_prompt_schema_version,
                             started_at,last_seen_at
                         ) VALUES (
-                            :worker,'camel-oasis','0.2.5','0.2.78','reddit_manual_smoke',
+                            :worker,'semantic','camel-oasis','0.2.5','0.2.78','reddit_manual_smoke',
                             true,true,'semantic-model',:config,:prompt,:at,:at
                         )
                         ON CONFLICT (worker_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at
@@ -2536,8 +2813,8 @@ async def _exercise_semantic_api_postgresql(database_url: str) -> None:
                             "minutes_per_round": 30,
                         },
                     )
-                    assert create_response.status_code == 202
-                    assert create_response.json()["id"] == str(experiment_id)
+                    assert create_response.status_code == 410
+                    assert "legacy ADC write surface is retired" in create_response.json()["detail"]
 
                     statements.clear()
                     list_response = await client.get("/api/v2/semantic-experiments")
@@ -2625,16 +2902,16 @@ def test_semantic_http_endpoints_execute_against_postgresql() -> None:
 def test_compose_uses_a_stable_isolated_core_namespace() -> None:
     source = (REPOSITORY_DIRECTORY / "compose.yaml").read_text(encoding="utf-8")
 
-    assert source.startswith("name: sendowl\n")
+    assert source.startswith("name: sandowl\n")
     for volume_name in (
-        "sendowl-postgres-data",
-        "sendowl-redis-data",
-        "sendowl-oasis-artifacts",
-        "sendowl-web-artifacts",
-        "sendowl-linux-artifacts",
+        "sandowl-postgres-data",
+        "sandowl-redis-data",
+        "sandowl-oasis-artifacts",
+        "sandowl-web-artifacts",
+        "sandowl-linux-artifacts",
     ):
         assert f"name: {volume_name}" in source
-    assert source.count("image: sendowl-") == 10
+    assert source.count("image: sandowl-") == 16
     assert "ai-decision-center-core" not in source
 
 
@@ -2654,7 +2931,7 @@ def test_postgresql_test_profile_is_isolated_from_application_data() -> None:
     assert "ports:" not in test_services
     assert "postgres_data" not in test_services
     assert "target: test" in test_services
-    assert "@postgres-test:5432/sendowl_test" in test_services
+    assert "@postgres-test:5432/sandowl_test" in test_services
     assert "tests/run_postgresql.sh" in test_services
     assert "FROM base AS test" in dockerfile
     assert "FROM base AS production" in dockerfile
@@ -2663,16 +2940,16 @@ def test_postgresql_test_profile_is_isolated_from_application_data() -> None:
     assert "stop postgres-test" in runner
 
 
-def test_sendowl_local_defaults_do_not_reuse_legacy_demo_ports_or_database() -> None:
+def test_sandowl_local_defaults_do_not_reuse_legacy_demo_ports_or_database() -> None:
     environment = (REPOSITORY_DIRECTORY / ".env.example").read_text(encoding="utf-8")
     package = (REPOSITORY_DIRECTORY / "package.json").read_text(encoding="utf-8")
     vite = (REPOSITORY_DIRECTORY / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
 
     assert "FRONTEND_PORT=3200" in environment
     assert "BACKEND_PORT=8210" in environment
-    assert "POSTGRES_DB=sendowl" in environment
-    assert "POSTGRES_USER=sendowl" in environment
-    assert "SENDOWL_ENV_FILE" in package
+    assert "POSTGRES_DB=sandowl" in environment
+    assert "POSTGRES_USER=sandowl" in environment
+    assert "SANDOWL_ENV_FILE" in package
     assert "--port 8310 --reload" in package
     assert "port: 3300" in vite
     assert 'target: "http://127.0.0.1:8310"' in vite

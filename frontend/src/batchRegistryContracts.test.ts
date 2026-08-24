@@ -106,6 +106,16 @@ const summary = {
 } as const;
 
 describe("MatrAIx Batch Registry contracts", () => {
+  it("accepts a native single-context Research Survey source", () => {
+    expect(matraixBatchRegistryCandidateSchema.parse({
+      ...surveyCandidate,
+      title: "Native research project",
+      version: "single-context-observation/v1",
+      prompt_schema_version: "sandowl-research-survey/v1",
+      source_detail_path: `/api/v2/research-surveys/${surveyId}`,
+    }).version).toBe("single-context-observation/v1");
+  });
+
   it("accepts exact kind-specific candidate contracts", () => {
     expect(matraixBatchRegistryCandidateSchema.parse(surveyCandidate).kind).toBe("survey");
     expect(matraixBatchRegistryCandidateSchema.parse(chatCandidate).kind).toBe("chat");
@@ -197,9 +207,8 @@ describe("MatrAIx Batch Registry contracts", () => {
       items: [
         {
           kind: "survey" as const,
-          scenario_id: "23000000-0000-4000-8000-000000000001",
-          cohort_id: "24000000-0000-4000-8000-000000000001",
-          alternative_id: "25000000-0000-4000-8000-000000000001",
+          research_project_id: "23000000-0000-4000-8000-000000000001",
+          research_simulation_run_id: "25000000-0000-4000-8000-000000000001",
         },
         {
           kind: "chat" as const,

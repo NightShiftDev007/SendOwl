@@ -1,11 +1,51 @@
 import { describe, expect, it } from "vitest";
 
-import { createTaskGalleryHash, resolveTaskGalleryRoute } from "./taskGalleryRoute";
+import {
+  createTaskGalleryHash,
+  resolveTaskGalleryRoute,
+  taskGalleryRootRoute,
+} from "./taskGalleryRoute";
 
 const evaluationId = "2ce907de-4709-4eb6-b702-abac631607c7";
 const trialId = "ff51bd82-385d-48ad-aa3c-9277dd927380";
+const projectId = "748de69e-3192-496d-9b2c-6ca72ac85575";
+const runId = "32f4e1ed-985e-4786-b965-4e37436bda9f";
 
 describe("Task Gallery route", () => {
+  it("preserves an exact Project and Run evaluation scope", () => {
+    const hash = createTaskGalleryHash({
+      ...taskGalleryRootRoute(),
+      projectId,
+      runId,
+    });
+    expect(hash).toBe(`#/tasks?project_id=${projectId}&run_id=${runId}`);
+    expect(resolveTaskGalleryRoute(hash.slice("#/tasks?".length))).toMatchObject({
+      status: "resolved",
+      route: { task: null, projectId, runId },
+    });
+  });
+
+  it("preserves research context while visiting a fixed-source task", () => {
+    const hash = createTaskGalleryHash({
+      task: "chat",
+      projectId,
+      runId,
+      experimentId: null,
+      evaluationId: null,
+      trialId: null,
+      registryId: null,
+      archiveKind: null,
+      archiveStatus: null,
+      page: 1,
+    });
+
+    expect(hash).toBe(`#/tasks?task=chat&project_id=${projectId}&run_id=${runId}&page=1`);
+    expect(resolveTaskGalleryRoute(hash.slice("#/tasks?".length))).toMatchObject({
+      status: "resolved",
+      route: { task: "chat", projectId, runId },
+    });
+  });
+
   it("preserves an explicit Chat evaluation and trial selection", () => {
     const hash = createTaskGalleryHash({
       task: "chat",

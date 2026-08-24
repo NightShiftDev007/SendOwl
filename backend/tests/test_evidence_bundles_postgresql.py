@@ -17,6 +17,7 @@ from app.api.evidence_bundles import (
     create_evidence_bundles_router,
     require_evidence_bundle_session,
 )
+from app.api.report_agents import create_report_agents_router, require_report_agent_session
 from app.database import normalize_async_database_url
 from app.evidence.hashing import calculate_evidence_bundle_sha256
 from app.evidence.revisions import (
@@ -161,6 +162,7 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                 )
                 application = FastAPI()
                 application.include_router(create_evidence_bundles_router())
+                application.include_router(create_report_agents_router())
 
                 async def session_override() -> AsyncIterator[AsyncSession]:
                     async with AsyncSession(
@@ -171,6 +173,7 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                         yield session
 
                 application.dependency_overrides[require_evidence_bundle_session] = session_override
+                application.dependency_overrides[require_report_agent_session] = session_override
                 async with AsyncClient(
                     transport=ASGITransport(app=application),
                     base_url="http://evidence-bundle-test",
@@ -220,6 +223,113 @@ async def _exercise_evidence_bundle_api(database_url: str) -> None:
                     assert missing_response.status_code == 404
                     invalid_response = await client.get("/api/v2/evidence-bundles/not-a-uuid")
                     assert invalid_response.status_code == 422
+
+                    run_request = {
+                        "world_model_id": str(world_model.id),
+                        "world_snapshot_id": str(snapshot.id),
+                        "snapshot_sha256": snapshot.snapshot_sha256,
+                        "objective": "整理当前快照可以支持的观察与限制。",
+                        "outline": [
+                            {
+                                "position": 0,
+                                "title": "证据观察",
+                                "focus": "读取媒体与政策中可逐字核验的内容。",
+                            },
+                            {
+                                "position": 1,
+                                "title": "证据限制",
+                                "focus": "说明当前快照尚不能证明的事项。",
+                            },
+                        ],
+                        "max_tool_calls": 3,
+                    }
+                    run_response = await client.post(
+                        "/api/v2/report-agent/runs",
+                        json=run_request,
+                    )
+                    assert run_response.status_code == 201, run_response.text
+                    run = run_response.json()
+                    assert run["world_snapshot_id"] == str(snapshot.id)
+                    assert run["remaining_tool_calls"] == 3
+                    duplicate_run_response = await client.post(
+                        "/api/v2/report-agent/runs",
+                        json=run_request,
+                    )
+                    assert duplicate_run_response.json()["id"] == run["id"]
+
+                    outside_scope_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/tools/read-media/{uuid4()}"
+                    )
+                    assert outside_scope_response.status_code == 409
+
+                    directory_tool_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/tools/list-evidence"
+                    )
+                    assert directory_tool_response.status_code == 200
+                    assert directory_tool_response.json()["run"]["tool_call_count"] == 1
+                    assert directory_tool_response.json()["bundle"]["policy_item_count"] == 1
+
+                    media_tool_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/tools/read-media/{article_id}"
+                    )
+                    assert media_tool_response.status_code == 200
+                    assert media_tool_response.json()["content"][
+                        "captured_text"
+                    ] == combine_article_text(title, content)
+
+                    policy_tool_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/tools/read-policy/"
+                        f"{policy.latest_version.id}"
+                    )
+                    assert policy_tool_response.status_code == 200
+                    assert policy_tool_response.json()["run"]["remaining_tool_calls"] == 0
+
+                    budget_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/tools/list-evidence"
+                    )
+                    assert budget_response.status_code == 429
+                    audited_run_response = await client.get(
+                        f"/api/v2/report-agent/runs/{run['id']}"
+                    )
+                    assert [
+                        call["tool_name"] for call in audited_run_response.json()["tool_calls"]
+                    ] == ["list_evidence", "read_media", "read_policy"]
+
+                    worker_seen_at = datetime.now(UTC)
+                    semantic_config_sha256 = "a" * 64
+                    await connection.execute(
+                        text(
+                            """
+                            INSERT INTO simulation_worker_heartbeats (
+                                worker_id,worker_domain,engine,engine_version,camel_version,mode,
+                                platform_runtime_ready,semantic_runtime_ready,
+                                semantic_model_name,semantic_config_sha256,
+                                semantic_prompt_schema_version,started_at,last_seen_at
+                            ) VALUES (
+                                'report-agent-integration','report','camel-oasis','0.2.5','0.2.78',
+                                'reddit_manual_smoke',true,true,'integration-model',
+                                :semantic_config_sha256,'matraix-semantic-profile/v1',:now,:now
+                            )
+                            """
+                        ),
+                        {"semantic_config_sha256": semantic_config_sha256, "now": worker_seen_at},
+                    )
+                    draft_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/drafts"
+                    )
+                    assert draft_response.status_code == 202, draft_response.text
+                    draft = draft_response.json()
+                    assert draft["status"] == "queued"
+                    assert draft["evidence_call_count"] == 2
+                    assert draft["model_name"] == "integration-model"
+                    duplicate_draft_response = await client.post(
+                        f"/api/v2/report-agent/runs/{run['id']}/drafts"
+                    )
+                    assert duplicate_draft_response.json()["id"] == draft["id"]
+                    draft_list_response = await client.get(
+                        f"/api/v2/report-agent/runs/{run['id']}/drafts"
+                    )
+                    assert draft_list_response.json()["total"] == 1
             finally:
                 await transaction.rollback()
     finally:

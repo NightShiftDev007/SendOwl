@@ -34,7 +34,7 @@ const succeededRun = {
   id: "6de0231e-cc0d-4ae6-a34c-20497d9736df",
   trigger: "scheduled",
   status: "succeeded",
-  worker_id: "sendowl-compose-media-sync-worker",
+  worker_id: "sandowl-compose-media-sync-worker",
   started_at: "2026-08-13T03:59:50Z",
   completed_at: timestamp,
   next_scheduled_at: "2026-08-13T04:05:00Z",

@@ -231,7 +231,7 @@ def _load_full_scenario(
     )
 
 
-def _load_dataset_and_cohort(
+def load_dataset_and_cohort(
     cursor: Cursor[dict[str, object]],
     row: dict[str, object],
 ) -> tuple[DatasetIntegrityInput, CohortIntegrityInput]:
@@ -482,7 +482,7 @@ def claim_semantic_trial(
         try:
             experiment = _load_experiment(cursor, selected)
             scenario = _load_full_scenario(cursor, experiment.model_dump(mode="python"))
-            dataset, cohort = _load_dataset_and_cohort(cursor, experiment.model_dump(mode="python"))
+            dataset, cohort = load_dataset_and_cohort(cursor, experiment.model_dump(mode="python"))
             trial = _claimed_semantic_trial_from_row(
                 selected,
                 experiment,

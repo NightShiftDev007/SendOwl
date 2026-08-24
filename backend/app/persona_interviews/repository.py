@@ -140,6 +140,7 @@ async def _load_interview_context(
             SimulationWorkerHeartbeatRecord.engine == "camel-oasis",
             SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
             SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
+            SimulationWorkerHeartbeatRecord.worker_domain.in_(("semantic", "report")),
             SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
             SimulationWorkerHeartbeatRecord.semantic_prompt_schema_version == PROMPT_SCHEMA_VERSION,
             SimulationWorkerHeartbeatRecord.semantic_model_name == experiment.model_name,

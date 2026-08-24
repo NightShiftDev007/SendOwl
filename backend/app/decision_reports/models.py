@@ -35,6 +35,10 @@ class DecisionReportRecord(ApplicationBase):
         PostgreSQLUUID(as_uuid=True), ForeignKey("cohorts.id"), nullable=False
     )
     cohort_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    world_snapshot_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("world_snapshots.id", ondelete="RESTRICT")
+    )
+    world_snapshot_sha256: Mapped[str | None] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     report_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     generator_version: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -49,10 +53,20 @@ class DecisionReportRecord(ApplicationBase):
             name="ck_decision_reports_digests",
         ),
         CheckConstraint(
-            "generator_version = 'deterministic-findings/v1'",
+            "generator_version IN ('deterministic-findings/v1', 'decision-report/v2')",
             name="ck_decision_reports_generator",
         ),
-        UniqueConstraint("experiment_id", name="uq_decision_reports_experiment"),
+        CheckConstraint(
+            "(generator_version = 'deterministic-findings/v1' "
+            "AND world_snapshot_id IS NULL AND world_snapshot_sha256 IS NULL) OR "
+            "(generator_version = 'decision-report/v2' "
+            "AND world_snapshot_id IS NOT NULL "
+            "AND world_snapshot_sha256 ~ '^[a-f0-9]{64}$')",
+            name="ck_decision_reports_snapshot_identity",
+        ),
+        UniqueConstraint(
+            "experiment_id", "generator_version", name="uq_decision_reports_experiment_version"
+        ),
         UniqueConstraint("report_sha256", name="uq_decision_reports_sha256"),
         Index("ix_decision_reports_created_at", "created_at"),
     )
@@ -71,14 +85,20 @@ class DecisionReportSectionRecord(ApplicationBase):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     metrics_json: Mapped[str] = mapped_column(Text, nullable=False)
+    data_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
     __table_args__ = (
-        CheckConstraint("position BETWEEN 0 AND 3", name="ck_decision_report_sections_position"),
+        CheckConstraint("position BETWEEN 0 AND 6", name="ck_decision_report_sections_position"),
         CheckConstraint(
-            "kind IN ('scope', 'comparison', 'limitations', 'provenance')",
+            "kind IN ('scope', 'comparison', 'limitations', 'provenance', 'evidence', "
+            "'assumptions', 'experiment', 'observation', 'analysis')",
             name="ck_decision_report_sections_kind",
         ),
         CheckConstraint(
             "length(body_markdown) BETWEEN 1 AND 40000", name="ck_decision_report_sections_body"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(data_json::jsonb) = 'object'",
+            name="ck_decision_report_sections_data",
         ),
     )

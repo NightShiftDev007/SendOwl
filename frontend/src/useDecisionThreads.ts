@@ -3,11 +3,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   appendDecisionThreadRevision,
   createDecisionThread,
+  createDecisionThreadDraft,
   fetchDecisionThread,
   fetchDecisionThreads,
   type DecisionThreadContextRequest,
   type DecisionThreadCreateRequest,
   type DecisionThreadDetail,
+  type DecisionThreadDraftCreateRequest,
   type DecisionThreadsResponse,
 } from "./decisionThreadContracts";
 
@@ -29,6 +31,7 @@ export function useDecisionThreads(selectedId: string | null): {
   readonly submitting: boolean;
   readonly reload: () => void;
   readonly create: (request: DecisionThreadCreateRequest) => Promise<DecisionThreadDetail | null>;
+  readonly createDraft: (request: DecisionThreadDraftCreateRequest) => Promise<DecisionThreadDetail | null>;
   readonly append: (request: DecisionThreadContextRequest) => Promise<DecisionThreadDetail | null>;
 } {
   const [version, setVersion] = useState(0);
@@ -92,6 +95,7 @@ export function useDecisionThreads(selectedId: string | null): {
     submitting,
     reload: () => setVersion((current) => current + 1),
     create: (request) => submit((signal) => createDecisionThread(request, signal)),
+    createDraft: (request) => submit((signal) => createDecisionThreadDraft(request, signal)),
     append: (request) => selectedId === null ? Promise.resolve(null) : submit((signal) => appendDecisionThreadRevision(selectedId, request, signal)),
   };
 }

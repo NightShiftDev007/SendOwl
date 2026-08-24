@@ -148,9 +148,10 @@ async def _live_survey_config(session: AsyncSession) -> tuple[str, str]:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
-                    SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
-                    SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                     SimulationWorkerHeartbeatRecord.survey_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.survey_prompt_schema_version
+                    == PROMPT_SCHEMA_VERSION,
                 )
                 .with_for_update(read=True)
             )
@@ -993,6 +994,7 @@ async def get_matraix_survey_readiness(session: AsyncSession) -> MatraixSurveyRe
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+                    SimulationWorkerHeartbeatRecord.worker_domain == "evaluation",
                 )
             )
         )
@@ -1006,9 +1008,11 @@ async def get_matraix_survey_readiness(session: AsyncSession) -> MatraixSurveyRe
             heartbeat.survey_prompt_schema_version,
         )
         for heartbeat in heartbeats
-        if heartbeat.platform_runtime_ready
-        and heartbeat.semantic_runtime_ready
-        and heartbeat.survey_runtime_ready
+        if (
+            heartbeat.worker_domain == "evaluation"
+            and heartbeat.survey_runtime_ready
+            and heartbeat.survey_prompt_schema_version == PROMPT_SCHEMA_VERSION
+        )
     }
     conflict = len(configs) > 1
     complete_config = next(iter(configs)) if len(configs) == 1 else None

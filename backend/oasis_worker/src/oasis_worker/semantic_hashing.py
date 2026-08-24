@@ -18,6 +18,7 @@ from oasis_worker.semantic_contracts import (
 
 MODEL_CONTEXT_TOKEN_LIMIT = 32_768
 MODEL_OUTPUT_MAX_TOKENS = 512
+REPORT_DOMAIN_OUTPUT_MAX_TOKENS = 2048
 MODEL_TOOL_CHOICE = "required"
 MODEL_ENABLE_THINKING = False
 
@@ -75,6 +76,26 @@ def semantic_config_sha256(base_url: str, model_name: str) -> str:
         LOW_INFORMATION_VALUES,
         MAX_PROFILE_ATTRIBUTES,
     )
+    return _sha256(_canonical_json(payload))
+
+
+def report_domain_config_sha256(base_url: str, model_name: str) -> str:
+    """Hash the larger bounded output budget used by report-domain tools."""
+    payload = _semantic_config_payload(
+        base_url,
+        model_name,
+        PROFILE_TEMPLATE_TEXT,
+        LOW_INFORMATION_VALUES,
+        MAX_PROFILE_ATTRIBUTES,
+    )
+    model_config = payload["model_config"]
+    if not isinstance(model_config, dict):
+        raise RuntimeError("semantic model config payload must be an object")
+    model_config["output_max_tokens"] = REPORT_DOMAIN_OUTPUT_MAX_TOKENS
+    payload["worker_domain"] = "report"
+    payload["report_output_schema"] = "bounded-tool-json/v1"
+    payload["output_validation_attempts"] = 2
+    payload["citation_policy"] = "indexed_deterministic_exact_quote_windows/v1"
     return _sha256(_canonical_json(payload))
 
 

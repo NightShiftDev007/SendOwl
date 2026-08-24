@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
@@ -99,24 +99,24 @@ def _scenario_response(request: ScenarioCreateRequest) -> ScenarioDetail:
     )
 
 
-def test_scenario_endpoints_return_explicit_503_without_database() -> None:
+def test_scenario_reads_require_database_and_legacy_write_is_retired() -> None:
     client = TestClient(create_app(load_runtime_settings({})))
     scenario_id = uuid4()
 
-    responses = (
+    for response in (
         client.get("/api/v2/scenarios"),
-        client.post("/api/v2/scenarios", json=_request_payload()),
         client.get(f"/api/v2/scenarios/{scenario_id}"),
-    )
-
-    for response in responses:
+    ):
         assert response.status_code == 503
         assert response.json() == {
             "detail": "Scenario data is unavailable because DATABASE_URL is not configured"
         }
+    retired = client.post("/api/v2/scenarios", json=_request_payload())
+    assert retired.status_code == 410
+    assert "legacy ADC write surface is retired" in retired.json()["detail"]
 
 
-def test_scenario_post_converts_uuid_strings_before_handler(monkeypatch) -> None:
+def test_scenario_post_is_rejected_before_repository(monkeypatch) -> None:
     application = create_app(load_runtime_settings({}))
     captured_requests: list[ScenarioCreateRequest] = []
 
@@ -137,9 +137,5 @@ def test_scenario_post_converts_uuid_strings_before_handler(monkeypatch) -> None
 
     response = TestClient(application).post("/api/v2/scenarios", json=payload)
 
-    assert response.status_code == 201
-    assert isinstance(captured_requests[0].world_model_id, UUID)
-    assert str(captured_requests[0].world_model_id) == payload["world_model_id"]
-    assert response.json()["snapshot"]["world_snapshot_id"] == payload["world_snapshot_id"]
-    assert response.json()["baseline"]["interventions"] == []
-    assert response.json()["alternatives"][0]["position"] == 1
+    assert response.status_code == 410
+    assert captured_requests == []

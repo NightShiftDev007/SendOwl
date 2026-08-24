@@ -206,7 +206,7 @@ def _parse_observation_request(raw: bytes) -> UUID:
 
 
 class RequestHandler(BaseHTTPRequestHandler):
-    server_version = "SendOwlWebExecutor/1.0"
+    server_version = "SandOwlWebExecutor/1.0"
 
     def _write_json(self, status: HTTPStatus, payload: object) -> None:
         body = _compact_json(payload)

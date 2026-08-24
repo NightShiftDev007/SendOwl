@@ -258,7 +258,7 @@ export function MediaWorldMap({
       {mode === "propagation" && propagationEvents.length === 0 ? (
         <div className="media-world-map__empty" role="status">
           <strong>暂无已识别传播链</strong>
-          <span>AgendaScope 当前没有首发—跟随事件，地图不会生成装饰飞线。</span>
+          <span>当前没有首发—跟随事件，地图不会生成装饰飞线。</span>
         </div>
       ) : null}
       <label className="media-world-map__country-control">

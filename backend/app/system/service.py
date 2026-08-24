@@ -28,7 +28,7 @@ def build_health_response() -> HealthResponse:
     """Build the deterministic API liveness response."""
     return HealthResponse(
         status=HealthStatus.OK,
-        service="ai-decision-center-v2",
+        service="sandowl",
         version="0.1.0",
     )
 
@@ -100,24 +100,27 @@ def build_system_capabilities() -> SystemCapabilities:
     """Build the explicit first-stage domain capability inventory."""
     return SystemCapabilities(
         api_version="v2",
-        product="AI Decision Center",
+        product="SandOwl",
         capabilities=(
             CapabilityDescriptor(
                 name="media",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="AgendaScope",
+                source="SandOwl native collector + AgendaScope legacy import",
                 contracts=(
                     "MediaSource",
                     "MediaArticle",
                     "MediaSourceEvidenceResponse",
                     "MediaFirstUtterancesResponse",
                     "MediaSyncStatus",
+                    "NativeMediaCollectionConfig",
+                    "NativeMediaCollectionRun",
+                    "NativeMediaCollectionStatus",
                 ),
             ),
             CapabilityDescriptor(
                 name="evidence",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center V2",
+                source="SandOwl",
                 contracts=(
                     "EvidenceBundleSummary",
                     "EvidenceBundleDetail",
@@ -127,7 +130,7 @@ def build_system_capabilities() -> SystemCapabilities:
             CapabilityDescriptor(
                 name="world_models",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center V2",
+                source="SandOwl",
                 contracts=("WorldModel", "WorldSnapshot"),
             ),
             CapabilityDescriptor(
@@ -148,20 +151,20 @@ def build_system_capabilities() -> SystemCapabilities:
             ),
             CapabilityDescriptor(
                 name="decision_threads",
-                state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center integration layer",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC archive",
                 contracts=("DecisionThread", "DecisionThreadRevision"),
             ),
             CapabilityDescriptor(
                 name="decision_reports",
-                state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center + MiroFish report structure",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC archive",
                 contracts=("DecisionReport", "DecisionReportSection"),
             ),
             CapabilityDescriptor(
                 name="report_questions",
-                state=CapabilityStatus.RUNTIME_READY,
-                source="Qwen + PostgreSQL evidence graph",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC archive",
                 contracts=(
                     "ReportQuestion",
                     "ReportQuestionContext",
@@ -169,9 +172,21 @@ def build_system_capabilities() -> SystemCapabilities:
                 ),
             ),
             CapabilityDescriptor(
-                name="tasks.mirofish.persona_interview",
+                name="report_agent.evidence_tools",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MiroFish interaction pattern + MatrAIx Persona + Qwen",
+                source="PostgreSQL sealed WorldSnapshot",
+                contracts=(
+                    "ReportAgentRun",
+                    "ReportAgentPlanSection",
+                    "ReportAgentToolCall",
+                    "ReportAgentCitedDraft",
+                    "ReportAgentDraftCitation",
+                ),
+            ),
+            CapabilityDescriptor(
+                name="tasks.mirofish.persona_interview",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC archive",
                 contracts=(
                     "PersonaInterview",
                     "PersonaInterviewPersona",
@@ -180,9 +195,41 @@ def build_system_capabilities() -> SystemCapabilities:
             ),
             CapabilityDescriptor(
                 name="scenarios",
-                state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center V2",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC archive",
                 contracts=("Scenario", "ScenarioVariant", "Intervention"),
+            ),
+            CapabilityDescriptor(
+                name="research_projects",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="SandOwl",
+                contracts=("ResearchProject", "ResearchSimulationRun"),
+            ),
+            CapabilityDescriptor(
+                name="research_evaluations",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="SandOwl + MatrAIx",
+                contracts=(
+                    "ResearchEvaluationWorkspace",
+                    "ResearchEvaluationCapability",
+                    "ResearchEvaluationRuntimeBoundary",
+                    "ResearchEvaluationTaskBundle",
+                    "ResearchEvaluationExecutionProjection",
+                    "ResearchEvaluationTarget",
+                    "ResearchEvaluationJob",
+                ),
+            ),
+            CapabilityDescriptor(
+                name="research_reports",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="SandOwl ReportAgent",
+                contracts=("ResearchRunReport", "DecisionReportV2"),
+            ),
+            CapabilityDescriptor(
+                name="agent_interactions",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="SandOwl ReportAgent + Persona",
+                contracts=("AgentInteraction", "AgentInteractionTurn"),
             ),
             CapabilityDescriptor(
                 name="populations.matraix",
@@ -192,18 +239,25 @@ def build_system_capabilities() -> SystemCapabilities:
             ),
             CapabilityDescriptor(
                 name="simulations.matraix",
-                state=CapabilityStatus.CONTRACT_READY,
-                source="MatrAIx",
-                contracts=("MatrAIxEvaluationSpec", "EngineResult"),
+                state=CapabilityStatus.RUNTIME_READY,
+                source="SandOwl + pinned MatrAIx Harbor + Rootless DinD",
+                contracts=(
+                    "ResearchEvaluationTarget",
+                    "ResearchEvaluationJob",
+                    "HarborTrajectory",
+                    "HarborArtifact",
+                    "HarborVerifier",
+                    "HarborReward",
+                ),
             ),
             CapabilityDescriptor(
                 name="tasks.matraix.survey",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MatrAIx + Qwen",
+                source="SandOwl Research Project + MatrAIx + Qwen",
                 contracts=(
-                    "MatraixSurveyExperiment",
-                    "MatraixSurveyTrial",
-                    "SurveyInstrument",
+                    "ResearchSurvey",
+                    "ResearchSurveyTrial",
+                    "SingleContextObservationInstrument",
                     "ParentProgress",
                 ),
             ),
@@ -248,9 +302,20 @@ def build_system_capabilities() -> SystemCapabilities:
                 ),
             ),
             CapabilityDescriptor(
+                name="tasks.matraix.app",
+                state=CapabilityStatus.RUNTIME_READY,
+                source="Pinned MatrAIx Harbor task packages + Rootless DinD",
+                contracts=(
+                    "ResearchEvaluationTarget",
+                    "ResearchEvaluationJob",
+                    "HarborArtifact",
+                    "HarborVerifier",
+                ),
+            ),
+            CapabilityDescriptor(
                 name="trials.matraix.archive",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MatrAIx Survey + Chat + Web + Linux durable records",
+                source="SandOwl Research Survey + Chat + Web + Linux durable records",
                 contracts=(
                     "MatraixTrialArchiveResponse",
                     "MatraixTrialArchiveStatistics",
@@ -264,7 +329,7 @@ def build_system_capabilities() -> SystemCapabilities:
             CapabilityDescriptor(
                 name="jobs.matraix.batch_registry",
                 state=CapabilityStatus.RUNTIME_READY,
-                source="MatrAIx Survey + Chat + Web + Linux sealed parent registry",
+                source="SandOwl Research Survey + Chat + Web + Linux sealed parent registry",
                 contracts=(
                     "MatraixBatchRegistrySummary",
                     "MatraixBatchRegistryDetail",
@@ -279,8 +344,8 @@ def build_system_capabilities() -> SystemCapabilities:
             ),
             CapabilityDescriptor(
                 name="simulations.oasis",
-                state=CapabilityStatus.RUNTIME_READY,
-                source="AI Decision Center V1 / OASIS",
+                state=CapabilityStatus.LEGACY_READONLY,
+                source="Historical ADC platform-smoke archive",
                 contracts=(
                     "OasisSimulationSpec",
                     "SemanticExperiment",

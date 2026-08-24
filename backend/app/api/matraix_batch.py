@@ -30,9 +30,8 @@ from app.matraix_batch.repository import (
     list_batch_registry_candidates,
 )
 from app.matraix_chat.errors import MatraixChatSelectionError, MatraixChatUnavailableError
-from app.matraix_surveys.errors import MatraixSurveySelectionError, MatraixSurveyUnavailableError
 from app.populations.errors import PopulationCohortNotFoundError
-from app.scenarios.errors import ScenarioNotFoundError
+from app.research_surveys.errors import ResearchSurveySelectionError, ResearchSurveyUnavailableError
 
 BATCH_REGISTRY_UNAVAILABLE_DETAIL = (
     "MatrAIx Batch Registry data is unavailable because DATABASE_URL is not configured"
@@ -88,14 +87,14 @@ def create_matraix_batch_router() -> APIRouter:
     ) -> MatraixNativeBatchLaunchResult:
         try:
             return await create_native_batch_launch(session, request)
-        except (ScenarioNotFoundError, PopulationCohortNotFoundError) as error:
+        except PopulationCohortNotFoundError as error:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-        except (MatraixSurveySelectionError, MatraixChatSelectionError) as error:
+        except (ResearchSurveySelectionError, MatraixChatSelectionError) as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(error),
             ) from error
-        except (MatraixSurveyUnavailableError, MatraixChatUnavailableError) as error:
+        except (ResearchSurveyUnavailableError, MatraixChatUnavailableError) as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),

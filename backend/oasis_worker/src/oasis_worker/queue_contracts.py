@@ -9,6 +9,7 @@ from pydantic import Field, StringConstraints, model_validator
 from oasis_worker.contracts import RequiredText, Sha256, StrictModel, UserName
 
 RunStatus = Literal["queued", "running", "succeeded", "failed"]
+WorkerDomain = Literal["semantic", "evaluation", "report"]
 
 
 class QueuePost(StrictModel):
@@ -73,6 +74,7 @@ class NormalizedFailure(StrictModel):
 
 class WorkerHeartbeat(StrictModel):
     worker_id: Annotated[RequiredText, Field(max_length=128)]
+    worker_domain: WorkerDomain
     started_at: datetime
     last_seen_at: datetime
     platform_runtime_ready: bool

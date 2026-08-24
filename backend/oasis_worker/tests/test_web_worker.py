@@ -149,9 +149,10 @@ def test_browser_observation_rejects_noncontiguous_or_external_data() -> None:
 
 def test_daemon_web_runtime_is_disabled_without_llm_and_complete_when_configured() -> None:
     base = {
-        "DATABASE_URL": "postgresql://sendowl:sendowl@postgres/sendowl",
+        "DATABASE_URL": "postgresql://sandowl:sandowl@postgres/sandowl",
         "OASIS_ARTIFACT_ROOT": "/artifacts",
         "OASIS_WORKER_ID": "web-worker",
+        "OASIS_WORKER_DOMAIN": "evaluation",
         "MATRAIX_WEB_BROWSER_URL": "http://matraix-web-browser:8000",
     }
     disabled = load_daemon_settings(base)

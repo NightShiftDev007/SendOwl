@@ -36,7 +36,7 @@
   letter-spacing: 0.13em;
 }
 
-.task-gallery-hero h2 {
+.task-gallery-hero h1 {
   margin: 7px 0;
   font-size: clamp(1.8rem, 3vw, 3rem);
   line-height: 1.04;
@@ -100,7 +100,7 @@
 
 .task-gallery-controls input,
 .task-gallery-controls button {
-  min-height: 39px;
+  min-height: 44px;
   color: var(--tg-ink);
   border: 1px solid var(--tg-line);
   background: transparent;
@@ -114,6 +114,8 @@
 .task-gallery-controls nav {
   display: flex;
   overflow-x: auto;
+  scrollbar-color: var(--tg-cyan) transparent;
+  scrollbar-width: thin;
 }
 
 .task-gallery-controls nav button {
@@ -241,6 +243,18 @@
   color: var(--tg-cyan);
 }
 
+.task-gallery-grid > li > details {
+  margin-top: 8px;
+  color: var(--tg-muted);
+  font-size: 0.72rem;
+}
+
+.task-gallery-grid > li > details summary {
+  min-height: 36px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
 .task-gallery-grid > li > a {
   display: flex;
   align-items: center;
@@ -269,7 +283,7 @@
 }
 
 .task-gallery-locked small {
-  color: #667981;
+  color: #8ca2aa;
 }
 
 .task-gallery-loading {
@@ -348,5 +362,354 @@
   .task-gallery-page *::before,
   .task-gallery-page *::after {
     transition-duration: 0.01ms !important;
+  }
+}
+.task-gallery-research-scope {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border-block: 1px solid var(--tg-line);
+  background: color-mix(in srgb, var(--tg-cyan) 7%, transparent);
+}
+
+.task-gallery-research-scope h3,
+.task-gallery-research-scope p {
+  margin: 0.35rem 0 0;
+}
+
+.task-gallery-research-scope dl {
+  display: flex;
+  gap: 1rem;
+  margin: 0;
+}
+
+.task-gallery-research-scope dd {
+  margin: 0.25rem 0 0;
+  font-weight: 700;
+}
+
+.task-gallery-research-scope dd small {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--tg-muted);
+  font-size: 0.68rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.task-gallery-scope-warning {
+  grid-column: 1 / -1;
+  color: var(--tg-amber);
+}
+
+.task-gallery-task-bundle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--tg-cyan) 28%, transparent);
+  background: color-mix(in srgb, var(--tg-panel) 88%, transparent);
+}
+
+.task-gallery-task-bundle > div:first-child {
+  min-width: 0;
+}
+
+.task-gallery-task-bundle strong {
+  display: block;
+}
+
+.task-gallery-task-bundle strong {
+  margin-top: 0.25rem;
+}
+
+.task-gallery-task-bundle p {
+  max-width: 72ch;
+  color: var(--tg-muted);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.task-gallery-task-bundle > button {
+  flex: none;
+  min-height: 42px;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--tg-cyan);
+  color: var(--tg-cyan);
+  background: transparent;
+  cursor: pointer;
+}
+
+.task-gallery-task-bundle > button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.task-gallery-task-bundle > dl {
+  flex: none;
+}
+
+.task-gallery-task-bundle-error {
+  flex-basis: 100%;
+  color: #ffb0b0 !important;
+}
+
+.research-evaluation-targets {
+  grid-column: 1 / -1;
+  padding-top: 0.25rem;
+}
+
+.research-evaluation-targets > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.research-evaluation-targets h3,
+.research-evaluation-targets h4,
+.research-evaluation-targets p {
+  margin: 0;
+}
+
+.research-evaluation-targets > header p {
+  color: var(--tg-muted);
+  font-size: 0.74rem;
+}
+
+.research-evaluation-targets > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.research-evaluation-targets article {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--tg-line);
+  background: color-mix(in srgb, var(--tg-panel) 80%, transparent);
+}
+
+.research-evaluation-targets h4 {
+  margin-bottom: 0.65rem;
+}
+
+.research-evaluation-target-form summary {
+  min-height: 44px;
+  color: var(--tg-cyan);
+  cursor: pointer;
+}
+
+.research-evaluation-target-form form {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--tg-line);
+}
+
+.research-evaluation-target-form form > p {
+  color: var(--tg-amber);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.research-evaluation-target-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--tg-muted);
+  font-size: 0.72rem;
+}
+
+.research-evaluation-target-form input,
+.research-evaluation-target-form select,
+.research-evaluation-target-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--tg-line);
+  color: var(--tg-text);
+  background: var(--tg-bg);
+  font: inherit;
+}
+
+.research-evaluation-target-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.research-evaluation-target-form input:focus-visible,
+.research-evaluation-target-form select:focus-visible,
+.research-evaluation-target-form textarea:focus-visible,
+.research-evaluation-target-form button:focus-visible,
+.research-evaluation-target-form summary:focus-visible {
+  outline: 2px solid var(--tg-cyan);
+  outline-offset: 2px;
+}
+
+.research-evaluation-target-form label small,
+.research-evaluation-target-fixed {
+  color: var(--tg-muted) !important;
+  font-size: 0.68rem !important;
+}
+
+.research-evaluation-target-form button {
+  min-height: 44px;
+  justify-self: start;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--tg-cyan);
+  color: var(--tg-cyan);
+  background: transparent;
+  cursor: pointer;
+}
+
+.research-evaluation-target-form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.research-evaluation-target-error {
+  color: #ffb0b0 !important;
+}
+
+.research-evaluation-target-sealed {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.research-evaluation-target-sealed a {
+  overflow-wrap: anywhere;
+  color: var(--tg-cyan);
+  font-size: 0.72rem;
+}
+
+.research-evaluation-target-sealed p {
+  color: var(--tg-muted);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
+.research-evaluation-target-sealed span {
+  color: var(--tg-amber);
+  font-size: 0.68rem;
+}
+
+.research-evaluation-target-sealed code {
+  overflow-wrap: anywhere;
+  color: var(--tg-muted);
+  font-size: 0.68rem;
+}
+
+.research-evaluation-target-sealed button {
+  min-height: 42px;
+  justify-self: start;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--tg-cyan);
+  color: var(--tg-cyan);
+  background: transparent;
+  cursor: pointer;
+}
+
+.research-evaluation-job-error {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.7rem;
+  border: 1px solid color-mix(in srgb, #ff8f8f 55%, transparent);
+  background: color-mix(in srgb, #ff8f8f 8%, transparent);
+}
+
+.research-evaluation-job-error strong,
+.research-evaluation-job-error p {
+  color: #ffb0b0;
+}
+
+.research-evaluation-job-result {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.research-evaluation-job-result div {
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid var(--tg-line);
+}
+
+.research-evaluation-job-result dt,
+.research-evaluation-job-result dd {
+  margin: 0;
+}
+
+.research-evaluation-job-result dt {
+  color: var(--tg-muted);
+  font-size: 0.64rem;
+}
+
+.research-evaluation-target-sealed details {
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--tg-line);
+}
+
+.research-evaluation-target-sealed details summary {
+  min-height: 36px;
+  color: var(--tg-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.research-evaluation-target-sealed details ol {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.research-evaluation-target-sealed details li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.45rem;
+  border-left: 2px solid var(--tg-line);
+}
+
+.research-evaluation-target-sealed details small {
+  color: var(--tg-muted);
+  font-size: 0.64rem;
+}
+
+@media (max-width: 640px) {
+  .task-gallery-research-scope {
+    grid-template-columns: 1fr;
+  }
+
+  .task-gallery-scope-warning {
+    grid-column: auto;
+  }
+
+  .task-gallery-task-bundle {
+    grid-column: auto;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .task-gallery-task-bundle > button {
+    width: 100%;
+  }
+
+  .research-evaluation-targets > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .research-evaluation-targets > div {
+    grid-template-columns: 1fr;
+  }
+
+  .research-evaluation-target-form button {
+    width: 100%;
   }
 }

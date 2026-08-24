@@ -107,6 +107,7 @@ def test_daemon_settings_require_explicit_environment_and_normalize_async_url() 
             "DATABASE_URL": "postgresql+asyncpg://app:secret@postgres:5432/decision",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "compose-oasis-worker",
+            "OASIS_WORKER_DOMAIN": "semantic",
         }
     )
 
@@ -118,12 +119,26 @@ def test_daemon_settings_require_explicit_environment_and_normalize_async_url() 
     assert settings.chat_config is None
 
 
+@pytest.mark.parametrize("worker_domain", ["", "unknown"])
+def test_daemon_settings_reject_invalid_worker_domain(worker_domain: str) -> None:
+    with pytest.raises(OasisWorkerError, match="OASIS_WORKER_DOMAIN"):
+        load_daemon_settings(
+            {
+                "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
+                "OASIS_ARTIFACT_ROOT": "/artifacts",
+                "OASIS_WORKER_ID": "worker",
+                "OASIS_WORKER_DOMAIN": worker_domain,
+            }
+        )
+
+
 def test_daemon_settings_enable_semantic_runtime_only_with_complete_configuration() -> None:
     settings = load_daemon_settings(
         {
             "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "worker",
+            "OASIS_WORKER_DOMAIN": "semantic",
             "LLM_API_KEY": "secret-key",
             "LLM_BASE_URL": "https://provider.example/v1",
             "LLM_MODEL_NAME": "provider-model",
@@ -133,10 +148,7 @@ def test_daemon_settings_enable_semantic_runtime_only_with_complete_configuratio
     assert settings.semantic_config is not None
     assert settings.semantic_config.model_name == "provider-model"
     assert settings.semantic_config.prompt_schema_version == "matraix-semantic-profile/v1"
-    assert settings.survey_config is not None
-    assert settings.survey_config.model_name == "provider-model"
-    assert settings.survey_config.prompt_schema_version == ("matraix-survey-scenario-preference/v1")
-    assert settings.survey_config.config_sha256 != settings.semantic_config.config_sha256
+    assert settings.survey_config is None
     assert settings.chat_config is None
     assert "secret-key" not in repr(settings)
 
@@ -147,6 +159,7 @@ def test_daemon_settings_enable_chat_only_with_explicit_sut_endpoint() -> None:
             "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "worker",
+            "OASIS_WORKER_DOMAIN": "evaluation",
             "LLM_API_KEY": "secret-key",
             "LLM_BASE_URL": "https://provider.example/v1",
             "LLM_MODEL_NAME": "provider-model",
@@ -157,7 +170,7 @@ def test_daemon_settings_enable_chat_only_with_explicit_sut_endpoint() -> None:
 
     assert settings.chat_config is not None
     assert settings.chat_config.model_name == "provider-model"
-    assert settings.chat_config.sut_task_id == "sendowl/matraix-acme-rest-mcp-suite"
+    assert settings.chat_config.sut_task_id == "sandowl/matraix-acme-rest-mcp-suite"
     assert settings.chat_config.sut_task_version == "1.0.0"
     assert settings.chat_config.sut_spec_sha256 == (
         "0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"
@@ -167,30 +180,31 @@ def test_daemon_settings_enable_chat_only_with_explicit_sut_endpoint() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sut_url", "match"),
+    "sut_url",
     [
-        ("", "both be configured"),
-        ("acme-support-sample:8000", "HTTP\\(S\\) URL"),
-        ("http://user:password@acme-support-sample:8000", "must not contain credentials"),
+        "",
+        "acme-support-sample:8000",
+        "http://user:password@acme-support-sample:8000",
     ],
 )
-def test_daemon_settings_reject_invalid_chat_sut_endpoint(
+def test_daemon_settings_disable_invalid_chat_sut_without_blocking_evaluation(
     sut_url: str,
-    match: str,
 ) -> None:
-    with pytest.raises(OasisWorkerError, match=match):
-        load_daemon_settings(
-            {
-                "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
-                "OASIS_ARTIFACT_ROOT": "/artifacts",
-                "OASIS_WORKER_ID": "worker",
-                "LLM_API_KEY": "secret-key",
-                "LLM_BASE_URL": "https://provider.example/v1",
-                "LLM_MODEL_NAME": "provider-model",
-                "CHATBOT_SUT_BASE_URL": sut_url,
-                "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
-            }
-        )
+    settings = load_daemon_settings(
+        {
+            "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
+            "OASIS_ARTIFACT_ROOT": "/artifacts",
+            "OASIS_WORKER_ID": "worker",
+            "OASIS_WORKER_DOMAIN": "evaluation",
+            "LLM_API_KEY": "secret-key",
+            "LLM_BASE_URL": "https://provider.example/v1",
+            "LLM_MODEL_NAME": "provider-model",
+            "CHATBOT_SUT_BASE_URL": sut_url,
+            "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
+        }
+    )
+
+    assert settings.chat_config is None
 
 
 def test_daemon_settings_keep_chat_disabled_when_compose_sut_has_no_provider() -> None:
@@ -199,6 +213,7 @@ def test_daemon_settings_keep_chat_disabled_when_compose_sut_has_no_provider() -
             "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "worker",
+            "OASIS_WORKER_DOMAIN": "semantic",
             "LLM_API_KEY": "",
             "LLM_BASE_URL": "",
             "LLM_MODEL_NAME": "",
@@ -230,6 +245,7 @@ def test_daemon_settings_reject_partial_semantic_configuration(
         "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
         "OASIS_ARTIFACT_ROOT": "/artifacts",
         "OASIS_WORKER_ID": "worker",
+        "OASIS_WORKER_DOMAIN": "semantic",
         "CHATBOT_SUT_BASE_URL": "http://acme-support-sample:8000",
         "CHATBOT_MCP_SUT_URL": "http://acme-support-mcp-sample:8000/mcp",
         **partial,
@@ -245,6 +261,7 @@ def test_daemon_settings_treat_all_empty_compose_semantic_values_as_disabled() -
             "DATABASE_URL": "postgresql://app:secret@postgres:5432/decision",
             "OASIS_ARTIFACT_ROOT": "/artifacts",
             "OASIS_WORKER_ID": "worker",
+            "OASIS_WORKER_DOMAIN": "semantic",
             "LLM_API_KEY": "",
             "LLM_BASE_URL": "",
             "LLM_MODEL_NAME": "",
@@ -328,10 +345,12 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
 
     monkeypatch.setattr(daemon, "platform_smoke_queue_head", lambda _connection: None)
     monkeypatch.setattr(daemon, "semantic_queue_head", semantic_head)
+    monkeypatch.setattr(daemon, "research_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "world_graph_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "report_question_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "report_agent_draft_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "persona_interview_queue_head", lambda _connection, _config: None)
-    monkeypatch.setattr(daemon, "survey_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "research_survey_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "chat_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "web_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "linux_queue_head", lambda _connection, _config: None)
@@ -343,6 +362,7 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
             database_url="postgresql://unused:unused@localhost/unused",
             artifact_root=Path("/artifacts"),
             worker_id="incompatible-worker",
+            worker_domain="semantic",
             semantic_config=incompatible,
             survey_config=None,
             chat_config=None,
@@ -356,6 +376,7 @@ def test_semantic_queue_is_claimed_only_by_the_matching_runtime_config(
             database_url="postgresql://unused:unused@localhost/unused",
             artifact_root=Path("/artifacts"),
             worker_id="compatible-worker",
+            worker_domain="semantic",
             semantic_config=compatible,
             survey_config=None,
             chat_config=None,
@@ -375,8 +396,8 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
 ) -> None:
     from oasis_worker import daemon
     from oasis_worker.daemon import DaemonSettings
+    from oasis_worker.research_survey_contracts import ResearchSurveyRuntimeConfig
     from oasis_worker.semantic_contracts import SemanticRuntimeConfig
-    from oasis_worker.survey_contracts import SurveyRuntimeConfig
 
     semantic_config = SemanticRuntimeConfig(
         api_key="secret",
@@ -385,12 +406,12 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
         config_sha256="a" * 64,
         prompt_schema_version="matraix-semantic-profile/v1",
     )
-    survey_config = SurveyRuntimeConfig(
+    survey_config = ResearchSurveyRuntimeConfig(
         api_key="secret",
         base_url="https://provider.example/v1",
         model_name="provider-model",
         config_sha256="b" * 64,
-        prompt_schema_version="matraix-survey-scenario-preference/v1",
+        prompt_schema_version="sandowl-research-survey/v1",
     )
     semantic_id = UUID("81000000-0000-4000-8000-000000000001")
     survey_id = UUID("82000000-0000-4000-8000-000000000001")
@@ -405,7 +426,7 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
         _connection: object,
         claimed_id: UUID,
         _worker_id: str,
-        runtime_config: SurveyRuntimeConfig,
+        runtime_config: ResearchSurveyRuntimeConfig,
     ) -> object:
         assert claimed_id == survey_id
         claimed_configs.append(runtime_config.config_sha256)
@@ -419,22 +440,24 @@ def test_oldest_survey_job_is_fairly_claimed_from_the_shared_daemon(
     )
     monkeypatch.setattr(daemon, "world_graph_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "report_question_queue_head", lambda _connection, _config: None)
+    monkeypatch.setattr(daemon, "report_agent_draft_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "persona_interview_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(
         daemon,
-        "survey_queue_head",
+        "research_survey_queue_head",
         lambda _connection, _config: (survey_id, datetime(2026, 8, 13, 1, 0)),
     )
     monkeypatch.setattr(daemon, "chat_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "web_queue_head", lambda _connection, _config: None)
     monkeypatch.setattr(daemon, "linux_queue_head", lambda _connection, _config: None)
-    monkeypatch.setattr(daemon, "claim_survey_trial", claim_survey)
+    monkeypatch.setattr(daemon, "claim_research_survey_trial", claim_survey)
 
     result = daemon._claim_next_job(  # type: ignore[arg-type]
         DaemonSettings(
             database_url="postgresql://unused:unused@localhost/unused",
             artifact_root=Path("/artifacts"),
             worker_id="shared-worker",
+            worker_domain="evaluation",
             semantic_config=semantic_config,
             survey_config=survey_config,
             chat_config=None,
@@ -482,17 +505,17 @@ def test_semantic_failure_is_actionable_bounded_and_redacts_runtime_secrets() ->
 def test_survey_failure_uses_safe_provider_codes_and_redacts_runtime_secrets() -> None:
     from oasis_worker.daemon import _semantic_failure
     from oasis_worker.errors import OasisExecutionError
-    from oasis_worker.survey_contracts import SurveyRuntimeConfig
+    from oasis_worker.research_survey_contracts import ResearchSurveyRuntimeConfig
 
     class AuthenticationError(Exception):
         pass
 
-    config = SurveyRuntimeConfig(
+    config = ResearchSurveyRuntimeConfig(
         api_key="survey-secret-key",
         base_url="https://private-survey-provider.example/v1",
         model_name="provider-model",
         config_sha256="b" * 64,
-        prompt_schema_version="matraix-survey-scenario-preference/v1",
+        prompt_schema_version="sandowl-research-survey/v1",
     )
     error = OasisExecutionError(
         "survey provider at https://private-survey-provider.example/v1 rejected survey-secret-key"
@@ -524,7 +547,7 @@ def test_chat_failure_redacts_provider_and_internal_sut_runtime_values() -> None
         model_name="provider-model",
         config_sha256="c" * 64,
         prompt_schema_version="matraix-chat-acme-support/v1",
-        sut_task_id="sendowl/matraix-acme-rest-mcp-suite",
+        sut_task_id="sandowl/matraix-acme-rest-mcp-suite",
         sut_task_version="1.0.0",
         sut_spec_sha256=("0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"),
     )
@@ -605,6 +628,7 @@ def test_heartbeat_chat_fields_match_0021_and_never_persist_runtime_secrets() ->
         "worker-chat",
         started_at,
         True,
+        "semantic",
         semantic,
         None,
         chat,
@@ -616,6 +640,7 @@ def test_heartbeat_chat_fields_match_0021_and_never_persist_runtime_secrets() ->
         "worker-no-chat",
         started_at,
         True,
+        "semantic",
         semantic,
         None,
         None,
@@ -624,8 +649,8 @@ def test_heartbeat_chat_fields_match_0021_and_never_persist_runtime_secrets() ->
     )
 
     configured_query, configured_parameters = executions[0]
-    assert configured_query.count("%s") == len(configured_parameters) == 35
-    assert configured_parameters[14:21] == (
+    assert configured_query.count("%s") == len(configured_parameters) == 36
+    assert configured_parameters[15:22] == (
         True,
         chat.model_name,
         chat.config_sha256,
@@ -635,9 +660,9 @@ def test_heartbeat_chat_fields_match_0021_and_never_persist_runtime_secrets() ->
         CHAT_SUITE_SHA256,
     )
     _, disabled_parameters = executions[1]
-    assert disabled_parameters[14:21] == (False, None, None, None, None, None, None)
-    assert disabled_parameters[21:27] == (False, None, None, None, None, None)
-    assert disabled_parameters[27:33] == (False, None, None, None, None, None)
+    assert disabled_parameters[15:22] == (False, None, None, None, None, None, None)
+    assert disabled_parameters[22:28] == (False, None, None, None, None, None)
+    assert disabled_parameters[28:34] == (False, None, None, None, None, None)
     rendered = repr(executions)
     assert "provider-secret" not in rendered
     assert "private-provider.example" not in rendered

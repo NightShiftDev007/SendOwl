@@ -92,7 +92,7 @@ def test_health_endpoint() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "service": "ai-decision-center-v2",
+        "service": "sandowl",
         "version": "0.1.0",
     }
 
@@ -112,13 +112,19 @@ def test_capabilities_endpoint_exposes_all_foundation_domains() -> None:
         "decision_threads",
         "decision_reports",
         "report_questions",
+        "report_agent.evidence_tools",
         "tasks.mirofish.persona_interview",
         "scenarios",
+        "research_projects",
+        "research_evaluations",
+        "research_reports",
+        "agent_interactions",
         "populations.matraix",
         "simulations.matraix",
         "tasks.matraix.survey",
         "tasks.matraix.chat",
         "tasks.matraix.web",
+        "tasks.matraix.app",
         "tasks.matraix.linux_artifact",
         "trials.matraix.archive",
         "jobs.matraix.batch_registry",
@@ -139,19 +145,32 @@ def test_capabilities_endpoint_exposes_all_foundation_domains() -> None:
     assert "GraphPersonaCohortOrigin" in contracts_by_name["world_graphs"]
     assert "GraphPersonaCohortCreation" in contracts_by_name["world_graphs"]
     assert "GraphPersonaCohortOriginsResponse" in contracts_by_name["world_graphs"]
-    assert states_by_name["decision_threads"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["decision_reports"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["report_questions"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["tasks.mirofish.persona_interview"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["decision_threads"] is CapabilityStatus.LEGACY_READONLY
+    assert states_by_name["decision_reports"] is CapabilityStatus.LEGACY_READONLY
+    assert states_by_name["report_questions"] is CapabilityStatus.LEGACY_READONLY
+    assert states_by_name["report_agent.evidence_tools"] is CapabilityStatus.RUNTIME_READY
+    assert contracts_by_name["report_agent.evidence_tools"] == (
+        "ReportAgentRun",
+        "ReportAgentPlanSection",
+        "ReportAgentToolCall",
+        "ReportAgentCitedDraft",
+        "ReportAgentDraftCitation",
+    )
+    assert states_by_name["tasks.mirofish.persona_interview"] is CapabilityStatus.LEGACY_READONLY
     assert states_by_name["evidence"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["scenarios"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["scenarios"] is CapabilityStatus.LEGACY_READONLY
+    assert states_by_name["research_projects"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["research_evaluations"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["research_reports"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["agent_interactions"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["populations.matraix"] is CapabilityStatus.RUNTIME_READY
-    assert states_by_name["simulations.matraix"] is CapabilityStatus.CONTRACT_READY
+    assert states_by_name["simulations.matraix"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["tasks.matraix.app"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["tasks.matraix.survey"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["tasks.matraix.web"] is CapabilityStatus.RUNTIME_READY
     assert states_by_name["trials.matraix.archive"] is CapabilityStatus.RUNTIME_READY
     assert sources_by_name["trials.matraix.archive"] == (
-        "MatrAIx Survey + Chat + Web + Linux durable records"
+        "SandOwl Research Survey + Chat + Web + Linux durable records"
     )
     assert contracts_by_name["trials.matraix.archive"][-4:] == (
         "SurveyTrialArchiveItem",
@@ -161,13 +180,13 @@ def test_capabilities_endpoint_exposes_all_foundation_domains() -> None:
     )
     assert states_by_name["jobs.matraix.batch_registry"] is CapabilityStatus.RUNTIME_READY
     assert sources_by_name["jobs.matraix.batch_registry"] == (
-        "MatrAIx Survey + Chat + Web + Linux sealed parent registry"
+        "SandOwl Research Survey + Chat + Web + Linux sealed parent registry"
     )
     assert "WebBatchRegistryItem" in contracts_by_name["jobs.matraix.batch_registry"]
     assert "LinuxBatchRegistryItem" in contracts_by_name["jobs.matraix.batch_registry"]
     assert "LinuxBatchRegistryCandidate" in contracts_by_name["jobs.matraix.batch_registry"]
     assert "MatraixNativeBatchLaunchResult" in contracts_by_name["jobs.matraix.batch_registry"]
-    assert states_by_name["simulations.oasis"] is CapabilityStatus.RUNTIME_READY
+    assert states_by_name["simulations.oasis"] is CapabilityStatus.LEGACY_READONLY
 
 
 def test_readyz_returns_503_when_required_database_is_not_configured() -> None:
@@ -217,7 +236,7 @@ def test_readyz_and_diagnostic_readiness_probe_a_configured_database() -> None:
         load_runtime_settings(
             {
                 "APP_ENV": "development",
-                "DATABASE_URL": "postgresql://app:secret@postgres:5432/ai_decision_center",
+                "DATABASE_URL": "postgresql://app:secret@postgres:5432/sandowl",
                 "REDIS_URL": "redis://:secret@redis:6379/0",
             }
         )
@@ -252,7 +271,7 @@ def test_readyz_returns_503_without_exposing_database_failure_details() -> None:
     application = create_app(
         load_runtime_settings(
             {
-                "DATABASE_URL": "postgresql://app:secret@database:5432/ai_decision_center",
+                "DATABASE_URL": "postgresql://app:secret@database:5432/sandowl",
             }
         )
     )

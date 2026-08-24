@@ -14,6 +14,11 @@ interface PositionedNode {
 const canvasWidth = 900;
 const canvasHeight = 580;
 
+function graphNodeLabel(node: EvidenceWorldGraphNode): string {
+  if (node.kind === "world_snapshot") return "冻结快照";
+  return node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label;
+}
+
 function radiusForKind(kind: EvidenceWorldGraphNode["kind"]): number {
   if (kind === "world_snapshot") return 0;
   if (kind === "article") return 155;
@@ -71,12 +76,12 @@ export function EvidenceWorldGraph({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   if (state.status === "loading") {
-    return <div className="evidence-graph-loading" role="status">正在从冻结快照生成证据世界图…</div>;
+    return <div className="evidence-graph-loading" role="status">正在从冻结快照生成证据关系图…</div>;
   }
   if (state.status === "error") {
     return (
       <ApiErrorPanel
-        title="无法生成证据世界图"
+        title="无法生成证据关系图"
         error={state.error}
         isRetrying={state.isRetrying}
         onRetry={reload}
@@ -97,9 +102,9 @@ export function EvidenceWorldGraph({
     <section className="evidence-world-graph" aria-labelledby="evidence-world-graph-title">
       <header>
         <div>
-          <span>WORLD GRAPH · POSTGRESQL · SELF HOSTED</span>
-          <h4 id="evidence-world-graph-title">证据世界图</h4>
-          <p>仅展示冻结快照中可直接证明的文章、来源与国家关系，不使用 Zep，也不推断社会关系。</p>
+          <span>冻结证据关系</span>
+          <h4 id="evidence-world-graph-title">证据关系图</h4>
+          <p>展示当前快照中的文章、媒体来源与国家如何直接关联。这不是地理地图，也不推断社会关系。</p>
         </div>
         <dl>
           <div><dt>文章</dt><dd>{counts.articles}</dd></div>
@@ -108,7 +113,7 @@ export function EvidenceWorldGraph({
         </dl>
       </header>
       <div className="evidence-graph-stage">
-        <div className="evidence-graph-canvas" role="group" aria-label={`证据世界图，${state.data.nodes.length} 个节点，${state.data.edges.length} 条直接关系`}>
+        <div className="evidence-graph-canvas" role="group" aria-label={`证据关系图，${state.data.nodes.length} 个节点，${state.data.edges.length} 条直接关系`}>
           <svg viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}>
             <g className="evidence-graph-edges">
               {state.data.edges.map((edge) => {
@@ -132,7 +137,9 @@ export function EvidenceWorldGraph({
                   onClick={() => setSelectedNodeId(node.id)}
                   onKeyDown={(event) => selectOnKeyboard(event, node.id, setSelectedNodeId)}
                 >
-                  <circle r={node.kind === "world_snapshot" ? 24 : node.kind === "article" ? 11 : 8} />
+                  <circle className="evidence-graph-hit-target" r={22} />
+                  <circle className="evidence-graph-node-marker" r={node.kind === "world_snapshot" ? 24 : node.kind === "article" ? 11 : 8} />
+                  <text y={node.kind === "world_snapshot" ? 42 : 27} textAnchor="middle">{graphNodeLabel(node)}</text>
                 </g>
               ))}
             </g>
@@ -140,7 +147,7 @@ export function EvidenceWorldGraph({
         </div>
         <aside className="evidence-graph-inspector" aria-live="polite">
           {selectedNode === null ? (
-            <div><span>NODE INSPECTOR</span><h5>选择节点核验</h5><p>点击节点查看其冻结标签和直接引用。</p></div>
+            <div><span>节点说明</span><h5>选择节点核验</h5><p>点击带文字标签的节点，查看它在冻结快照中的名称和直接关系。</p></div>
           ) : (
             <div>
               <span>{selectedNode.kind.toUpperCase()}</span>
@@ -150,10 +157,11 @@ export function EvidenceWorldGraph({
               {selectedNode.country_code === null ? null : <code>country {selectedNode.country_code}</code>}
             </div>
           )}
-          <footer>
-            <span>provider</span><code>{state.data.provider}</code>
-            <span>graph_sha256</span><code title={state.data.graph_sha256}>{state.data.graph_sha256.slice(0, 18)}…</code>
-          </footer>
+          <details className="evidence-graph-audit">
+            <summary>技术审计</summary>
+            <span>存储提供方</span><code>{state.data.provider}</code>
+            <span>关系图 SHA-256</span><code title={state.data.graph_sha256}>{state.data.graph_sha256.slice(0, 18)}…</code>
+          </details>
         </aside>
       </div>
     </section>

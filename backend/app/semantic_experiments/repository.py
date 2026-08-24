@@ -155,7 +155,7 @@ def _validate_execution_bounds(
                 )
 
 
-async def _live_semantic_config(session: AsyncSession) -> tuple[str, str]:
+async def get_live_semantic_config(session: AsyncSession) -> tuple[str, str]:
     await session.execute(text("LOCK TABLE simulation_worker_heartbeats IN SHARE MODE"))
     cutoff = datetime.now(UTC) - timedelta(seconds=WORKER_HEARTBEAT_MAX_AGE_SECONDS)
     heartbeats = tuple(
@@ -168,7 +168,7 @@ async def _live_semantic_config(session: AsyncSession) -> tuple[str, str]:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
-                    SimulationWorkerHeartbeatRecord.platform_runtime_ready.is_(True),
+                    SimulationWorkerHeartbeatRecord.worker_domain == "semantic",
                     SimulationWorkerHeartbeatRecord.semantic_runtime_ready.is_(True),
                 )
                 .with_for_update(read=True)
@@ -768,7 +768,7 @@ async def create_semantic_experiment(
         request.rounds,
         request.minutes_per_round,
     )
-    model_name, config_sha256 = await _live_semantic_config(session)
+    model_name, config_sha256 = await get_live_semantic_config(session)
     experiment_sha256 = calculate_semantic_experiment_sha256(
         str(scenario.id),
         scenario.scenario_sha256,
@@ -1008,6 +1008,7 @@ async def get_semantic_readiness(session: AsyncSession) -> SemanticReadiness:
                     SimulationWorkerHeartbeatRecord.engine_version == OASIS_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.camel_version == CAMEL_ENGINE_VERSION,
                     SimulationWorkerHeartbeatRecord.mode == "reddit_manual_smoke",
+                    SimulationWorkerHeartbeatRecord.worker_domain == "semantic",
                 )
             )
         )
@@ -1021,7 +1022,7 @@ async def get_semantic_readiness(session: AsyncSession) -> SemanticReadiness:
             heartbeat.semantic_prompt_schema_version,
         )
         for heartbeat in heartbeats
-        if heartbeat.semantic_runtime_ready and heartbeat.platform_runtime_ready
+        if heartbeat.semantic_runtime_ready and heartbeat.worker_domain == "semantic"
     }
     conflict = len(configs) > 1
     complete_config = next(iter(configs)) if len(configs) == 1 else None

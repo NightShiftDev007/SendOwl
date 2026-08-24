@@ -1,9 +1,9 @@
 import { registerMap } from "echarts/core";
 import { feature } from "topojson-client";
 import type { Topology } from "topojson-specification";
-import countries50m from "world-atlas/countries-50m.json";
+import countries110m from "world-atlas/countries-110m.json";
 
-export const WORLD_MAP_NAME = "sendowl-world";
+export const WORLD_MAP_NAME = "sandowl-world";
 
 const ISO2_TO_MAP_NAME: Readonly<Record<string, string>> = {
   AE: "United Arab Emirates", AF: "Afghanistan", AL: "Albania", AM: "Armenia",
@@ -128,7 +128,7 @@ export function registerWorldMap(): WorldGeoJson {
     return registeredMap;
   }
 
-  const topology = countries50m as unknown as Topology;
+  const topology = countries110m as unknown as Topology;
   const countries = topology.objects.countries;
   if (countries === undefined) {
     throw new Error("The bundled world atlas does not contain a countries object.");

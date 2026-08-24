@@ -1,4 +1,6 @@
-# SandOwl AI Decision Center
+# SandOwl
+
+三方整合目标、来源边界与去 ADC 产品层顺序以 [`TRIAD_INTEGRATION_REFACTOR_PLAN.md`](TRIAD_INTEGRATION_REFACTOR_PLAN.md) 为当前基线；原 V1 文档只保留为历史设计记录。
 
 ## Register
 
@@ -6,23 +8,23 @@ product
 
 ## Users
 
-面向持续跟踪政策、媒体与现实环境的研究员、分析师和决策团队。用户通常在信息密集、时间有限的工作场景中，需要把外部证据转化为可复核的世界状态，再比较多种干预方案，而不是浏览一个展示型网站。
+面向持续跟踪政策、媒体与现实环境的研究员、分析师和研究团队。用户通常在信息密集、时间有限的工作场景中，需要把外部证据转化为可复核的世界状态，再运行有边界的合成人群模拟，而不是浏览一个展示型网站。
 
 ## Product Purpose
 
-Survey、Chat、Web、Linux 均以最多五次、保留旧失败记录的不可变 attempt 谱系实现本地恢复；它不冒充 Harbor retry、执行器或 reward 系统。
+SandOwl 把媒体发现、世界与图谱、合成人群、群体模拟、报告生成、Agent 交互和任务评测收敛为一条原生研究工作流。成功标准是用户能够从一条媒体线索建立可追溯的研究上下文，运行一次有边界的合成人群模拟，并继续追问或按需评测，而不需要理解三个上游项目。
 
-AgendaScope 首发观察只保存成功的正向判断、精确文章引用、实体投影与模型版本；不保存模型推理，不声称证明全网不存在更早表述，缺失或非法发生日期不会被猜测补齐。
+最终用户流程是：媒体发现与证据选择 → Project / Graph 上下文 → Persona Dataset / Cohort → 一个 simulation requirement → 一次 Simulation Run → ReportAgent 报告 → Agent Interaction → 可选 Evaluation。WorldSnapshot、事件记录、内容哈希和审计字段是支撑这条流程的技术数据链路，不是另一套面向用户的工作流。
 
-SandOwl 的产品方向是将媒体与政策证据、世界模型和 OASIS 群体实验收敛为一条决策工作流：先建立可追溯的现实依据，再构造情景、运行对照实验，最后产出带证据链和不确定性说明的决策报告。成功标准是用户能够清楚回答“依据是什么、假设是什么、实验观测到了什么、结果的限制是什么”。
+一次 Simulation Run 只绑定一个 requirement、一组合成人群和一组初始动作，不要求基线或备选方案；跨运行比较只有在未来成为独立、明确授权的研究能力后才出现。
 
-当前 Core 已接通持久 Decision Thread、AgendaScope 媒体证据、人工确认且不可变版本化的政策证据、不可变世界快照、由快照直接计算的证据世界图、千问 evidence-backed 语义世界图、有界 World Slice 与证据发布时间线、Scenario、MatrAIx Persona World/Cohort、capability 驱动的 Task Gallery、OASIS 有界语义 Playground、真实 Trial 互动图、MatrAIx Survey，以及基于 comparison 的持久章节式 Findings、Markdown 导出、绑定同一快照语义图且最多五轮的证据追问链和绑定 Report/Cohort/Persona 的合成 Persona 证据访谈（单人或 2～8 人原子会话），不包含 Company 主体、企业关系链或 GTV。政策证据保存发布机构、辖区、规范文号、发布/施行/失效日期、完整正文和内容哈希；研究员可把明确选择的具体政策版本冻结进 WorldSnapshot 和 Evidence Bundle，且该版本不随政策目录更新漂移。直接证据图只表达 Snapshot、Article、Source、Country 的可证明关系；千问图只保存能够逐字回指冻结文章的实体与关系；World Slice 只查询已封存图的有向 1～3 跳邻域；Evidence Timeline 只按冻结文章发布时间组织对象，不冒充事实生效时间；运行互动图只表达已记录的模拟事件；Decision Report 只封存可复算配对计数、限制和来源哈希，不生成“最佳方案”。Survey 只聚合成功 Persona 的精确选择、Likert 统计和原始理由，不把 synthetic responses 解释为真人研究。Trial Archive 已统一 Survey/Chat/Web/Linux 的持久 Trial；Batch Registry 可不可变登记 Survey/Chat/Web/Linux 的 sealed parent，但原子 native launch 仍只支持 Survey/Chat。Linux parent 是对一个真实固定 Linux Trial 的内容寻址封存，不是 Cohort 别名或 Harbor Job。两者都不冒充 Harbor 执行器或 reward 系统。Chat detail 提供由真实 transcript 严格派生、内容寻址的 ATIF-v1.7 projection，并明确不含未记录的 reasoning、工具调用、reward 或 Harbor 原生遥测。语义世界图默认使用 PostgreSQL 自建存储，可选阿里云 GDB，Zep Cloud 仅保留为兼容 Provider；前端 ECharts/现有 SVG 不承担图谱后端职责。政策自动摄取/效力层级、事实有效期/混合检索、bounded ReportAgent 的有界证据工具与可审计规划、MatrAIx Harbor launch/retry/verifier/artifact 执行面，以及 Decision Thread 的协作权限与审计仍是待整合范围。
+旧 Decision Thread、Scenario、Semantic Experiment、Decision Report、Survey、Chat、Web、Linux、Trial Archive 与 Batch Registry 仍作为兼容能力保留。它们可以复用同一证据、合成人群和执行基础设施，但不得反向规定 SandOwl 原生项目的数据模型、导航或产品语言。来源项目名称只保留在代码契约、迁移记录和工程溯源中，不出现在普通用户工作流里。
 
-Persona 证据访谈是当前已接通的 MiroFish 交互切片：它冻结绑定 Report、Cohort、Persona profile 与模型配置，支持单人追问和 2～8 人同问题会话，只允许引用固定报告章节，并始终标注为 synthetic perspective。报告页同时提供固定的证据脉络与对照边界叙事镜头，复用同一内容寻址问答队列与逐字引用，不接 Zep、不做预测。MatrAIx Chat 已以固定 Acme REST 与 MCP 两个 source sample 接通真实 sidecar、多轮 transcript 和严格自述反馈，固定 Web quote-choice source sample 也已接通隔离 Playwright 执行器，但尚未泛化为用户自定义 Chat、任意 MCP 或任意网址。完整自主 ReAct ReportAgent 与运行中 Agent IPC 仍未接通。
+媒体观察只保存成功的正向判断、精确文章引用、实体投影与模型版本；不保存模型推理，不声称证明全网不存在更早表述，缺失或非法发生日期不会被猜测补齐。世界快照、运行输入、事件和报告均以不可变哈希建立追溯关系。模拟结果始终标注为合成观察，不冒充现实预测、真人研究或商业建议。
 
 ## Brand Personality
 
-冷静、可信、前瞻。保留 MatrAIx 数字世界与任务驾驶舱的现代感，但所有视觉表达都服务于分析、比较和判断，不制造虚假的确定性。
+冷静、可信、前瞻。以清晰的证据层级、研究边界和运行状态形成 SandOwl 自己的视觉语言；所有视觉表达都服务于理解与判断，不制造虚假的确定性。
 
 ## Anti-references
 
@@ -35,7 +37,7 @@ Persona 证据访谈是当前已接通的 MiroFish 交互切片：它冻结绑�
 
 1. 证据先于结论：每项判断都能回到来源、时间和处理状态。
 2. 一个工作台、一条任务主线：采集、建模、实验与报告共享上下文。
-3. 对照优于单次结果：默认呈现基线、备选方案、配对观测和不确定性。
+3. 单次运行保持独立：每次模拟只描述自身输入、事件与限制；跨运行比较只有在未来形成独立、明确授权的研究能力后才出现。
 4. 渐进披露复杂度：先给出当前决策所需内容，再允许专家下钻。
 5. 能力边界透明：明确区分真实数据、推断、模拟结果和人工判断。
 

@@ -54,6 +54,7 @@ function candidateKey(candidate: MatraixBatchRegistryCandidate): string {
 
 function sourceRunHash(item: MatraixBatchRegistryItem): string {
   if (item.kind === "survey") {
+    if (item.version === "scenario-preference/v1") return item.source_detail_path;
     return createTaskGalleryHash({
         task: "survey",
         experimentId: item.parent_id,
@@ -137,6 +138,7 @@ function CandidateRow({
         <span className="batch-registry-kind">{kindLabels[candidate.kind]}</span>
         <strong>{candidate.title}</strong>
         <small>
+          {candidate.kind === "survey" && candidate.version === "scenario-preference/v1" ? "历史 ADC · " : ""}
           {candidate.version} · {observedStatusLabels[candidate.observed_status]} · {candidate.trial_count} trials
         </small>
         <code>{shortHash(candidate.parent_sha256)}</code>
@@ -386,7 +388,7 @@ function RegistryDetail({
               <span className="batch-registry-position">{String(item.position + 1).padStart(2, "0")}</span>
               <div className="batch-registry-member-main">
                 <div><span data-kind={item.kind}>{kindLabels[item.kind]}</span><strong>{item.title}</strong></div>
-                <small>{item.version} · {observedStatusLabels[item.observed_status]} · {formatMediaTimestamp(item.created_at)}</small>
+                <small>{item.kind === "survey" && item.version === "scenario-preference/v1" ? "历史 ADC · " : ""}{item.version} · {observedStatusLabels[item.observed_status]} · {formatMediaTimestamp(item.created_at)}</small>
                 <dl>
                   <div><dt>Trial</dt><dd>{item.trial_count}</dd></div>
                   <div><dt>完成</dt><dd>{item.succeeded_trial_count}</dd></div>
@@ -488,11 +490,11 @@ export function BatchRegistryPage({
   return (
     <div className="batch-registry-page">
       <header className="batch-registry-header">
-        <button type="button" onClick={onBack}>← Task Gallery</button>
+        <button type="button" onClick={onBack}>← 返回评测中心</button>
         <div>
-          <span>MATRAIX / BATCH REGISTRY</span>
-          <h2>原子创建运行，并封存可核对的批次目录</h2>
-          <p>可原子创建 SendOwl-native Survey / Chat，也可登记已有 Survey / Chat / Web / Linux 父运行；Registry 只观测底层 Trial，不冒充完整 Harbor 执行器。</p>
+          <span>SANDOWL / 批量试验注册表</span>
+          <h1>原子创建运行，并封存可核对的批次目录</h1>
+          <p>可原子创建 SandOwl-native Survey / Chat，也可登记已有 Survey / Chat / Web / Linux 父运行；Registry 只观测底层 Trial，不冒充完整 Harbor 执行器。</p>
         </div>
         <dl>
           <div><dt>目录总数</dt><dd>{directoryData?.total ?? "—"}</dd></div>
@@ -503,7 +505,7 @@ export function BatchRegistryPage({
 
       <div className="batch-registry-cockpit">
         <div className="batch-registry-left-rail">
-          <nav className="batch-registry-mode" aria-label="Batch Registry 创建方式">
+          <nav className="batch-registry-mode" aria-label="批量试验注册表创建方式">
             <button type="button" aria-pressed={composerMode === "launch"} onClick={() => setComposerMode("launch")}>创建并登记</button>
             <button type="button" aria-pressed={composerMode === "register"} onClick={() => setComposerMode("register")}>登记已有运行</button>
           </nav>
@@ -531,7 +533,7 @@ export function BatchRegistryPage({
           )}
         </div>
 
-        <main className="batch-registry-stage" aria-labelledby="batch-registry-stage-title">
+        <section className="batch-registry-stage" aria-labelledby="batch-registry-stage-title">
           <header>
             <div><span>DETAIL / EXACT</span><h3 id="batch-registry-stage-title">批次登记详情</h3></div>
             {route.registryId !== null ? <button type="button" disabled={detail.status === "loading"} onClick={reloadDetail}>刷新详情</button> : null}
@@ -545,7 +547,7 @@ export function BatchRegistryPage({
           {detail.status !== "loading" || detail.data !== null ? (
             <RegistryDetail registry={detailData} missing={detail.status === "error"} />
           ) : null}
-        </main>
+        </section>
 
         <aside className="batch-registry-directory" aria-labelledby="batch-registry-directory-title">
           <header>
@@ -553,7 +555,7 @@ export function BatchRegistryPage({
             <button type="button" disabled={directory.status === "loading"} onClick={reloadDirectory}>刷新</button>
           </header>
           {directory.status === "error" ? (
-            <ApiErrorPanel title="无法读取 Batch Registry 目录" error={directory.error} isRetrying={directory.isRetrying} onRetry={reloadDirectory} />
+            <ApiErrorPanel title="无法读取批量试验注册表目录" error={directory.error} isRetrying={directory.isRetrying} onRetry={reloadDirectory} />
           ) : null}
           {directory.status === "loading" && directory.data === null ? (
             <div className="batch-registry-loading" role="status"><span className="skeleton-block" /><span className="skeleton-block" /></div>
@@ -574,7 +576,7 @@ export function BatchRegistryPage({
             </ol>
           ) : null}
           {directoryData !== null && totalPages !== null && (directoryData.total > 0 || route.page > 1) ? (
-            <nav className="batch-registry-pagination" aria-label="Batch Registry 分页">
+            <nav className="batch-registry-pagination" aria-label="批量试验注册表分页">
               <button type="button" disabled={route.page <= 1 || directory.status === "loading"} onClick={() => onRouteChange(normalizedBatchRoute((route.page ?? 1) - 1, null))}>上一页</button>
               <span>第 {route.page} / {totalPages} 页</span>
               <button type="button" disabled={route.page >= totalPages || directory.status === "loading"} onClick={() => onRouteChange(normalizedBatchRoute((route.page ?? 1) + 1, null))}>下一页</button>

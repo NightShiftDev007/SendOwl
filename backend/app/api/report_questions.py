@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import DatabaseConnector
 from app.decision_reports.errors import DecisionReportNotFoundError
+from app.legacy_adc import reject_legacy_adc_write
 from app.report_questions.contracts import (
     ReportQuestion,
     ReportQuestionContext,
@@ -45,6 +46,7 @@ def create_report_questions_router() -> APIRouter:
         "/api/v2/decision-reports/{report_id}/questions",
         response_model=ReportQuestion,
         status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(reject_legacy_adc_write)],
     )
     async def enqueue(
         report_id: UUID, request: ReportQuestionRequest, session: ReportQuestionSession

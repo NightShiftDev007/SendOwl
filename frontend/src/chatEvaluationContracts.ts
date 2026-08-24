@@ -366,7 +366,7 @@ const atifTrajectorySchema = z.object({
 });
 
 export const chatTrialAtifProjectionSchema = z.object({
-  projection_schema_version: z.literal("sendowl-chat-atif-projection/v1"),
+  projection_schema_version: z.literal("sandowl-chat-atif-projection/v1"),
   projection_sha256: sha256DigestSchema,
   completeness: z.enum(["complete", "partial"]),
   source_trial_sha256: sha256DigestSchema,

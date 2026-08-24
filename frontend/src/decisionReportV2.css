@@ -1,0 +1,142 @@
+.decision-report-v2-document {
+  display: grid;
+  gap: 1px;
+  color: #e8f0f1;
+  background: #061018;
+}
+
+.decision-report-v2-document > header,
+.decision-report-v2-document > section,
+.decision-report-v2-document > .button {
+  padding: 22px;
+  background: #09151d;
+}
+
+.decision-report-v2-document > header {
+  display: grid;
+  gap: 8px;
+}
+
+.decision-report-v2-document > header > span,
+.decision-report-v2-document > section > header > span {
+  color: #61c7d3;
+  font: 600 0.68rem/1.4 "JetBrains Mono", monospace;
+  letter-spacing: 0.12em;
+}
+
+.decision-report-v2-document h2,
+.decision-report-v2-document h3,
+.decision-report-v2-document h4 {
+  margin: 0;
+}
+
+.decision-report-v2-document h3 small {
+  margin-left: 8px;
+  color: #8ba0a8;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.decision-report-v2-document time,
+.decision-report-v2-document code {
+  overflow-wrap: anywhere;
+  color: #8ba0a8;
+  font: 0.75rem/1.5 "JetBrains Mono", monospace;
+}
+
+.decision-report-v2-document > section > header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.decision-report-v2-markdown {
+  white-space: pre-wrap;
+  color: #b5c4c8;
+  line-height: 1.65;
+}
+
+.decision-report-v2-raw {
+  margin-top: 16px;
+  color: #8ba0a8;
+}
+
+.decision-report-v2-raw summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #61c7d3;
+  font-size: 0.78rem;
+}
+
+.decision-report-v2-ledger,
+.decision-report-v2-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 16px 0 0;
+  list-style: none;
+}
+
+.decision-report-v2-identity {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 4px;
+}
+
+.decision-report-v2-ledger > div,
+.decision-report-v2-list li {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(143, 184, 199, 0.17);
+}
+
+.decision-report-v2-ledger dt {
+  color: #8ba0a8;
+  font-size: 0.75rem;
+}
+
+.decision-report-v2-ledger dd {
+  margin: 0;
+}
+
+.decision-report-v2-list span {
+  color: #b5c4c8;
+}
+
+.decision-report-v2-list a {
+  width: fit-content;
+  color: #61c7d3;
+}
+
+.decision-report-v2-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+
+.decision-report-v2-boundary {
+  padding: 12px;
+  color: #e5c28c;
+  border: 1px solid rgba(229, 165, 90, 0.34);
+}
+
+.decision-report-v2-warning {
+  padding: 12px;
+  color: #e5c28c;
+  border: 1px solid rgba(229, 165, 90, 0.34);
+}
+
+.decision-report-v2-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  .decision-report-v2-identity,
+  .decision-report-v2-comparison {
+    grid-template-columns: 1fr;
+  }
+}

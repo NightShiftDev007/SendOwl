@@ -231,7 +231,7 @@ def _write_artifacts(request: RunRequest) -> dict[str, object]:
 
 
 class RequestHandler(BaseHTTPRequestHandler):
-    server_version = "SendOwlLinuxArtifactRunner/1.0"
+    server_version = "SandOwlLinuxArtifactRunner/1.0"
 
     def _write_json(self, status: HTTPStatus, payload: object) -> None:
         body = _compact_json(payload)

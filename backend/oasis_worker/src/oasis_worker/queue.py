@@ -18,9 +18,10 @@ from oasis_worker.queue_contracts import (
     NormalizedFailure,
     NormalizedSuccess,
     QueuePost,
+    WorkerDomain,
 )
+from oasis_worker.research_survey_contracts import ResearchSurveyRuntimeConfig
 from oasis_worker.semantic_contracts import SemanticRuntimeConfig
-from oasis_worker.survey_contracts import SurveyRuntimeConfig
 from oasis_worker.web_contracts import WebRuntimeConfig
 
 ENGINE = "camel-oasis"
@@ -62,8 +63,9 @@ def update_heartbeat(
     worker_id: str,
     started_at: datetime,
     ready: bool,
+    worker_domain: WorkerDomain,
     semantic_config: SemanticRuntimeConfig | None,
-    survey_config: SurveyRuntimeConfig | None,
+    survey_config: ResearchSurveyRuntimeConfig | None,
     chat_config: ChatRuntimeConfig | None,
     web_config: WebRuntimeConfig | None,
     linux_config: LinuxRuntimeConfig | None,
@@ -73,7 +75,7 @@ def update_heartbeat(
         cursor.execute(
             """
             INSERT INTO simulation_worker_heartbeats (
-                worker_id, engine, engine_version, camel_version, mode,
+                worker_id, worker_domain, engine, engine_version, camel_version, mode,
                 platform_runtime_ready, semantic_runtime_ready, semantic_model_name,
                 semantic_config_sha256, semantic_prompt_schema_version,
                 survey_runtime_ready, survey_model_name, survey_config_sha256,
@@ -89,12 +91,13 @@ def update_heartbeat(
                 linux_runner_spec_sha256,
                 started_at, last_seen_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s
             )
             ON CONFLICT (worker_id) DO UPDATE SET
+                worker_domain = EXCLUDED.worker_domain,
                 engine = EXCLUDED.engine,
                 engine_version = EXCLUDED.engine_version,
                 camel_version = EXCLUDED.camel_version,
@@ -132,6 +135,7 @@ def update_heartbeat(
             """,
             (
                 worker_id,
+                worker_domain,
                 ENGINE,
                 ENGINE_VERSION,
                 CAMEL_VERSION,

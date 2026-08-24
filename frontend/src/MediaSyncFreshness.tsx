@@ -42,9 +42,9 @@ const tablePresentation: Readonly<Record<MediaSyncTableCount["table_name"], stri
 
 const limitationTranslations: Readonly<Record<string, string>> = {
   "Each refresh scans all supported AgendaScope source rows and only writes changed target rows.":
-    "每轮执行 full-scan，读取 AgendaScope 所有受支持行；目标端只 upsert 有变化的行。",
-  "Articles absent from a complete source scan are hidden in SendOwl without deleting frozen evidence; other source deletions are not reconciled.":
-    "完整源快照中不再出现的文章会在 SendOwl 当前视图中隐藏，但已冻结证据不会删除；其他源对象暂不做删除对账。",
+    "每轮执行全量扫描，读取所有受支持的媒体源记录；目标端只写入发生变化的记录。",
+  "Articles absent from a complete source scan are hidden in SandOwl without deleting frozen evidence; other source deletions are not reconciled.":
+    "完整源快照中不再出现的文章会在 SandOwl 当前视图中隐藏，但已冻结证据不会删除；其他源对象暂不做删除对账。",
   "Business-time watermarks do not prove semantic completeness or real-time coverage.":
     "业务时间水位只能说明已观测数据的新鲜度，不能证明语义完整或实时全量覆盖。",
 };

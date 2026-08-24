@@ -11,7 +11,7 @@ PROMPT_SCHEMA_VERSION = "matraix-chat-acme-support/v1"
 RUNNER_VERSION = "1.0.0"
 REST_SUT_SPEC_SHA256 = "b3609ac5ab58a4994c497f276d4689b8272150a9251676ddef84ebe9e8bdc980"
 MCP_SUT_SPEC_SHA256 = "5fbc2623be9df873de0c025edd1f2dcbf9d0b24672d627f1e063002c9e9587e1"
-CHAT_SUITE_ID = "sendowl/matraix-acme-rest-mcp-suite"
+CHAT_SUITE_ID = "sandowl/matraix-acme-rest-mcp-suite"
 CHAT_SUITE_VERSION = "1.0.0"
 CHAT_SUITE_SHA256 = "0c4499c79be0d62ff6a3159e5d27abafb65724b2c064499aa08ac1472acec91a"
 # Stable aliases retained for the original REST source-sample contract.

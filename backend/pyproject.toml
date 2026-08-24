@@ -1,7 +1,7 @@
 [project]
-name = "ai-decision-center-v2-backend"
+name = "sandowl-backend"
 version = "0.1.0"
-description = "AI Decision Center V2 control plane"
+description = "SandOwl control plane"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.14.0,<2.0.0",
