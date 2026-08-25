@@ -87,6 +87,7 @@ async def _exercise_native_collection(database_url: str) -> None:
                             ),
                         ),
                         discovered_count=1,
+                        not_modified=False,
                         collected_at=datetime.now(UTC),
                     )
                     await complete_native_collection_success(session, run.id, batch)

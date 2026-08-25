@@ -15,6 +15,7 @@ WEB_CONTEXT_TOKEN_LIMIT = 32_768
 WEB_OUTPUT_MAX_TOKENS = 1024
 WEB_TOOL_CHOICE = "required"
 WEB_ENABLE_THINKING = False
+WEB_PARALLEL_TOOL_CALLS = False
 
 
 def _digest(parts: tuple[str, ...]) -> str:
@@ -34,6 +35,7 @@ def web_config_sha256(provider_base_url: str, model_name: str) -> str:
             str(WEB_OUTPUT_MAX_TOKENS),
             WEB_TOOL_CHOICE,
             "false" if not WEB_ENABLE_THINKING else "true",
+            "false" if not WEB_PARALLEL_TOOL_CALLS else "true",
             "submit_quote_choice",
             str(MAX_PROFILE_ATTRIBUTES),
             *sorted(LOW_INFORMATION_VALUES),
@@ -53,19 +55,30 @@ def evaluation_sha256(
     persona_count: int,
     model_name: str,
     config_sha256: str,
+    retry_of_evaluation_sha256: str | None,
+    attempt_number: int,
 ) -> str:
+    base = (
+        task_spec_sha256,
+        executor_spec_sha256,
+        str(cohort_id),
+        cohort_sha256,
+        dataset_sha256,
+        str(persona_count),
+        model_name,
+        config_sha256,
+        WEB_PROMPT_SCHEMA_VERSION,
+    )
+    if attempt_number == 1 and retry_of_evaluation_sha256 is None:
+        return _digest(("matraix-web-evaluation/v1", *base))
+    if not 2 <= attempt_number <= 5 or retry_of_evaluation_sha256 is None:
+        raise ValueError("Web retry requires a parent digest and attempt 2..5")
     return _digest(
         (
-            "matraix-web-evaluation/v1",
-            task_spec_sha256,
-            executor_spec_sha256,
-            str(cohort_id),
-            cohort_sha256,
-            dataset_sha256,
-            str(persona_count),
-            model_name,
-            config_sha256,
-            WEB_PROMPT_SCHEMA_VERSION,
+            "matraix-web-evaluation-retry/v1",
+            retry_of_evaluation_sha256,
+            str(attempt_number),
+            *base,
         )
     )
 

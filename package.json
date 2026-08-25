@@ -14,7 +14,7 @@
     "test:backend": "cd backend && uv run pytest",
     "test:backend:postgres": "sh scripts/test-backend-postgresql.sh",
     "lint:backend": "cd backend && uv run ruff check . && uv run ruff format --check .",
-    "test:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 pytest",
+    "test:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 python -m pytest",
     "lint:oasis-worker": "cd backend/oasis_worker && uv run --python 3.11 ruff check . && uv run --python 3.11 ruff format --check .",
     "migrate": "cd backend && uv run alembic upgrade head",
     "migrate:check": "cd backend && uv run alembic heads",

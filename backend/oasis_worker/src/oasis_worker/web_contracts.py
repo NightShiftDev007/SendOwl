@@ -60,7 +60,19 @@ class WebEvaluation(StrictModel):
     web_config_sha256: Sha256
     prompt_schema_version: Literal["matraix-web-quotes-choice/v1"]
     evaluation_sha256: Sha256
+    retry_of_evaluation_id: UUID | None
+    retry_of_evaluation_sha256: Sha256 | None
+    attempt_number: Annotated[int, Field(ge=1, le=5)]
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_retry_lineage(self) -> Self:
+        has_parent = (
+            self.retry_of_evaluation_id is not None and self.retry_of_evaluation_sha256 is not None
+        )
+        if (self.attempt_number == 1) == has_parent:
+            raise ValueError("root Web attempts have no parent; later attempts require one")
+        return self
 
 
 class ClaimedWebTrial(StrictModel):

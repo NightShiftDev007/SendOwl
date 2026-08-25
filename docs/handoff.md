@@ -2,7 +2,7 @@
 
 > M16 当前边界（优先于下文历史章节）：新工作走 `Native Media → WorldSnapshot + Semantic Graph → Research Project + AgendaContext → Cohort → SimulationContext / SimulationPlan → Simulation Run + Graph Memory → ReportAgent / Agent Interaction / Persona Interview → Project-bound Evaluation`。Scenario、Semantic Experiment、Decision Thread、DecisionReport、旧 Persona Interview、旧 Scenario Preference Survey 和 platform-smoke 均为显式历史只读。
 
-> 状态基准：2026-08-24；分支 `main`；代码迁移 head `20260820_core_0061`。M11–M15 工程主链与 M16 发布收口均已完成：Harbor retry lineage、错误可见性、全页面响应式/可访问性加固、全量验证和 CI 已建立。Owner 选择不执行零提示中文复测，因此仍不得标记为真人或外部用户验证通过。
+> 状态基准：2026-08-25；分支 `main`；代码迁移 head `20260820_core_0061`。M11–M15 工程主链与 M16 发布收口均已完成；真实运行样本和独立零提示 UI 代理复验也已通过。该结论覆盖只经页面操作的产品主流程与 1440 / 768 / 390 响应式检查，不等同于外部真人研究或现实有效性验证。详见 [`m17-integration-runtime-acceptance.md`](./m17-integration-runtime-acceptance.md)。
 
 本文是接手 SandOwl 开发时的首要上下文。它回答四个问题：项目为什么存在、当前真正完成了什么、运行环境现在有什么数据、下一阶段还需要整合什么。
 
@@ -129,48 +129,43 @@ Zep 已从目标架构的必选项移除。千问负责受约束的语义理解�
 
 ## 6. 当前运行环境快照
 
-以下数据来自 2026-08-16 对 `127.0.0.1:8210` 的只读核验，不是代码能力上限。
+以下数据来自 2026-08-25 对 `127.0.0.1:8210` 与 SandOwl PostgreSQL 的只读核验，不是代码能力上限。
 
 ### 6.1 服务与迁移
 
 - 后端 `/health` 和 `/readyz` 正常；数据库已连接。
-- 本次运行环境快照仍是迁移 `20260815_core_0032`；代码 head `20260816_core_0040` 需在下次 SandOwl 专属迁移后生效。
-- OASIS worker 在线；platform smoke ready。
-- Compose 还包含 Acme REST/MCP、固定 Chromium executor、Linux artifact runner 和 Nginx frontend。
+- 代码与实际 PostgreSQL 均位于唯一迁移 head `20260820_core_0061`。
+- Semantic、Research Survey、Chat、Web、Linux Worker 均在线并通过真实 provider/执行器身份探测；模型为 `qwen3.7-plus`。
+- Compose 包含 Nginx frontend、Acme REST/MCP、固定 Chromium executor、Linux artifact runner、Rootless DinD Harbor runner、Evaluation Job Worker、Report Worker 与原生媒体采集 Worker。
+- Git `main` 与 `origin/main` 一致；GitHub Actions 的 Frontend、Backend、OASIS Worker、PostgreSQL Integration 四个作业全部通过。
 
 ### 6.2 SandOwl 自有数据
 
 | 数据 | 当前数量/状态 |
 |---|---|
-| 媒体来源 | 409；active 259，degraded 150 |
-| 当前可见媒体文章 | overview 统计 7,053 |
-| 议题目录 | 29,584 |
+| 媒体来源 | 412；原生采集启用 1，两个失败验收来源已停用 |
+| 媒体文章 | 48,091 |
+| 议题目录 | 30,886 |
 | Persona dataset | 1 个 `matraix-persona-dev-sample` |
 | Persona | 200 |
-| Cohort | 0 |
-| WorldModel / Scenario | 0 / 0 |
-| Semantic / Survey / Chat / Web / Linux 运行 | 全部 0 |
-| Trial Archive / Batch Registry | 全部 0 |
-| Decision Report | 0 |
+| Cohort | 6；新增 1 人最小真实任务验收 Cohort |
+| WorldModel / WorldSnapshot / Semantic Graph | 6 / 6 / 1 |
+| Research Project / Simulation Run / Run Report | 3 / 3 / 3；3 个 Run 均成功 |
+| Research Survey | 1 个父任务；5 / 5 Trial 成功 |
+| Project-bound Evaluation | 3 个 Target；5 个 Job，其中 3 成功、2 失败；App 与 Web 均由失败根 attempt 重试成功 |
+| 固定 Chat / Web / Linux / Batch | Chat 1 个成功；Web attempt 4 成功并保留 3 个失败 attempt；Linux 1 个成功；Batch 1 个，4 个父运行、8 / 8 Trial 成功 |
 
-媒体 overview 与议题目录的统计口径不同，不能把 overview 的当前聚合数量与完整议题目录 total 直接比较。
+ReportAgent、Agent Interaction 与 Persona Interview 都保留开发期间失败 attempt；当前分别已有 2、2、1 个成功终态。失败记录是不可变审计事实，不应删除或改写成成功。
 
 ### 6.3 媒体同步
 
-- 最近一次 scheduled refresh 成功，源观察时间为 2026-08-16 01:17:50 UTC，完成时间为 01:43:43 UTC。
-- 该轮只读扫描 41,666 篇源文章和 29,584 个源议题，并把差异写入 SandOwl。
-- 当前实现是“全表扫描 + changed-row upsert”，不是 CDC；除文章存在性外，其他源对象删除不传播。
+- 历史 AgendaScope 只读迁移已形成 409 个来源、48,081 篇文章与 30,877 个议题；该 profile 不是 SandOwl 启动前提。
+- 原生采集 Worker 心跳新鲜；已启用 NASA 官方 RSS，首轮成功发现并插入 10 篇。Docker Desktop `198.18.0.0/15` 合成 DNS 代理兼容和 HTTP 304 无变化处理均使用显式、默认关闭或严格类型化的边界。
+- 历史导入实现仍是“全表扫描 + changed-row upsert”，不是 CDC；除文章存在性外，其他源对象删除不传播。
 
 ### 6.4 LLM readiness
 
-当前 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL_NAME` 为空，因此：
-
-- `platform_runtime_ready=true`；
-- `semantic_runtime_ready=false`；
-- Survey / Chat / Web / Linux readiness 全部为 false；
-- UI 会显示边界并禁用提交，不会生成 mock 结果或假成功。
-
-代码已接通不等于当前环境已完成真实 LLM 验收。要形成完整业务演示，需要配置兼容的千问/OpenAI-compatible provider，通过每个 runtime 的真实 startup probe，然后显式创建 Cohort、World、Scenario 和实验。
+当前 OpenAI-compatible provider 配置完整，Semantic、Research Survey、Chat、Web、Linux readiness 均为 `true`，每项都有一个近期 Worker heartbeat，模型为 `qwen3.7-plus`。真实成功已覆盖原生 Simulation Run、ReportAgent、Agent Interaction、Persona Interview、Research Survey、固定 Chat/Web/Linux、四类 Batch Registry，以及 Project-bound App/Web Harbor。具体资源与失败修复见 [`m17-integration-runtime-acceptance.md`](./m17-integration-runtime-acceptance.md)。
 
 ## 7. 架构与实现原则
 
@@ -226,12 +221,12 @@ compose.yaml                     sandowl 独立运行拓扑
 
 ### 9.1 高优先级断链
 
-1. **完整演示数据链尚未形成**：已有媒体和 Persona，但没有 Cohort、World、Scenario、实验和报告。先配置千问并走通一条完整真实链，比继续增加空页面更有价值。
+1. **当前计划内整合链没有已知高优先级工程断链**：原生媒体采集、Project → Run → ReportAgent → Interaction / Persona Interview → Survey、固定 Chat/Web/Linux、四类 Batch Registry，以及 Project-bound App/Web Harbor 都已有真实成功记录。剩余 Gate 是真人零提示验证和生产治理，不得用开发者验收替代。
 2. **品牌已确定，技术标识保留**：对外产品名确定为 `SandOwl`。仓库目录、Compose project、镜像、数据卷和环境变量中的 `SandOwl` / `sandowl` 继续作为内部技术标识，避免破坏运行环境；后端 health/product 中残留的 `SandOwl` 应在独立的小范围兼容改动中统一，不做零散替换。
 
 ### 9.2 MatrAIx 未完成范围
 
-- 完整 Harbor job launch、worker plane、通用 retry/cancel、attempt lineage、verifier reward、通用 artifacts 和受权导出。
+- Project-bound Harbor Job、Worker plane、最多五次不可变 retry lineage、task-owned verifier、trajectory、artifact 与 reward 已接通。尚未完成的是通用 cancel、任意任务包、通用 artifact 浏览与受权导出。
 - 桌面 OS App、真实 Computer Use、录屏、通用 trajectory 和 macOS/iOS runner。
 - 用户自定义 Chat/MCP/Web/OS 任务；当前所有 connector 都是固定、允许清单化的 source sample。
 
@@ -263,11 +258,11 @@ compose.yaml                     sandowl 独立运行拓扑
 ### 阶段 A：先把现有能力真实跑通
 
 1. 已确定对外品牌名为 SandOwl；UI、README 和 package metadata 已主要使用该名称，后续只需在保持 API 兼容的前提下清理残余 product/service 文案。
-2. 配置独立的千问/OpenAI-compatible 凭据，确认 semantic、Survey、Chat、Web、Linux 五种 readiness 真实变为 ready。
-3. 用现有 200 Persona 创建一个 1～4 人 Cohort。
-4. 从真实媒体创建 WorldSnapshot → Scenario → semantic experiment → Decision Report。
-5. 同一 Cohort 至少各跑一条 Survey、Chat、Web、Linux，确认 Trial Archive、报告和 artifact 读取。
-6. 保存一套脱敏、可重放的演示资源 ID 与验收清单；不要保存 API key 或复制 Persona 原文件。
+2. 已完成。独立千问/OpenAI-compatible provider 已配置，Semantic、Survey、Chat、Web、Linux readiness 均为 `true`。
+3. 已完成。当前有 200 个 Persona 与 5 个不可变 Cohort。
+4. 已完成当前原生产品路径。真实媒体已形成 WorldSnapshot → Semantic Graph → Research Project → 单次 Simulation Run → Run Report；旧 Scenario / Decision Report 不再作为新链路。
+5. 已完成。Research Survey、固定 Chat/Web/Linux、四类 Batch Registry，以及 Project-bound App/Web Harbor 均已有成功资源；失败 attempt 保持不可变。
+6. 已保存脱敏中文案例和 M16 开发者验收记录；后续新增任务只记录资源 ID、内容哈希和边界，不保存 API key 或复制 Persona 原文件。
 
 ### 阶段 B：补齐当前内部断链
 
@@ -278,8 +273,8 @@ compose.yaml                     sandowl 独立运行拓扑
 三个方向互补且都纳入目标路线，但禁止同时铺开；每一层必须形成通过真实 PostgreSQL 验证的纵向切片后再进入下一层：
 
 1. **Policy evidence（证据层，基础闭环已完成）**：政策来源、稳定文档身份、不可变版本、发布/施行/失效时间、内容哈希、人工确认工作区，以及显式政策版本与 WorldSnapshot/Evidence Bundle 的冻结绑定已接通，并通过真实 PostgreSQL 验证。政策是外部现实证据，不能被 Agent 输出或执行结果替代；自动摄取和效力层级属于后续增强。
-2. **PostgreSQL evidence tools + bounded ReportAgent（分析编排层，进行中）**：已完成单快照作用域、2～6 段冻结大纲、1～20 次预算、媒体/政策只读工具、不可变调用审计，以及冻结已读证据前缀后异步生成并逐字校验引用的章节草稿。下一切片在该边界上增加自动但受约束的规划。Agent 输出是分析，不自动成为事实。
-3. **隔离 Harbor-compatible executor（执行层）**：最后建设通用 job、worker plane、cancel/retry、verifier、trajectory、artifact、授权下载和资源治理。执行结果是观测或 verifier 产物，不自动升级为现实证据。
+2. **PostgreSQL evidence tools + bounded ReportAgent（分析编排层，受控 v2 已完成）**：已完成单 Run 多来源作用域、冻结大纲与预算、媒体/政策/图谱/事件/获授权访谈读取、不可变调用审计，以及异步生成并逐字校验引用的章节草稿。开放式自主 ReAct 和隐藏推理不在当前产品声明内；Agent 输出仍是分析，不自动成为事实。
+3. **隔离 Harbor-compatible executor（执行层，Project-bound 子集已完成）**：固定 MatrAIx commit、Rootless DinD、PostgreSQL Job Worker、不可变 retry、task-owned verifier、trajectory、artifact 与 reward 已接通。通用 cancel、任意任务包、授权下载和资源治理仍是后续生产化范围；执行结果不自动升级为现实证据。
 
 跨层连接必须保留来源、版本、时间、内容哈希和运行身份；ReportAgent 可以读取 Policy evidence 并提交 Harbor 任务，但任何下游结果进入 World 或 Report 前仍需显式、类型化引用。
 

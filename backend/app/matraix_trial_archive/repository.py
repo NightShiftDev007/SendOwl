@@ -616,6 +616,8 @@ def _web_archive_item(
         cohort,
         parent.model_name,
         parent.web_config_sha256,
+        parent.retry_of_evaluation_sha256,
+        parent.attempt_number,
     )
     if (
         parent.input_sealed_at is None
@@ -711,6 +713,8 @@ def _linux_archive_item(
         trial.model_name,
         trial.linux_config_sha256,
         trial.prompt_schema_version,
+        trial.retry_of_trial_sha256,
+        trial.attempt_number,
     )
     if (
         cohort_record.sealed_at is None

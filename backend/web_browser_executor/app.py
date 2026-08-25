@@ -100,7 +100,7 @@ def _quote_id(text: str, author: str) -> str:
     return hashlib.sha256(f"{text}\0{author}".encode()).hexdigest()
 
 
-def _read_quotes(page: Page, page_position: int) -> tuple[QuoteObservation, ...]:
+def _read_quotes(page: Page, first_quote_position: int) -> tuple[QuoteObservation, ...]:
     rows = page.locator(".quote")
     count = rows.count()
     if count < 1 or count > 20:
@@ -115,7 +115,7 @@ def _read_quotes(page: Page, page_position: int) -> tuple[QuoteObservation, ...]
             raise RuntimeError("quote page returned an invalid quote record")
         quotes.append(
             QuoteObservation(
-                position=page_position * 20 + position,
+                position=first_quote_position + position,
                 quote_id=_quote_id(text, author),
                 text=text,
                 author=author,
@@ -129,6 +129,7 @@ def _observe_page(
     page: Page,
     trial_directory: Path,
     page_position: int,
+    first_quote_position: int,
 ) -> PageObservation:
     url = page.url
     if not _valid_target_url(url):
@@ -140,7 +141,7 @@ def _observe_page(
         url=url,
         title=page.title().strip(),
         screenshot_sha256=_sha256_bytes(screenshot),
-        quotes=_read_quotes(page, page_position),
+        quotes=_read_quotes(page, first_quote_position),
     )
 
 
@@ -167,8 +168,16 @@ def observe_quotes(trial_id: UUID) -> tuple[PageObservation, ...]:
             page = context.new_page()
             page.goto(f"{TARGET_ORIGIN}/", wait_until="domcontentloaded")
             observations: list[PageObservation] = []
+            next_quote_position = 0
             for page_position in range(PAGE_COUNT):
-                observations.append(_observe_page(page, trial_directory, page_position))
+                observation = _observe_page(
+                    page,
+                    trial_directory,
+                    page_position,
+                    next_quote_position,
+                )
+                observations.append(observation)
+                next_quote_position += len(observation.quotes)
                 if page_position + 1 == PAGE_COUNT:
                     break
                 next_link = page.locator("li.next > a")

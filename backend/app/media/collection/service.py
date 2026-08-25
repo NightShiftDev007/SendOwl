@@ -41,6 +41,7 @@ class NativeCollectionBatch:
     last_modified: str | None
     articles: tuple[NativeCollectedArticle, ...]
     discovered_count: int
+    not_modified: bool
     collected_at: datetime
 
 
@@ -69,6 +70,16 @@ def collect_native_source(
         etag=source.etag,
         last_modified=source.last_modified,
     )
+    if entry_document.status_code == 304:
+        return NativeCollectionBatch(
+            fetched_url=entry_document.url,
+            etag=entry_document.etag,
+            last_modified=entry_document.last_modified,
+            articles=(),
+            discovered_count=0,
+            not_modified=True,
+            collected_at=datetime.now(UTC),
+        )
     discovered = (
         discover_feed_articles(entry_document.body, entry_document.url, MAXIMUM_ARTICLES_PER_SOURCE)
         if source.collection_mode == "rss"
@@ -115,6 +126,7 @@ def collect_native_source(
         last_modified=entry_document.last_modified,
         articles=tuple(articles),
         discovered_count=len(discovered),
+        not_modified=False,
         collected_at=datetime.now(UTC),
     )
 

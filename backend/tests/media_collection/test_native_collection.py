@@ -81,9 +81,42 @@ def test_native_collection_uses_feed_discovery_and_article_extraction() -> None:
     )
 
     assert batch.discovered_count == 1
+    assert batch.not_modified is False
     assert batch.etag == '"feed-v1"'
     assert batch.articles[0].extraction.status == "full"
     assert batch.articles[0].fetch_error is None
+
+
+def test_native_collection_treats_not_modified_as_successful_no_change() -> None:
+    def fetcher(url: str, **kwargs) -> FetchedDocument:
+        del kwargs
+        return FetchedDocument(
+            url=url,
+            body="",
+            status_code=304,
+            content_type="application/rss+xml",
+            etag='"feed-v1"',
+            last_modified="Tue, 25 Aug 2026 01:50:00 GMT",
+        )
+
+    batch = collect_native_source(
+        NativeCollectionSource(
+            id="source-1",
+            homepage_url="https://news.example.test/",
+            feed_url="https://news.example.test/feed.xml",
+            collection_mode="rss",
+            language="en",
+            country_code="US",
+            etag='"feed-v1"',
+            last_modified="Tue, 25 Aug 2026 01:50:00 GMT",
+        ),
+        fetcher=fetcher,
+    )
+
+    assert batch.discovered_count == 0
+    assert batch.not_modified is True
+    assert batch.articles == ()
+    assert batch.etag == '"feed-v1"'
 
 
 def test_collection_requests_require_explicit_feed_and_reject_extra_fields() -> None:
@@ -117,6 +150,38 @@ def test_public_transport_rejects_private_addresses(monkeypatch: pytest.MonkeyPa
         socket,
         "getaddrinfo",
         lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))],
+    )
+    with pytest.raises(MediaFetchError, match="non-public"):
+        validate_public_media_url("http://internal.example.test/article")
+
+
+def test_public_transport_requires_explicit_docker_desktop_dns_proxy_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.5.1", 0))],
+    )
+    monkeypatch.delenv("MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY", raising=False)
+    with pytest.raises(MediaFetchError, match="non-public"):
+        validate_public_media_url("https://public.example.test/feed.xml")
+
+    monkeypatch.setenv("MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY", "true")
+    assert (
+        validate_public_media_url("https://public.example.test/feed.xml")
+        == "https://public.example.test/feed.xml"
+    )
+
+
+def test_docker_desktop_dns_proxy_opt_in_does_not_allow_private_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY", "true")
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.8", 0))],
     )
     with pytest.raises(MediaFetchError, match="non-public"):
         validate_public_media_url("http://internal.example.test/article")

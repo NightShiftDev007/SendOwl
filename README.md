@@ -56,7 +56,7 @@ Research Project + Cohort + 单一模拟要求
 
 完整捕获文本和每个快照都使用 SHA-256 内容地址。世界快照、场景和运行输入使用 draft→sealed 状态与数据库触发器保护；封存后拒绝修改、删除、追加子记录和 `TRUNCATE`。这些机制属于跨项目整合所需的可追溯性与一致性，不是独立企业功能。
 
-语义实验是 synthetic bounded observations：最多 8 个 Persona、3 轮，且整个矩阵不超过 96 persona-rounds。Persona prompt 只使用确定性的有界档案投影；记录的 seed 不能保证外部 provider 完全可复现。这些事件和计数不是 forecast、verdict、stance 或 reach，也不是现实因果结论。
+历史多方案 Semantic Experiment 是 synthetic bounded observations：最多 8 个 Persona、3 轮，且整个矩阵不超过 96 persona-rounds；该入口现已只读。原生单次 Simulation Run 最多 8 个 Persona、6 轮，可按最长 48 小时的确定性计划注入定时合成事件。两类运行的 Persona prompt 都只使用确定性的有界档案投影；记录的 seed 不能保证外部 provider 完全复现，事件和计数也不是 forecast、verdict、stance、reach 或现实因果结论。
 
 当前原生主链是 WorldSnapshot → Research Project → 单次 Simulation Run → Research Report / ReportAgent → Agent Interaction，并可从成功 Run 派生单一上下文 Research Survey。旧 Decision Thread、Scenario、Semantic Experiment、DecisionReport 和 Scenario Preference Survey 仅保留历史读取。Trial Archive 与 Batch Registry 同时识别原生 Research Survey 和历史 ADC Survey，但所有新 Survey 写入只走原生 Research Run 契约。仍未整合的主要范围包括 ReportAgent 自动受控规划与完整自主 ReAct、更高级的 Population 排序与混合检索、桌面 OS / 通用 Computer Use、通用 Web/Harbor 执行面、AgendaScope 真正 CDC 与非文章对象删除对账，以及生产级认证/RBAC/审计、水平扩展和产物保留策略。
 
@@ -96,7 +96,7 @@ pnpm stack
 
 Compose 会先运行 Alembic migration，再启动 API、OASIS worker 和 Nginx 前端。默认本机入口为 <http://127.0.0.1:3200>。
 
-Core 分支使用独立的 Compose project 和数据卷，当前 Alembic head 为 `20260816_core_0040`，与企业版分支的 revision ID 分离。不要把已运行企业版迁移的外部数据库直接配置给本分支；版本不匹配会明确失败，而不会把两种 schema 视为相同版本。
+Core 分支使用独立的 Compose project 和数据卷，当前 Alembic head 为 `20260820_core_0061`，与企业版分支的 revision ID 分离。不要把已运行企业版迁移的外部数据库直接配置给本分支；版本不匹配会明确失败，而不会把两种 schema 视为相同版本。
 
 非本机环境必须提供独立环境文件并替换所有凭据：
 

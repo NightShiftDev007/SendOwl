@@ -17,6 +17,8 @@ from oasis_worker.research_interview_contracts import (
 )
 from oasis_worker.research_interview_hashing import answer_sha256
 
+RESEARCH_INTERVIEW_OUTPUT_VALIDATION_ATTEMPTS = 2
+
 
 def _tool_schema() -> dict[str, object]:
     return {
@@ -39,7 +41,7 @@ async def answer_research_persona_interview(
         sort_keys=True,
         separators=(",", ":"),
     )
-    messages: list[OpenAIMessage] = [
+    base_messages: list[OpenAIMessage] = [
         {
             "role": "system",
             "content": (
@@ -63,7 +65,36 @@ async def answer_research_persona_interview(
             ),
         },
     ]
-    response = await model.arun(messages, tools=[_tool_schema()])
+    last_error: OasisExecutionError | None = None
+    for attempt in range(1, RESEARCH_INTERVIEW_OUTPUT_VALIDATION_ATTEMPTS + 1):
+        messages = list(base_messages)
+        if last_error is not None:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "The previous answer failed validation: "
+                        f"{last_error}. Return one corrected complete "
+                        "submit_run_persona_interview tool call. Copy every citation quote "
+                        "character-for-character from FROZEN RUN WORLD; do not paraphrase, "
+                        "re-punctuate, or add quotation marks."
+                    ),
+                }
+            )
+        response = await model.arun(messages, tools=[_tool_schema()])
+        try:
+            return _normalize_response(job, response)
+        except OasisExecutionError as error:
+            if attempt == RESEARCH_INTERVIEW_OUTPUT_VALIDATION_ATTEMPTS:
+                raise
+            last_error = error
+    raise RuntimeError("research Persona interview validation exhausted without a result")
+
+
+def _normalize_response(
+    job: ClaimedResearchPersonaInterview,
+    response: object,
+) -> NormalizedResearchPersonaInterviewAnswer:
     if not isinstance(response, ChatCompletion) or len(response.choices) != 1:
         raise OasisExecutionError("research Persona interview provider returned an invalid choice")
     tool_calls = response.choices[0].message.tool_calls

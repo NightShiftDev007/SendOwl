@@ -388,15 +388,34 @@ export function ResearchProjectsPage({
       && selectedSnapshot.state.data.world_model_id === route.worldModelId
       ? selectedSnapshot.state.data
       : null;
-  const graph = semanticGraphs.state.data?.items.find(
+  const succeededGraphs = useMemo(
+    () => semanticGraphs.state.data?.items.filter((item) => item.status === "succeeded") ?? [],
+    [semanticGraphs.state.data],
+  );
+  const graph = succeededGraphs.find(
     (item) => item.id === route.graphId && item.status === "succeeded",
   ) ?? null;
+  const graphIsPending = semanticGraphs.state.data?.items.some(
+    (item) => item.status === "queued" || item.status === "running",
+  ) ?? false;
   const canSubmit = title.trim() !== ""
     && question.trim() !== ""
     && selectedModel !== null
     && snapshot !== null
     && graph !== null
     && !submitting;
+
+  useEffect(() => {
+    const submittedGraphId = semanticGraphs.selectedGraphId;
+    if (
+      submittedGraphId === null
+      || route.graphId !== null
+      || !succeededGraphs.some((item) => item.id === submittedGraphId)
+    ) {
+      return;
+    }
+    onRouteChange({ ...route, graphId: submittedGraphId });
+  }, [onRouteChange, route, semanticGraphs.selectedGraphId, succeededGraphs]);
 
   const selectWorldModel = (worldModelId: string): void => {
     if (worldModelId === "") {
@@ -469,7 +488,25 @@ export function ResearchProjectsPage({
           <label>项目标题<input value={title} maxLength={300} required onChange={(event) => setTitle(event.target.value)} placeholder="例如：公共事件中的信息传播观察" /></label>
           <label>研究问题<textarea value={question} maxLength={2000} required rows={3} onChange={(event) => setQuestion(event.target.value)} placeholder="这次合成模拟希望观察什么？" /></label>
           <label>冻结证据<select value={route.worldModelId ?? ""} required onChange={(event) => selectWorldModel(event.target.value)}><option value="">请选择世界快照</option>{worldModels.state.data?.items.map((item) => <option value={item.id} key={item.id}>{formatProductResourceTitle(item.title)} · {item.id === route.worldModelId && snapshot !== null ? `第 ${snapshot.version} 版` : `最新第 ${item.latest_snapshot.version} 版`}</option>)}</select><small>从下拉列表切换模型时会明确选择该模型的最新快照；从现实版本室进入时保留你选定的精确版本。</small></label>
-          <label>语义图<select value={route.graphId ?? ""} required disabled={snapshot === null} onChange={(event) => onRouteChange({ ...route, graphId: event.target.value === "" ? null : event.target.value })}><option value="">请选择已校验语义图</option>{semanticGraphs.state.data?.items.filter((item) => item.status === "succeeded").map((item) => <option value={item.id} key={item.id}>{new Date(item.completed_at ?? item.created_at).toLocaleString("zh-CN")} · {item.nodes.length} 个实体 / {item.edges.length} 条关系</option>)}</select><small>项目会绑定这张图的完整身份与哈希，后续运行不会自动改用新图。</small></label>
+          <label>语义图<select value={route.graphId ?? ""} required disabled={snapshot === null} onChange={(event) => onRouteChange({ ...route, graphId: event.target.value === "" ? null : event.target.value })}><option value="">请选择已校验语义图</option>{succeededGraphs.map((item) => <option value={item.id} key={item.id}>{new Date(item.completed_at ?? item.created_at).toLocaleString("zh-CN")} · {item.nodes.length} 个实体 / {item.edges.length} 条关系</option>)}</select><small>项目会绑定这张图的完整身份与哈希，后续运行不会自动改用新图。</small></label>
+          {snapshot !== null && semanticGraphs.state.status !== "error" && succeededGraphs.length === 0 ? (
+            <div className="research-project-graph-empty" role="status" aria-live="polite">
+              <div>
+                <strong>{graphIsPending ? "语义图正在生成" : "当前快照还没有已校验语义图"}</strong>
+                <p>{graphIsPending
+                  ? "任务完成后会自动选中本次生成的图，再开放项目创建。"
+                  : "先从当前冻结快照提取一次关系图。该操作不会修改快照；成功后会自动选中结果。"}</p>
+              </div>
+              <button
+                className="button button-secondary"
+                type="button"
+                disabled={graphIsPending || semanticGraphs.enqueueState === "submitting"}
+                onClick={() => { void semanticGraphs.enqueue(); }}
+              >
+                {semanticGraphs.enqueueState === "submitting" ? "正在提交…" : graphIsPending ? "等待图谱完成…" : "生成当前快照的语义图"}
+              </button>
+            </div>
+          ) : null}
           {worldModels.state.status === "error" ? <ApiErrorPanel title="无法读取冻结证据" error={worldModels.state.error} isRetrying={worldModels.state.isRetrying} onRetry={worldModels.reload} /> : null}
           {selectedSnapshot.state.status === "error" ? <ApiErrorPanel title="无法读取指定的冻结快照" error={selectedSnapshot.state.error} isRetrying={selectedSnapshot.state.isRetrying} onRetry={selectedSnapshot.reload} /> : null}
           {semanticGraphs.state.status === "error" ? <ApiErrorPanel title="无法读取语义图" error={semanticGraphs.state.error} isRetrying={semanticGraphs.state.isRetrying} onRetry={semanticGraphs.reload} /> : null}

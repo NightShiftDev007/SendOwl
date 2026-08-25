@@ -342,6 +342,20 @@
 }
 
 @media (max-width: 390px) {
+  .task-gallery-controls nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .task-gallery-controls nav button,
+  .task-gallery-controls nav button:last-child {
+    min-width: 0;
+    padding-inline: 6px;
+    border: 1px solid var(--tg-line);
+    white-space: normal;
+  }
+
   .task-gallery-hero dl {
     grid-template-columns: 1fr;
   }

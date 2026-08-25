@@ -120,7 +120,7 @@ jobs:
 
       - name: Run worker tests
         working-directory: backend/oasis_worker
-        run: uv run --python 3.11 pytest
+        run: uv run --python 3.11 python -m pytest
 
   postgresql:
     name: PostgreSQL Integration

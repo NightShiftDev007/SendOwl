@@ -92,8 +92,15 @@ export function MediaWorldMap({
     };
     chart.on("click", handleClick);
 
-    const resizeObserver = new ResizeObserver(() => chart.resize());
+    const resizeChart = (): void => {
+      if (chart.isDisposed() || element.clientWidth < 1 || element.clientHeight < 1) {
+        return;
+      }
+      chart.resize({ width: element.clientWidth, height: element.clientHeight });
+    };
+    const resizeObserver = new ResizeObserver(resizeChart);
     resizeObserver.observe(element);
+    resizeChart();
 
     return () => {
       resizeObserver.disconnect();

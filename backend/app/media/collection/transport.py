@@ -1,6 +1,7 @@
 """Bounded HTTP transport for SandOwl-owned public media collection."""
 
 import ipaddress
+import os
 import socket
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
@@ -12,6 +13,8 @@ from app.media.collection.errors import MediaCollectionError
 MAXIMUM_RESPONSE_BYTES = 5_000_000
 DEFAULT_TIMEOUT_SECONDS = 30
 USER_AGENT = "SandOwlCollector/1.0 (+http://localhost:3200/)"
+DOCKER_DESKTOP_DNS_PROXY_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+DOCKER_DESKTOP_DNS_PROXY_ENV = "MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY"
 
 
 class MediaFetchError(MediaCollectionError):
@@ -28,6 +31,13 @@ class FetchedDocument:
     last_modified: str | None
 
 
+def _docker_desktop_dns_proxy_allowed() -> bool:
+    raw = os.environ.get(DOCKER_DESKTOP_DNS_PROXY_ENV, "false").strip().lower()
+    if raw not in {"true", "false"}:
+        raise MediaFetchError(f"{DOCKER_DESKTOP_DNS_PROXY_ENV} must be true or false")
+    return raw == "true"
+
+
 def _validate_public_host(hostname: str) -> None:
     try:
         addresses = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
@@ -35,10 +45,14 @@ def _validate_public_host(hostname: str) -> None:
         raise MediaFetchError(f"media hostname could not be resolved: {hostname}") from error
     if not addresses:
         raise MediaFetchError(f"media hostname resolved to no addresses: {hostname}")
+    allow_docker_desktop_proxy = _docker_desktop_dns_proxy_allowed()
     for address in addresses:
         ip = ipaddress.ip_address(address[4][0])
-        if not ip.is_global:
-            raise MediaFetchError("media collection refuses non-public network addresses")
+        if ip.is_global:
+            continue
+        if allow_docker_desktop_proxy and ip in DOCKER_DESKTOP_DNS_PROXY_NETWORK:
+            continue
+        raise MediaFetchError("media collection refuses non-public network addresses")
 
 
 def validate_public_media_url(url: str) -> str:
@@ -101,6 +115,17 @@ def fetch_public_document(
                 last_modified=response.headers.get("Last-Modified"),
             )
     except HTTPError as error:
+        if error.code == 304:
+            final_url = str(error.geturl())
+            validate_public_media_url(final_url)
+            return FetchedDocument(
+                url=final_url,
+                body="",
+                status_code=304,
+                content_type=error.headers.get_content_type(),
+                etag=error.headers.get("ETag") or etag,
+                last_modified=error.headers.get("Last-Modified") or last_modified,
+            )
         raise MediaFetchError(f"media request returned HTTP {error.code}") from error
     except (TimeoutError, URLError) as error:
         raise MediaFetchError(f"media request failed: {type(error).__name__}") from error

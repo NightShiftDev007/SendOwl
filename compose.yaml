@@ -137,6 +137,8 @@ services:
     volumes:
       - web_artifacts:/web-artifacts:ro
       - linux_artifacts:/linux-artifacts:ro
+    group_add:
+      - "10003"
     healthcheck:
       test:
         - CMD
@@ -384,6 +386,7 @@ services:
       MEDIA_COLLECTION_SCAN_INTERVAL_SECONDS: ${MEDIA_COLLECTION_SCAN_INTERVAL_SECONDS:-60}
       MEDIA_COLLECTION_SOURCE_BATCH_SIZE: ${MEDIA_COLLECTION_SOURCE_BATCH_SIZE:-5}
       MEDIA_COLLECTION_WORKER_ID: ${MEDIA_COLLECTION_WORKER_ID:-sandowl-native-media-collector}
+      MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY: ${MEDIA_COLLECTION_ALLOW_DOCKER_DESKTOP_DNS_PROXY:-false}
     depends_on:
       migrate:
         condition: service_completed_successfully

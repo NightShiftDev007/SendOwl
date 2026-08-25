@@ -40,6 +40,7 @@ from oasis_worker.web_hashing import (
     WEB_CONTEXT_TOKEN_LIMIT,
     WEB_ENABLE_THINKING,
     WEB_OUTPUT_MAX_TOKENS,
+    WEB_PARALLEL_TOOL_CALLS,
     WEB_TOOL_CHOICE,
     result_sha256,
     trace_sha256,
@@ -49,6 +50,7 @@ LOGGER = logging.getLogger("oasis_worker.web_engine")
 WEB_REQUEST_TIMEOUT_SECONDS = 30
 WEB_REQUEST_MAX_BYTES = 1_048_576
 WEB_REQUEST_ATTEMPTS = 3
+WEB_OUTPUT_VALIDATION_ATTEMPTS = 2
 
 
 class FixedWebBrowserClient:
@@ -122,7 +124,9 @@ class FixedWebBrowserClient:
             payload,
         )
         try:
-            return BrowserObservation.model_validate(raw)
+            return BrowserObservation.model_validate_json(
+                json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+            )
         except ValidationError as error:
             issue = error.errors(include_url=False, include_input=False)[0]
             location = ".".join(str(part) for part in issue["loc"]) or "response"
@@ -150,6 +154,7 @@ def create_web_model(config: WebRuntimeConfig) -> BaseModelBackend:
         model_config_dict={
             "max_tokens": WEB_OUTPUT_MAX_TOKENS,
             "tool_choice": WEB_TOOL_CHOICE,
+            "parallel_tool_calls": WEB_PARALLEL_TOOL_CALLS,
             "extra_body": {"enable_thinking": WEB_ENABLE_THINKING},
         },
         api_key=config.api_key,
@@ -241,23 +246,69 @@ def _messages(
     ]
 
 
+async def _request_valid_choice(
+    model: BaseModelBackend,
+    messages: list[OpenAIMessage],
+    allowed_quote_ids: frozenset[str],
+    request_error_context: str,
+) -> WebChoiceSubmission:
+    correction: str | None = None
+    last_error: OasisExecutionError | None = None
+    for attempt in range(1, WEB_OUTPUT_VALIDATION_ATTEMPTS + 1):
+        current_messages = list(messages)
+        if correction is not None:
+            current_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous response failed the fixed Web output contract: "
+                        f"{correction}. Return one corrected complete "
+                        f"{WEB_TOOL_NAME} tool call. Do not return a second tool call."
+                    ),
+                }
+            )
+        try:
+            response = await model.arun(current_messages, tools=[_tool_schema()])
+        except Exception as error:
+            raise OasisExecutionError(
+                f"{request_error_context} failed with {type(error).__name__} "
+                "after bounded provider retries"
+            ) from error
+        try:
+            choice = _parse_choice(response)
+            if choice.decision_subject_id not in allowed_quote_ids:
+                raise OasisExecutionError(
+                    "Web provider selected a quote outside the observed catalog"
+                )
+            return choice
+        except OasisExecutionError as error:
+            last_error = error
+            if attempt == WEB_OUTPUT_VALIDATION_ATTEMPTS:
+                raise
+            correction = str(error)
+            LOGGER.warning(
+                "Web provider output requires bounded correction",
+                extra={"attempt": attempt, "error_type": type(error).__name__},
+            )
+    if last_error is None:
+        raise RuntimeError("Web output validation exhausted without a result")
+    raise last_error
+
+
 async def run_web_trial(
     trial: ClaimedWebTrial,
     model: BaseModelBackend,
     browser: FixedWebBrowserClient,
 ) -> WebSuccess:
     observation = await browser.observe(trial.id)
-    try:
-        response = await model.arun(_messages(trial, observation), tools=[_tool_schema()])
-    except Exception as error:
-        raise OasisExecutionError(
-            f"Web model request failed with {type(error).__name__} after bounded provider retries"
-        ) from error
-    choice = _parse_choice(response)
     by_id = {quote.quote_id: quote for page in observation.pages for quote in page.quotes}
-    selected = by_id.get(choice.decision_subject_id)
-    if selected is None:
-        raise OasisExecutionError("Web provider selected a quote outside the observed catalog")
+    choice = await _request_valid_choice(
+        model,
+        _messages(trial, observation),
+        frozenset(by_id),
+        "Web model request",
+    )
+    selected = by_id[choice.decision_subject_id]
     trace = trace_sha256(trial.trial_sha256, observation.pages)
     result = result_sha256(
         trial.trial_sha256,
@@ -308,16 +359,12 @@ async def probe_web_runtime(
             "content": ("quote_id=" + "a" * 64 + "; text=Readiness quote; author=Probe Author"),
         },
     ]
-    try:
-        response = await model.arun(messages, tools=[_tool_schema()])
-    except Exception as error:
-        raise OasisExecutionError(
-            f"Web provider readiness probe failed with {type(error).__name__} "
-            "after bounded provider retries"
-        ) from error
-    parsed = _parse_choice(response)
-    if parsed.decision_subject_id != "a" * 64:
-        raise OasisExecutionError("Web provider readiness probe selected an unknown quote")
+    await _request_valid_choice(
+        model,
+        messages,
+        frozenset({"a" * 64}),
+        "Web provider readiness probe",
+    )
 
 
 __all__ = [

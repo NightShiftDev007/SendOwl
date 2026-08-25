@@ -292,7 +292,7 @@ async def complete_native_collection_success(
     run.articles_discovered = batch.discovered_count
     run.articles_inserted = inserted
     run.articles_existing = len(batch.articles) - inserted
-    if batch.discovered_count > 0:
+    if batch.discovered_count > 0 or batch.not_modified:
         await session.execute(
             update(NativeMediaCollectionAlertRecord)
             .where(

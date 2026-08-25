@@ -86,6 +86,9 @@ def _evaluation(row: dict[str, object]) -> WebEvaluation:
             "web_config_sha256": row["evaluation_web_config_sha256"],
             "prompt_schema_version": row["evaluation_prompt_schema_version"],
             "evaluation_sha256": row["evaluation_sha256"],
+            "retry_of_evaluation_id": row["retry_of_evaluation_id"],
+            "retry_of_evaluation_sha256": row["retry_of_evaluation_sha256"],
+            "attempt_number": row["attempt_number"],
             "created_at": row["evaluation_created_at"],
         }
     )
@@ -131,6 +134,8 @@ def _validate_claim(
         evaluation.persona_count,
         evaluation.model_name,
         evaluation.web_config_sha256,
+        evaluation.retry_of_evaluation_sha256,
+        evaluation.attempt_number,
     )
     if actual_evaluation_sha != evaluation.evaluation_sha256:
         raise RuntimeError("Web evaluation digest mismatch")
@@ -181,7 +186,11 @@ def claim_web_trial(
                        evaluation.web_config_sha256 AS evaluation_web_config_sha256,
                        evaluation.prompt_schema_version AS evaluation_prompt_schema_version,
                        evaluation.evaluation_sha256,
+                       evaluation.retry_of_evaluation_id,
+                       evaluation.retry_of_evaluation_sha256,
+                       evaluation.attempt_number,
                        evaluation.created_at AS evaluation_created_at,
+                       cohort.id AS actual_cohort_id,
                        cohort.title AS actual_cohort_title,
                        cohort.persona_count AS actual_cohort_persona_count,
                        cohort.cohort_sha256 AS actual_cohort_sha256,
@@ -227,6 +236,7 @@ def claim_web_trial(
                 or row["cohort_title"] != row["actual_cohort_title"]
                 or row["persona_count"] != row["actual_cohort_persona_count"]
                 or row["dataset_sha256"] != row["actual_dataset_sha256"]
+                or row["cohort_id"] != row["actual_cohort_id"]
                 or row["persona_position"] != row["actual_persona_position"]
                 or row["persona_external_id"] != row["actual_persona_external_id"]
                 or row["persona_display_name"] != row["actual_persona_display_name"]
